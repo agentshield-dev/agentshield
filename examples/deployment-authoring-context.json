@@ -1,0 +1,15 @@
+{
+  "resourceId": "resource:replace-with-a-real-graph-id",
+  "kind": "kubernetes/deployment",
+  "name": "payments-api",
+  "namespace": "production",
+  "serviceAccountName": "payments-runtime",
+  "observedBehavior": {
+    "collectedTelemetry": ["active-probe"],
+    "requests": [
+      {"telemetry": "active-probe", "destination": "production/ledger-api", "destinationKind": "kubernetes/service", "destinationRole": "service", "operation": "POST /v1/ledger/entries", "outcome": "allowed", "count": 4210},
+      {"telemetry": "active-probe", "destination": "production/ledger-api", "destinationKind": "kubernetes/service", "destinationRole": "service", "operation": "GET /v1/ledger/accounts/{id}/balance", "outcome": "allowed", "count": 9875},
+      {"telemetry": "active-probe", "destination": "production/fraud-scoring", "destinationKind": "kubernetes/service", "destinationRole": "service", "operation": "POST /v1/score", "outcome": "allowed", "count": 4198}
+    ]
+  }
+}

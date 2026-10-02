@@ -1,0 +1,20 @@
+# Keep the build context to sources. The image builds the UI and binaries itself.
+.git
+.github
+.agentshield
+.vscode
+.idea
+dist
+evals/output
+ui/node_modules
+ui/dist/*
+!ui/dist/.gitkeep
+ui/storybook-static
+ui/debug-storybook.log
+/agentshield
+/agentshield-*
+*.test
+*.out
+.env
+.env.*
+**/kubeconfig*

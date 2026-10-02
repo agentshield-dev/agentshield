@@ -1,0 +1,16 @@
+# Falco for the demo "easy route": alerts go straight to the in-cluster
+# OpenTelemetry Collector's webhook_event receiver; no log-reading DaemonSet.
+# evals/scripts/run.sh installs the chart with these values.
+falco:
+  json_output: true
+  json_include_output_property: true
+  # Pod UID is the subject identity; container ID is kept on the raw event.
+  append_output:
+    - match:
+        source: syscall
+      extra_fields:
+        - k8s.pod.uid
+        - container.id
+  http_output:
+    enabled: true
+    url: http://opentelemetry-collector.observability.svc.cluster.local:8080/falco

@@ -1,0 +1,71 @@
+image:
+  registry: cr.agentgateway.dev
+  repository: agentgateway
+  tag: v1.6.0
+
+service:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4000
+
+gateway:
+  service:
+    allocateLoadBalancerNodePorts: false
+
+config:
+  llm:
+    models:
+      - name: gpt-4o-mini
+        provider: openAI
+        params:
+          model: gpt-4o-mini
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-6-astra
+        provider: openAI
+        params:
+          model: gpt-6-astra
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-6-sol
+        provider: openAI
+        params:
+          model: gpt-6-sol
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-6-luna
+        provider: openAI
+        params:
+          model: gpt-6-luna
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-5.6-sol
+        provider: openAI
+        params:
+          model: gpt-5.6-sol
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-5-mini
+        provider: openAI
+        params:
+          model: gpt-5-mini
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+      - name: gpt-5.4-nano
+        provider: openAI
+        params:
+          model: gpt-5.4-nano
+          apiKey:
+            file: /var/run/secrets/agentshield/openai/OPENAI_API_KEY
+
+extraVolumes:
+  - name: openai-api
+    secret:
+      secretName: openai-api
+
+extraVolumeMounts:
+  - name: openai-api
+    mountPath: /var/run/secrets/agentshield/openai
+    readOnly: true

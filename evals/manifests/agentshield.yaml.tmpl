@@ -1,0 +1,229 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentshield-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentshield
+  namespace: agentshield-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentshield-evals-discovery
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, nodes, serviceaccounts, pods, services, configmaps, secrets, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations, validatingadmissionpolicies, validatingadmissionpolicybindings]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gatewayclasses, gateways, httproutes]
+    verbs: [get, list, watch]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies, ciliumclusterwidenetworkpolicies, ciliumendpoints, ciliumnodes]
+    verbs: [get, list, watch]
+  - apiGroups: [security.istio.io]
+    resources: [authorizationpolicies, peerauthentications]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.istio.io]
+    resources: [serviceentries, virtualservices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentshield-evals-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentshield-evals-discovery
+subjects:
+  - kind: ServiceAccount
+    name: agentshield
+    namespace: agentshield-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres
+  namespace: agentshield-system
+stringData:
+  POSTGRES_DB: agentshield
+  POSTGRES_USER: agentshield
+  POSTGRES_PASSWORD: agentshield-evals-only
+  database-url: postgres://agentshield:agentshield-evals-only@postgres.agentshield-system.svc.cluster.local:5432/agentshield?sslmode=disable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: agentshield-system
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: agentshield-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16.10-alpine
+          envFrom:
+            - secretRef:
+                name: postgres
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, agentshield, -d, agentshield]
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentshield
+  namespace: agentshield-system
+spec:
+  selector:
+    app: agentshield
+  ports:
+    - name: http
+      port: 8088
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentshield
+  namespace: agentshield-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentshield
+  template:
+    metadata:
+      labels:
+        app: agentshield
+    spec:
+      serviceAccountName: agentshield
+      securityContext:
+        fsGroup: 65532
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16.10-alpine
+          command: [sh, -c, until pg_isready -h postgres -U agentshield -d agentshield; do sleep 1; done]
+      containers:
+        - name: agentshield
+          image: __AGENTSHIELD_IMAGE__
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          args:
+            - --listen=0.0.0.0:8088
+            - --kubernetes-cluster-id=__CLUSTER_IDENTITY__
+            - --kubernetes-network-id=__CLUSTER_IDENTITY__
+            - --kubernetes-source-id=evals/__CLUSTER_IDENTITY__
+            - --istio-cluster-id=__CLUSTER_IDENTITY__
+            - --istio-network-id=__CLUSTER_IDENTITY__
+            - --istio-source-id=evals/__CLUSTER_IDENTITY__
+            - --agentgateway-cluster-id=__CLUSTER_IDENTITY__
+            - --agentgateway-source-id=evals/__CLUSTER_IDENTITY__
+            - --cilium-cluster-id=__CLUSTER_IDENTITY__
+            - --cilium-source-id=evals/__CLUSTER_IDENTITY__
+            - --falco-cluster-id=__CLUSTER_IDENTITY__
+            - --falco-source-id=evals/__CLUSTER_IDENTITY__
+            - --telemetry-jsonl=/var/lib/agentshield/telemetry.jsonl
+            # authoring:begin (removed in detector-only mode)
+            # Draft Deployment rules with OpenAI after a short baseline, and serve rule
+            # review on this non-loopback listener. The eval cluster is disposable;
+            # the review API is unauthenticated.
+            - --deployment-rule-authoring
+            - --model-endpoint=https://api.openai.com
+            - --deployment-rule-baseline-window=10m
+            - --rule-review-api
+            # authoring:end
+          env:
+            - name: AGENTSHIELD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: database-url
+            # authoring:begin
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agentshield-model
+                  key: OPENAI_API_KEY
+            # authoring:end
+          ports:
+            - name: http
+              containerPort: 8088
+          # /readyz requires the database; graph routes return 503 until discovery
+          # publishes, so eval scripts poll /api/v1/graph. /healthz is process liveness only.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: telemetry
+              mountPath: /var/lib/agentshield
+      volumes:
+        - name: telemetry
+          emptyDir: {}

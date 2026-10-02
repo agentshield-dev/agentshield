@@ -1,0 +1,186 @@
+{
+  "schemaVersion": "agentshield.rule-evals/v1alpha1",
+  "purpose": "Detect workload behavior that violates the narrow role its identity implies, using only the inputs detection rules evaluate, without firing on routine operation.",
+  "campaigns": [
+    {
+      "id": "storefront-reads-secrets",
+      "class": "security",
+      "description": "A compromised storefront frontend, after its normal product and cart reads, reads a database password from the secrets store.",
+      "source": "storefront-frontend",
+      "targets": [
+        {"name": "catalog-api"},
+        {"name": "cart-api"},
+        {"name": "secrets-store"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=1"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=2"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products/1042"},
+        {"kind": "request", "target": "cart-api", "method": "GET", "path": "/v1/cart/session-881"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "secrets-store", "method": "GET", "path": "/v1/secret/data/database-password"}
+      ],
+      "policies": [
+        {"id": "storefront-frontend-api-allowlist", "selector": "telemetry:active-probe", "expression": "!operation.matches('^GET /v1/(products|cart|orders)([/?]|$)')", "rationale": "A storefront frontend only reads product, cart, and order APIs."}
+      ]
+    },
+    {
+      "id": "storefront-reads-another-cart",
+      "class": "benign",
+      "description": "The storefront frontend reads another shopper's cart and a product it has not shown before, the routine new identifiers of its normal APIs.",
+      "source": "storefront-frontend",
+      "targets": [
+        {"name": "catalog-api"},
+        {"name": "cart-api"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=1"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=2"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products/1042"},
+        {"kind": "request", "target": "cart-api", "method": "GET", "path": "/v1/cart/session-881"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products/2077"},
+        {"kind": "request", "target": "cart-api", "method": "GET", "path": "/v1/cart/session-4521"}
+      ],
+      "policies": [
+        {"id": "storefront-frontend-api-allowlist", "selector": "telemetry:active-probe", "expression": "!operation.matches('^GET /v1/(products|cart|orders)([/?]|$)')", "rationale": "A storefront frontend only reads product, cart, and order APIs."}
+      ]
+    },
+    {
+      "id": "storefront-rollout",
+      "class": "benign",
+      "description": "The storefront frontend is restarted by a routine rollout and resumes its normal product reads.",
+      "source": "storefront-frontend",
+      "targets": [
+        {"name": "catalog-api"},
+        {"name": "cart-api"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=1"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=2"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products/1042"},
+        {"kind": "request", "target": "cart-api", "method": "GET", "path": "/v1/cart/session-881"}
+      ],
+      "observed": [
+        {"kind": "restart"},
+        {"kind": "request", "target": "catalog-api", "method": "GET", "path": "/v1/products?page=1"}
+      ],
+      "policies": [
+        {"id": "storefront-frontend-api-allowlist", "selector": "telemetry:active-probe", "expression": "!operation.matches('^GET /v1/(products|cart|orders)([/?]|$)')", "rationale": "A storefront frontend only reads product, cart, and order APIs."}
+      ]
+    },
+    {
+      "id": "metrics-exporter-deletes-inventory",
+      "class": "security",
+      "description": "A compromised metrics exporter, after scraping metrics, deletes an inventory item through the same API.",
+      "source": "metrics-exporter",
+      "targets": [
+        {"name": "inventory-api"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "inventory-api", "method": "GET", "path": "/api/v1/metrics"},
+        {"kind": "request", "target": "inventory-api", "method": "GET", "path": "/healthz"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "inventory-api", "method": "DELETE", "path": "/api/v1/items/42"}
+      ],
+      "policies": [
+        {"id": "metrics-exporter-read-only", "selector": "telemetry:active-probe", "expression": "!operation.matches('^(GET|HEAD) ')", "rationale": "A metrics exporter only reads; any write is outside its role."}
+      ]
+    },
+    {
+      "id": "metrics-exporter-scrapes-new-service",
+      "class": "benign",
+      "description": "The metrics exporter starts scraping metrics from a newly deployed orders service.",
+      "source": "metrics-exporter",
+      "targets": [
+        {"name": "inventory-api"},
+        {"name": "orders-api"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "inventory-api", "method": "GET", "path": "/api/v1/metrics"},
+        {"kind": "request", "target": "inventory-api", "method": "GET", "path": "/healthz"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "orders-api", "method": "GET", "path": "/api/v1/metrics"}
+      ],
+      "policies": [
+        {"id": "metrics-exporter-read-only", "selector": "telemetry:active-probe", "expression": "!operation.matches('^(GET|HEAD) ')", "rationale": "A metrics exporter only reads; any write is outside its role."}
+      ]
+    },
+    {
+      "id": "report-job-probes-admin",
+      "class": "security",
+      "description": "A compromised report batch job, after reading its daily report, tries an admin endpoint that mesh policy denies.",
+      "source": "report-batch-job",
+      "targets": [
+        {"name": "reports-api", "denyPaths": ["/admin/*"]}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/daily"},
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/daily?date=2026-10-17"},
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/monthly"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/admin/users", "expectStatus": 403}
+      ],
+      "policies": [
+        {"id": "report-batch-job-denied-access", "selector": "telemetry:active-probe", "expression": "outcome == 'denied'", "rationale": "The mesh grants the report job everything it legitimately calls, so a denied request means it reached for access outside its role."}
+      ]
+    },
+    {
+      "id": "report-job-reads-weekly-report",
+      "class": "benign",
+      "description": "The report batch job reads a weekly report it has not read before, within its grant.",
+      "source": "report-batch-job",
+      "targets": [
+        {"name": "reports-api", "denyPaths": ["/admin/*"]}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/daily"},
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/daily?date=2026-10-17"},
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/monthly"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "reports-api", "method": "GET", "path": "/v1/reports/weekly"}
+      ],
+      "policies": [
+        {"id": "report-batch-job-denied-access", "selector": "telemetry:active-probe", "expression": "outcome == 'denied'", "rationale": "The mesh grants the report job everything it legitimately calls, so a denied request means it reached for access outside its role."}
+      ]
+    },
+    {
+      "id": "static-site-calls-accounts-api",
+      "class": "security",
+      "description": "A compromised static documentation site, which normally calls nothing, calls an internal accounts API.",
+      "source": "docs-static-site",
+      "targets": [
+        {"name": "accounts-api"}
+      ],
+      "baseline": [],
+      "observed": [
+        {"kind": "request", "target": "accounts-api", "method": "GET", "path": "/v1/accounts/me"}
+      ],
+      "policies": [
+        {"id": "docs-static-site-no-outbound-calls", "selector": "relationship:communicates-with", "expression": "true", "rationale": "A static documentation site serves files and calls no cluster services, so any new outbound communication edge is unexpected."}
+      ]
+    },
+    {
+      "id": "static-site-rollout",
+      "class": "benign",
+      "description": "The static documentation site is restarted by a routine rollout.",
+      "source": "docs-static-site",
+      "targets": [
+        {"name": "accounts-api"}
+      ],
+      "baseline": [],
+      "observed": [
+        {"kind": "restart"}
+      ],
+      "policies": [
+        {"id": "docs-static-site-no-outbound-calls", "selector": "relationship:communicates-with", "expression": "true", "rationale": "A static documentation site serves files and calls no cluster services, so any new outbound communication edge is unexpected."}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run race tests
+        run: go test -race ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentshield
+          POSTGRES_PASSWORD: agentshield
+          POSTGRES_DB: agentshield_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username agentshield --dbname agentshield_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      AGENTSHIELD_TEST_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5432/agentshield_test?sslmode=disable
+      AGENTSHIELD_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5432/agentshield_test?sslmode=disable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run PostgreSQL-backed tests
+        run: go test -race -count=1 ./pkg/state ./pkg/api
+
+  publication-benchmark:
+    name: Publication benchmark
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Benchmark base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          PR_MODULE=$(go list -m)
+          git worktree add "$RUNNER_TEMP/agentshield-base" "$BASE_SHA"
+          cp pkg/state/publication_benchmark_test.go "$RUNNER_TEMP/agentshield-base/pkg/state/"
+          cp scripts/benchmark-postgres.sh "$RUNNER_TEMP/agentshield-base/scripts/"
+          chmod +x "$RUNNER_TEMP/agentshield-base/scripts/benchmark-postgres.sh"
+          cd "$RUNNER_TEMP/agentshield-base"
+          # The base may predate a module rename; compile the copied benchmark against its module.
+          BASE_MODULE=$(go list -m)
+          sed -i "s|\"$PR_MODULE/|\"$BASE_MODULE/|g" pkg/state/publication_benchmark_test.go
+          ./scripts/benchmark-postgres.sh > "$RUNNER_TEMP/benchmark-base.txt"
+      - name: Benchmark pull request
+        run: ./scripts/benchmark-postgres.sh > "$RUNNER_TEMP/benchmark-pr.txt"
+      - name: Report benchmark delta
+        run: |
+          {
+            printf '## Publication benchmark delta\n\n'
+            printf 'Median of five runs. Negative deltas are improvements. This check is informational.\n\n'
+            ./scripts/benchmark-delta.sh "$RUNNER_TEMP/benchmark-base.txt" "$RUNNER_TEMP/benchmark-pr.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  aws-e2e:
+    name: AWS LocalStack e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install kind
+        run: go install sigs.k8s.io/kind@v0.31.0
+      - name: Run AWS end-to-end test
+        run: make test-aws-e2e
+
+  ui:
+    name: UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ui/.nvmrc
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install dependencies
+        working-directory: ui
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Lint
+        working-directory: ui
+        run: pnpm lint
+      - name: Build
+        working-directory: ui
+        run: pnpm build
+      - name: Build Storybook
+        working-directory: ui
+        run: pnpm build-storybook
+      - name: Install Playwright browser
+        working-directory: ui
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run unit and story tests
+        working-directory: ui
+        run: pnpm test
+      - name: Build binary with embedded UI
+        run: |
+          test -f ui/dist/index.html
+          go build ./cmd/agentshield
+          go test ./ui ./pkg/api
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Fails only on vulnerabilities reachable from our code; the toolchain version from go.mod
+      # determines which standard library findings apply.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: Run govulncheck
+        run: govulncheck ./...

@@ -1,0 +1,48 @@
+{
+	"name": "agentshield-ui",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc -b tsconfig.app.json tsconfig.node.json && vite build",
+		"build-storybook": "storybook build",
+		"check": "biome check .",
+		"check:fix": "biome check --write .",
+		"dev": "vite",
+		"format": "biome format --write .",
+		"lint": "tsc -b && biome check .",
+		"msw-worker": "msw init .storybook/public --no-save",
+		"preview": "vite preview",
+		"storybook": "storybook dev -p 6006 --host 127.0.0.1",
+		"test": "vitest run",
+		"test:unit": "vitest run --project unit",
+		"typecheck": "tsc -b"
+	},
+	"dependencies": {
+		"@fontsource/geist-sans": "5.3.0",
+		"lucide-react": "1.60.0",
+		"react": "19.3.0",
+		"react-dom": "19.3.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.15",
+		"@storybook/addon-vitest": "10.6.2",
+		"@storybook/react-vite": "10.6.2",
+		"@types/node": "26.6.5",
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
+		"@vitejs/plugin-react": "6.1.2",
+		"@vitest/browser-playwright": "5.0.3",
+		"msw": "3.0.3",
+		"msw-storybook-addon": "3.0.3",
+		"playwright": "1.64.0",
+		"storybook": "10.6.2",
+		"typescript": "7.0.2",
+		"vite": "8.3.4",
+		"vitest": "5.0.3"
+	},
+	"packageManager": "pnpm@11.9.0",
+	"engines": {
+		"node": ">=22.12.0"
+	}
+}

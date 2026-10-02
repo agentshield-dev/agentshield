@@ -1,0 +1,78 @@
+image:
+  repository: ghcr.io/OWNER/agentshield
+  tag: TAG
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: true
+
+service:
+  type: ClusterIP
+  port: 8088
+
+database:
+  existingSecret: agentshield-database
+  secretKey: url
+
+discovery:
+  kubernetes:
+    enabled: true
+    kubeconfig: ""
+    clusterID: example-cluster
+    networkID: ""
+    sourceID: kubernetes/example-cluster
+  istio:
+    clusterID: example-cluster
+    networkID: ""
+    sourceID: kubernetes/example-cluster
+    rootNamespace: istio-system
+  agentgateway:
+    clusterID: example-cluster
+    sourceID: kubernetes/example-cluster
+  cilium:
+    clusterID: example-cluster
+    sourceID: kubernetes/example-cluster
+  falco:
+    clusterID: example-cluster
+    sourceID: kubernetes/example-cluster
+  aws:
+    region: ""
+    eventsQueueURL: ""
+    firehoseStreamARN: ""
+    firehoseExistingSecret: ""
+    firehoseSecretKey: access-key
+
+telemetry:
+  jsonlPath: /var/lib/agentshield/telemetry.jsonl
+  emptyDirSizeLimit: 1Gi
+  clickhouse:
+    enabled: false
+    url: ""
+    database: agentshield
+    table: telemetry_events
+    username: default
+    existingSecret: ""
+    secretKey: password
+
+model:
+  endpoint: ""
+  provider: openai
+  existingSecret: ""
+  secretKey: api-key
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}

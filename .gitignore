@@ -1,0 +1,18 @@
+# UI dependencies and build output; ui/dist/.gitkeep keeps the Go embed pattern valid
+ui/node_modules/
+ui/dist/*
+!ui/dist/.gitkeep
+ui/storybook-static/
+ui/debug-storybook.log
+
+# Local runtime data (telemetry JSONL, etc.)
+.agentshield/
+
+# goreleaser output
+/dist/
+
+# Binaries from `make build` / `go build ./cmd/...` at the repo root
+/agentshield
+/agentshield-reasoning-mcp
+/agentshield-detector-rules
+/agentshield-deployment-author

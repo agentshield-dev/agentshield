@@ -1,0 +1,54 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agentshield.fullname" . }}-discovery
+  labels:
+    {{- include "agentshield.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, nodes, serviceaccounts, pods, services, configmaps, secrets, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations, validatingadmissionpolicies, validatingadmissionpolicybindings]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gatewayclasses, gateways, httproutes]
+    verbs: [get, list, watch]
+  - apiGroups: [security.istio.io]
+    resources: [authorizationpolicies, peerauthentications]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.istio.io]
+    resources: [serviceentries, virtualservices]
+    verbs: [get, list, watch]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies, ciliumclusterwidenetworkpolicies, ciliumendpoints, ciliumnodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agentshield.fullname" . }}-discovery
+  labels:
+    {{- include "agentshield.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agentshield.fullname" . }}-discovery
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentshield.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

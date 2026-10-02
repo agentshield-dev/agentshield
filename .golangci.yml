@@ -1,0 +1,49 @@
+version: "2"
+
+run:
+  go: "1.27"
+  modules-download-mode: readonly
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - "-ST*"
+        - "-QF*"
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      # Store.Close currently closes the pool and always returns nil.
+      - linters:
+          - errcheck
+        source: '(store|second|reopened)\.Close\(\)'
+      # Deferred rollback preserves the primary transaction result.
+      - linters:
+          - errcheck
+        source: 'defer tx\.Rollback\(ctx\)'
+      # These read-only bodies have no meaningful close result to propagate.
+      - linters:
+          - errcheck
+        source: 'defer (file|request\.Body|response\.Body)\.Close\(\)'
+      # Command shutdown already has a primary run result.
+      - linters:
+          - errcheck
+        source: 'defer closeSink\(\)'
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "agentshield.mission-evals/v1alpha1",
+  "mission": "Detect evidence-backed lateral movement after a workload or identity compromise while suppressing expected operational change.",
+  "campaigns": [
+    {
+      "id": "ml-workspace-secrets-access",
+      "class": "security",
+      "threatModel": "ml-workspace-secret-access",
+      "compromiseAssumption": "A compromised ML workspace build worker pivots from normal model access to reading workspace secrets.",
+      "sourceComponent": "workspace-build-worker",
+      "baselineTarget": "model-hub-api",
+      "baselineRequest": {"method": "GET", "path": "/api/models/organization/recommender/revision/main"},
+      "observedTarget": "workspace-secrets-api",
+      "observedRequest": {"method": "GET", "path": "/api/workspaces/organization/customer-demo/secrets"},
+      "governed": false,
+      "expected": {"decision": "candidate_finding", "categories": ["possible_lateral_path"], "earliestPhase": "observed", "requiredObservation": true}
+    },
+    {
+      "id": "governed-ml-workspace-secrets-access",
+      "class": "benign",
+      "threatModel": "ml-workspace-secret-access",
+      "compromiseAssumption": "No compromise; the workspace secrets controller reads workspace secrets through its declared path.",
+      "sourceComponent": "workspace-secrets-controller",
+      "baselineTarget": "workspace-control-plane",
+      "baselineRequest": {"method": "GET", "path": "/api/workspaces/organization/customer-demo"},
+      "observedTarget": "workspace-secrets-api",
+      "observedRequest": {"method": "GET", "path": "/api/workspaces/organization/customer-demo/secrets"},
+      "governed": true,
+      "expected": {"decision": "no_finding", "categories": [], "earliestPhase": "observed", "requiredObservation": true}
+    },
+    {
+      "id": "identity-provider-to-source-control",
+      "class": "security",
+      "threatModel": "identity-provider-to-source-control-supply-chain",
+      "compromiseAssumption": "A compromised single sign-on server pivots from its normal identity-provider traffic to enumerate private repositories through an internal source-control API it has never called.",
+      "sourceComponent": "sso-server",
+      "baselineTarget": "corporate-identity-provider",
+      "baselineRequest": {"method": "GET", "path": "/.well-known/openid-configuration"},
+      "observedTarget": "source-control-api",
+      "observedRequest": {"method": "GET", "path": "/api/v3/orgs/example-org/repos?visibility=private"},
+      "governed": false,
+      "expected": {"decision": "candidate_finding", "categories": ["possible_lateral_path"], "earliestPhase": "observed", "requiredObservation": true}
+    },
+    {
+      "id": "governed-repository-inventory",
+      "class": "benign",
+      "threatModel": "identity-provider-to-source-control-supply-chain",
+      "compromiseAssumption": "No compromise; the repository inventory controller queries private repository metadata through its declared path.",
+      "sourceComponent": "repository-inventory-controller",
+      "baselineTarget": "inventory-state-api",
+      "baselineRequest": {"method": "GET", "path": "/v1/sync/checkpoint"},
+      "observedTarget": "source-control-api",
+      "observedRequest": {"method": "GET", "path": "/api/v3/orgs/example-org/repos?visibility=private"},
+      "governed": true,
+      "expected": {"decision": "no_finding", "categories": [], "earliestPhase": "observed", "requiredObservation": true}
+    },
+    {
+      "id": "checkout-to-secrets-manager",
+      "class": "security",
+      "threatModel": "generic-lateral-movement",
+      "compromiseAssumption": "An internet-facing checkout workload is compromised after normal order access and pivots to read a payment signing key.",
+      "sourceComponent": "checkout-api",
+      "baselineTarget": "orders-api",
+      "baselineRequest": {"method": "GET", "path": "/v1/orders/pending"},
+      "observedTarget": "secrets-manager",
+      "observedRequest": {"method": "GET", "path": "/v1/secret/data/payment-signing-key"},
+      "governed": false,
+      "expected": {"decision": "candidate_finding", "categories": ["possible_lateral_path"], "earliestPhase": "observed", "requiredObservation": true}
+    },
+    {
+      "id": "governed-secret-rotation",
+      "class": "benign",
+      "threatModel": "generic-lateral-movement",
+      "compromiseAssumption": "No compromise; a secret rotation controller reads the payment signing key through its declared path.",
+      "sourceComponent": "secret-rotation-controller",
+      "baselineTarget": "rotation-state-api",
+      "baselineRequest": {"method": "GET", "path": "/v1/rotations/payment-signing-key"},
+      "observedTarget": "secrets-manager",
+      "observedRequest": {"method": "GET", "path": "/v1/secret/data/payment-signing-key"},
+      "governed": true,
+      "expected": {"decision": "no_finding", "categories": [], "earliestPhase": "observed", "requiredObservation": true}
+    }
+  ]
+}

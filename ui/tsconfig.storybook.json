@@ -1,0 +1,32 @@
+{
+	"compilerOptions": {
+		"tsBuildInfoFile": "./node_modules/.tmp/tsconfig.storybook.tsbuildinfo",
+		"target": "ES2022",
+		"useDefineForClassFields": true,
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"allowJs": false,
+		"skipLibCheck": true,
+		"strict": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"paths": {
+			"@/*": ["./src/*"]
+		},
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"noEmit": true,
+		"jsx": "react-jsx",
+		"types": ["node", "msw-storybook-addon/csf3"]
+	},
+	"include": [
+		".storybook/main.ts",
+		".storybook/preview.tsx",
+		"mocks",
+		"stories",
+		"vitest.config.ts",
+		"src/vite-env.d.ts"
+	]
+}

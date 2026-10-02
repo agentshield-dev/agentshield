@@ -1,0 +1,7 @@
+{
+  "resourceId": "resource:replace-with-a-real-graph-id",
+  "kind": "kubernetes/deployment",
+  "name": "istiod",
+  "namespace": "istio-system",
+  "serviceAccountName": "istiod"
+}

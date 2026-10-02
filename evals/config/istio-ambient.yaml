@@ -1,0 +1,28 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: ambient
+  meshConfig:
+    extensionProviders:
+      - name: agentshield-otel
+        envoyOtelAls:
+          service: opentelemetry-collector.observability.svc.cluster.local
+          port: 4317
+          logName: agentshield-istio
+          logFormat:
+            labels:
+              agentshield.telemetry.kind: active-probe
+              agentshield.event.id: '%REQ(X-REQUEST-ID)%'
+              agentshield.evidence.id: '%REQ(X-REQUEST-ID)%'
+              agentshield.subject.k8s.api_version: apps/v1
+              agentshield.subject.k8s.kind: Deployment
+              agentshield.subject.k8s.namespace: '%FILTER_STATE(downstream_peer_obj:FIELD:namespace)%'
+              agentshield.subject.k8s.name: '%FILTER_STATE(downstream_peer_obj:FIELD:workload)%'
+              agentshield.object.k8s.api_version: v1
+              agentshield.object.k8s.kind: Service
+              agentshield.object.k8s.namespace: '%FILTER_STATE(upstream_peer_obj:FIELD:namespace)%'
+              agentshield.object.k8s.name: '%FILTER_STATE(upstream_peer_obj:FIELD:service)%'
+              agentshield.object.authority: '%REQ(:AUTHORITY)%'
+              agentshield.operation: '%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%'
+              agentshield.coverage: ambient-waypoint
+              agentshield.probe.http_statuses: '%RESPONSE_CODE%'

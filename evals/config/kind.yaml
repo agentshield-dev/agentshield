@@ -1,0 +1,9 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: ipv4
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+    labels:
+      agentshield.dev/purpose: mission-evals

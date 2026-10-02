@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentshield.fullname" . }}
+  labels:
+    {{- include "agentshield.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agentshield.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentshield.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentshield.fullname" . }}
+      # Shutdown stops HTTP (up to 10 s), then drains telemetry (up to 10 s).
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agentshield
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --listen=0.0.0.0:8088
+            - {{ printf "--kubernetes-cluster-id=%s" .Values.discovery.kubernetes.clusterID | quote }}
+            - {{ printf "--kubernetes-source-id=%s" .Values.discovery.kubernetes.sourceID | quote }}
+            - {{ printf "--istio-cluster-id=%s" .Values.discovery.istio.clusterID | quote }}
+            - {{ printf "--istio-source-id=%s" .Values.discovery.istio.sourceID | quote }}
+            - {{ printf "--istio-root-namespace=%s" .Values.discovery.istio.rootNamespace | quote }}
+            - {{ printf "--agentgateway-cluster-id=%s" .Values.discovery.agentgateway.clusterID | quote }}
+            - {{ printf "--agentgateway-source-id=%s" .Values.discovery.agentgateway.sourceID | quote }}
+            - {{ printf "--cilium-cluster-id=%s" .Values.discovery.cilium.clusterID | quote }}
+            - {{ printf "--cilium-source-id=%s" .Values.discovery.cilium.sourceID | quote }}
+            - {{ printf "--falco-cluster-id=%s" .Values.discovery.falco.clusterID | quote }}
+            - {{ printf "--falco-source-id=%s" .Values.discovery.falco.sourceID | quote }}
+            - {{ printf "--telemetry-jsonl=%s" .Values.telemetry.jsonlPath | quote }}
+            {{- if .Values.discovery.kubernetes.networkID }}
+            - {{ printf "--kubernetes-network-id=%s" .Values.discovery.kubernetes.networkID | quote }}
+            {{- end }}
+            {{- if .Values.discovery.istio.networkID }}
+            - {{ printf "--istio-network-id=%s" .Values.discovery.istio.networkID | quote }}
+            {{- end }}
+            {{- if not .Values.discovery.kubernetes.enabled }}
+            - --kubernetes-disable
+            {{- end }}
+            {{- if .Values.discovery.kubernetes.kubeconfig }}
+            - {{ printf "--kubernetes-kubeconfig=%s" .Values.discovery.kubernetes.kubeconfig | quote }}
+            {{- end }}
+            {{- if .Values.discovery.aws.region }}
+            - {{ printf "--aws-region=%s" .Values.discovery.aws.region | quote }}
+            {{- end }}
+            {{- if .Values.discovery.aws.eventsQueueURL }}
+            - {{ printf "--aws-events-queue-url=%s" .Values.discovery.aws.eventsQueueURL | quote }}
+            {{- end }}
+            {{- if .Values.discovery.aws.firehoseStreamARN }}
+            - {{ printf "--aws-firehose-stream-arn=%s" .Values.discovery.aws.firehoseStreamARN | quote }}
+            {{- end }}
+            {{- if .Values.telemetry.clickhouse.enabled }}
+            - {{ printf "--clickhouse-url=%s" (required "telemetry.clickhouse.url is required when ClickHouse is enabled" .Values.telemetry.clickhouse.url) | quote }}
+            - {{ printf "--clickhouse-database=%s" .Values.telemetry.clickhouse.database | quote }}
+            - {{ printf "--clickhouse-table=%s" .Values.telemetry.clickhouse.table | quote }}
+            - {{ printf "--clickhouse-username=%s" .Values.telemetry.clickhouse.username | quote }}
+            {{- end }}
+            {{- if .Values.model.endpoint }}
+            - {{ printf "--model-endpoint=%s" .Values.model.endpoint | quote }}
+            - {{ printf "--model-provider=%s" .Values.model.provider | quote }}
+            {{- end }}
+          env:
+            - name: AGENTSHIELD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.secretKey }}
+            {{- if and .Values.telemetry.clickhouse.enabled .Values.telemetry.clickhouse.existingSecret }}
+            - name: AGENTSHIELD_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telemetry.clickhouse.existingSecret }}
+                  key: {{ .Values.telemetry.clickhouse.secretKey }}
+            {{- end }}
+            {{- if and .Values.discovery.aws.firehoseStreamARN .Values.discovery.aws.firehoseExistingSecret }}
+            - name: AGENTSHIELD_AWS_FIREHOSE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.discovery.aws.firehoseExistingSecret }}
+                  key: {{ .Values.discovery.aws.firehoseSecretKey }}
+            {{- end }}
+            {{- if and .Values.model.endpoint .Values.model.existingSecret }}
+            - name: AGENTSHIELD_MODEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.model.existingSecret }}
+                  key: {{ .Values.model.secretKey }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8088
+          # The listener starts only after migrations (up to 5 minutes) and
+          # the 30-second startup budget, so allow 6 minutes.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 72
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # /readyz pings PostgreSQL and reads the graph revision; it never
+          # compiles the graph.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: telemetry
+              mountPath: {{ dir .Values.telemetry.jsonlPath }}
+      volumes:
+        - name: telemetry
+          emptyDir:
+            sizeLimit: {{ .Values.telemetry.emptyDirSizeLimit }}

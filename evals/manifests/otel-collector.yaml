@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+      # Falco http_output posts one JSON alert per request; the body becomes the log body.
+      webhook_event/falco:
+        endpoint: 0.0.0.0:8080
+        path: /falco
+    processors:
+      batch: {}
+      resource/falco:
+        attributes:
+          - key: service.name
+            value: falco
+            action: upsert
+    exporters:
+      otlp_http/agentshield:
+        endpoint: http://agentshield.agentshield-system.svc.cluster.local:8088
+        encoding: proto
+    service:
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp_http/agentshield]
+        logs/falco:
+          receivers: [webhook_event/falco]
+          processors: [resource/falco, batch]
+          exporters: [otlp_http/agentshield]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  selector:
+    app: opentelemetry-collector
+  ports:
+    - name: grpc-otlp
+      port: 4317
+      targetPort: grpc-otlp
+    - name: http-falco
+      port: 8080
+      targetPort: http-falco
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentelemetry-collector
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opentelemetry-collector
+  template:
+    metadata:
+      labels:
+        app: opentelemetry-collector
+    spec:
+      containers:
+        - name: collector
+          # contrib provides the webhook_event receiver.
+          image: otel/opentelemetry-collector-contrib:0.162.0
+          args: [--config=/conf/config.yaml]
+          ports:
+            - name: grpc-otlp
+              containerPort: 4317
+            - name: http-falco
+              containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: opentelemetry-collector
+---
+# Only Falco may post alerts: the receiver is unauthenticated and its records
+# are trusted as Falco observations.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opentelemetry-collector-falco
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app: opentelemetry-collector
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: grpc-otlp
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: falco
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: falco
+      ports:
+        - port: http-falco

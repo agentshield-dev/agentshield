@@ -1,0 +1,52 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"root": "..",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"src/**/*.{ts,tsx}",
+			"stories/**/*.{ts,tsx}",
+			"mocks/**/*.ts",
+			".storybook/*.{ts,tsx}",
+			"*.{ts,json,jsonc,html}"
+		]
+	},
+	"formatter": {
+		"formatWithErrors": false,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineEnding": "lf",
+		"lineWidth": 100
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single",
+			"jsxQuoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "none",
+			"arrowParentheses": "asNeeded"
+		}
+	},
+	"linter": {
+		"domains": {
+			"project": "recommended",
+			"react": "recommended",
+			"types": "recommended"
+		},
+		"rules": {
+			"preset": "recommended"
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on",
+				"useSortedPackageJson": "on"
+			}
+		}
+	}
+}
