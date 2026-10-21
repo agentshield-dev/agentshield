@@ -21,6 +21,27 @@ Read the docs for the area you are changing:
 
 The [docs index](docs/README.md) links to the remaining design docs.
 
+## Generated reference docs
+
+Package documentation is generated as Markdown from `doc.go` files. Edit the
+Go comments, then update the website using either method:
+
+**GitHub Actions:** In [the website repository](https://github.com/agentshield-dev/website),
+run **Actions > Update Reference Documentation > Run workflow**. Set `source_ref`
+to a pushed AgentShield tag or commit containing your changes. The action
+generates the Markdown, validates the docs, and opens or updates a website PR.
+
+**Manually:** From the website checkout, with AgentShield at `../agentshield`
+and the Go toolchain from `go.mod` installed:
+
+```bash
+make -C ../agentshield docs-reference DOCS_OUT="$PWD/docs/content/reference"
+npm run build:docs
+```
+
+Include the generated files and their `.agentshield-docs.json` manifest in a
+website PR. Update `doc.go`, not the generated Markdown.
+
 ## Testing
 
 Run `go test -race ./path/to/package` for the packages you changed, then `make test` and `make lint`. [Testing](docs/development/testing.md) lists the integration, UI, and evaluation suites and when to use them.

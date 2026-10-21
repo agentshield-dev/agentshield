@@ -124,6 +124,10 @@ Discovery only reads, but `make run` enables live remediation with your kubectl 
 
 ## Documentation
 
+Run `make docs-reference` to generate the complete code-backed reference set.
+See [Generated reference docs](CONTRIBUTING.md#generated-reference-docs) for
+coverage, local website updates, and the website workflow that opens update PRs.
+
 Start with the [documentation index](docs/README.md). Common destinations:
 
 - [Getting started](docs/getting-started.md)

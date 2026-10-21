@@ -3,6 +3,7 @@ PNPM ?= pnpm
 LISTEN ?= 127.0.0.1:8088
 DEMO_PORT ?= 5173
 DATABASE_URL ?= $(AGENTSHIELD_DATABASE_URL)
+DOCS_OUT ?= .agentshield/docs-reference
 
 # The web UI in ui/ is embedded from ui/dist. UI=0 skips the Node build and embeds whatever
 # ui/dist already holds; without a build the binary serves a "UI is not built" notice.
@@ -21,10 +22,13 @@ LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMI
 UI_INDEX := ui/dist/index.html
 UI_SOURCES := $(shell find ui/src ui/mocks ui/public -type f 2>/dev/null) ui/index.html ui/package.json ui/pnpm-lock.yaml ui/vite.config.ts $(wildcard ui/tsconfig*.json)
 
-.PHONY: build test lint lint-fix test-postgres benchmark-postgres test-aws-e2e run postgres-up postgres-down eval-up eval-check eval-run eval-rules eval-matrix eval-down graph-ui ui ui-dev ui-lint ui-storybook ui-test demo clean
+.PHONY: build test lint lint-fix test-postgres benchmark-postgres test-aws-e2e run postgres-up postgres-down eval-up eval-check eval-run eval-rules eval-matrix eval-down graph-ui ui ui-dev ui-lint ui-storybook ui-test demo docs-reference clean
 
 build: $(UI_PREREQ)
 	$(GO) build -ldflags "$(LDFLAGS)" ./cmd/agentshield
+
+docs-reference:
+	$(GO) run ./cmd/agentshield-docs --source-root . --output-dir "$(DOCS_OUT)"
 
 ui: $(UI_INDEX)
 
