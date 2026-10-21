@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/agentshield-logo-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/agentshield-logo-color-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/agentshield-logo-color.svg">
     <img src="docs/images/agentshield-logo-color.svg" alt="agentshield" width="400">
   </picture>
