@@ -1,10 +1,32 @@
-# AgentShield
+<!-- markdownlint-disable MD033 MD041 -->
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/agentshield-logo-light.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/agentshield-logo-color.svg">
+    <img src="docs/images/agentshield-logo-color.svg" alt="agentshield" width="400">
+  </picture>
+  <p>
+    <a href="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml"><img src="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml/badge.svg" alt="Build status"></a>
+    <a href="https://github.com/agentshield-dev/agentshield/blob/main/LICENSE"><img src="https://img.shields.io/github/license/agentshield-dev/agentshield?style=flat" alt="License: Apache 2.0"></a>
+    <a href="https://github.com/agentshield-dev/agentshield"><img src="https://img.shields.io/github/stars/agentshield-dev/agentshield?style=flat&amp;logo=github&amp;label=Stars" alt="GitHub stars"></a>
+    <a href="https://discord.gg/Anq24jH8Kp"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&amp;logo=discord&amp;logoColor=white" alt="Join Discord"></a>
+  </p>
+</div>
+<!-- markdownlint-enable MD033 MD041 -->
 
-AgentShield finds evidence-backed lateral-movement paths and risky security changes in Kubernetes environments that run Istio ambient mesh, Cilium, and agentgateway, and in AWS. It builds one graph of your workloads, identities, network policies, and observed traffic, flags changes that open new paths or remove protection, has a language model investigate them against the graph, and proposes fixes that a person must approve before anything changes.
+Agentshield finds evidence-backed lateral-movement paths and risky security changes in Kubernetes environments that run Istio ambient mesh, Cilium, and agentgateway, and in AWS. It builds one graph of your workloads, identities, network policies, and observed traffic, flags changes that open new paths or remove protection, has a language model investigate them against the graph, and proposes fixes that a person must approve before anything changes.
 
-![The AgentShield web UI showing a finding: Pods behind shop/cart have no ingress policy but accept calls from frontend and orders, with severity, uncertainty, and graph digest.](docs/images/ui-finding-detail.png)
+![agentshield findings view with a selected finding, evidence, and proposed remediations.](docs/images/ui-finding-detail.png)
 
-*A finding in the web UI, shown with Storybook demo data.*
+*Finding details, evidence, and proposed remediations, shown with synthetic demo data.*
+
+![agentshield environment graph showing a selected workload and its neighboring resources.](docs/images/ui-graph-neighborhood.png)
+
+*A selected workload and its relationships in the environment graph.*
+
+![agentshield explicit approval dialog showing a Kubernetes NetworkPolicy change before it is applied.](docs/images/ui-remediation-approval.png)
+
+*The approval step displays the exact change before it is applied.*
 
 ## See it in 60 seconds
 
@@ -20,7 +42,7 @@ Open <http://127.0.0.1:5173>. Choose a scenario, trigger its observation, and pr
 
 ## Why
 
-Who can reach what in a modern cluster is spread across NetworkPolicies, CiliumNetworkPolicies, Istio AuthorizationPolicies and PeerAuthentications, Gateway API routes, and cloud Security Groups. Attackers moving laterally use ordinary-looking traffic and ordinary-looking configuration changes. No single tool joins these sources and asks, on every change: *did this just open a path that was not there before, and what evidence says so?* AgentShield is built to answer that.
+Who can reach what in a modern cluster is spread across NetworkPolicies, CiliumNetworkPolicies, Istio AuthorizationPolicies and PeerAuthentications, Gateway API routes, and cloud Security Groups. Attackers moving laterally use ordinary-looking traffic and ordinary-looking configuration changes. No single tool joins these sources and asks, on every change: *did this just open a path that was not there before, and what evidence says so?* agentshield is built to answer that.
 
 It is for platform and security engineers running Kubernetes with Istio ambient, Cilium, or agentgateway (optionally on AWS), and for contributors who want to add providers, detectors, or evaluation scenarios.
 
@@ -36,8 +58,8 @@ It is for platform and security engineers running Kubernetes with Istio ambient,
 - **Ingests traffic telemetry**: Istio waypoint access logs over OTLP/HTTP and AWS VPC Flow Logs through Firehose. Raw events go to JSONL or ClickHouse; per-minute summaries and `communicates-with` edges go into the graph.
   Istio logs need a custom `envoyOtelAls` extension provider that emits `agentshield.*` attributes; the example labels every caller as a Deployment, so traffic from other workload kinds is rejected. See [Istio telemetry](docs/plugins/istio.md#telemetry).
 - **Detects risky changes.** Built-in detectors look for new exposure, lost governance, changed policy, new RBAC bindings, and workloads reaching destinations they never reached before, while ignoring rollouts and scaling. You can add versioned CEL rules with audited activation and hot reload, and have a model draft a rule for each new Deployment (shadow mode until you approve it). Active rule matches become findings without a model call.
-- **Investigates with a model.** A model looks into each signal through six read-only MCP graph tools. AgentShield accepts a finding only if it cites facts and evidence the graph actually returned, and invalidates it when those resources change.
-- **Proposes fixes behind an approval gate.** Findings can suggest a Kubernetes NetworkPolicy, CiliumNetworkPolicy, or Istio `STRICT` PeerAuthentication. A person prepares (plans and dry-runs) and approves each one, and AgentShield verifies the result.
+- **Investigates with a model.** A model looks into each signal through six read-only MCP graph tools. Agentshield accepts a finding only if it cites facts and evidence the graph actually returned, and invalidates it when those resources change.
+- **Proposes fixes behind an approval gate.** Findings can suggest a Kubernetes NetworkPolicy, CiliumNetworkPolicy, or Istio `STRICT` PeerAuthentication. A person prepares (plans and dry-runs) and approves each one, and agentshield verifies the result.
 - **Serves a web UI and HTTP API** from the same binary.
 
 ## What needs a model
@@ -57,7 +79,7 @@ Graph data is sent to the model endpoint; see the [security model](docs/operatio
 
 ## Status
 
-AgentShield is an early, pre-1.0 project. Expect breaking changes to APIs, the database schema, and flags.
+Agentshield is an early, pre-1.0 project. Expect breaking changes to APIs, the database schema, and flags.
 
 - The HTTP API and UI have **no authentication**, so the server binds to `127.0.0.1:8088` by default; read the [security model](docs/operations/security-model.md) before changing that.
 - One process per database; no high availability.
@@ -72,7 +94,7 @@ AgentShield is an early, pre-1.0 project. Expect breaking changes to APIs, the d
 4. Detectors turn graph changes into signals, a model investigates each signal through read-only graph tools, and only answers that cite real graph evidence become findings.
 5. A finding can propose a fix, which runs only after a person prepares and approves it.
 
-The [pipeline diagram](docs/concepts/overview.md#pipeline) shows this flow. More detail: [What AgentShield does](docs/concepts/overview.md) and the [architecture overview](docs/architecture/overview.md).
+The [pipeline diagram](docs/concepts/overview.md#pipeline) shows this flow. More detail: [What agentshield does](docs/concepts/overview.md) and the [architecture overview](docs/architecture/overview.md).
 
 ## How well does it work?
 
