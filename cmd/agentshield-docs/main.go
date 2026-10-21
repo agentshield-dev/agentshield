@@ -136,7 +136,7 @@ func newPage(name, title, body string) referencePage {
 	return referencePage{Name: name, Content: fmt.Sprintf("---\ntitle: %q\nweight: 80\n---\n<!-- %s. Do not edit manually. -->\n\n%s\n", title, generatedMarker, strings.TrimSpace(body))}
 }
 
-func writeReferences(directory string, pages []referencePage) error {
+func writeReferences(directory string, pages []referencePage) (retErr error) {
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
 	}
@@ -144,7 +144,9 @@ func writeReferences(directory string, pages []referencePage) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() {
+		retErr = errors.Join(retErr, root.Close())
+	}()
 	var previous []string
 	if content, err := root.ReadFile(manifestName); err == nil {
 		if err := json.Unmarshal(content, &previous); err != nil {
