@@ -27,5 +27,5 @@
 // active mode and their matches become findings. The model has no database,
 // graph-publication, or review access, and nothing in this package approves
 // rules. Running a rule never calls a model. See
-// docs/architecture/detection-rules.md.
+// https://agent-shield.dev/docs/architecture/detection-rules/.
 package deploymentauthoring

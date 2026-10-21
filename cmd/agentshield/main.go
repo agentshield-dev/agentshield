@@ -7,7 +7,7 @@
 // only. The HTTP API is unauthenticated; the default listener is loopback, and
 // the remediation endpoints act only with live discovery on a loopback
 // listener. Elsewhere they return 503. Flags and environment variables are
-// documented in docs/operations/configuration.md.
+// documented at https://agent-shield.dev/docs/operations/configuration/.
 package main
 
 import (
@@ -27,12 +27,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/arn"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/agentshield-dev/agentshield/internal/version"
 	"github.com/agentshield-dev/agentshield/pkg/api"
 	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
@@ -51,6 +45,12 @@ import (
 	falcoplugin "github.com/agentshield-dev/agentshield/plugins/falco"
 	istioplugin "github.com/agentshield-dev/agentshield/plugins/istio"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
 	k8sdiscovery "k8s.io/client-go/discovery"
@@ -180,7 +180,7 @@ func runWithArgsOutput(args []string, output io.Writer) error {
 // parseOptions registers every command-line flag, resolves model provider
 // defaults, and validates intervals. Flag names, defaults, and environment
 // fallbacks are part of the operator contract in
-// docs/operations/configuration.md.
+// https://agent-shield.dev/docs/operations/configuration/.
 func parseOptions(args []string) (options, error) {
 	var config options
 	flags := pflag.NewFlagSet("agentshield", pflag.ContinueOnError)

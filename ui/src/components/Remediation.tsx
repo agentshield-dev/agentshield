@@ -25,7 +25,7 @@ import { list } from '@/lib/model';
 // Errors come back as {"error": "..."} and are shown verbatim: 503 means live remediation is
 // disabled on this server (no discovery, or a non-loopback --listen), and 409 means the finding,
 // target, or provider state changed since the step before, or that a server restart discarded the
-// in-memory prepared plan. See docs/architecture/remediation.md.
+// in-memory prepared plan. See https://agent-shield.dev/docs/architecture/remediation/.
 
 // A successful prepare: the action the user picked, the server's plan, and the dry-run result.
 interface Prepared {

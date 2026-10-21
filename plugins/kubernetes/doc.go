@@ -48,6 +48,6 @@
 // The package also implements the network-policy/v1 remediation action, which
 // isolates a Pod's ingress with a NetworkPolicy and a controlled Pod label.
 //
-// See docs/plugins/kubernetes.md and, for the plugin contract,
-// docs/plugins/README.md.
+// See https://agent-shield.dev/docs/plugins/kubernetes/ and, for the plugin
+// contract, https://agent-shield.dev/docs/plugins/contract/.
 package kubernetes

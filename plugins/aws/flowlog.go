@@ -19,7 +19,7 @@ const vpcFlowLogFieldCount = 25
 var errNoFlowData = errors.New("VPC Flow Log record contains no flow data")
 
 // NormalizeVPCFlowLog maps one version 5 VPC Flow Log line in the 25-field
-// custom order documented in docs/plugins/aws.md to a telemetry event between
+// custom order documented in https://agent-shield.dev/docs/plugins/aws/ to a telemetry event between
 // network-destination claims for the source and destination addresses.
 // The event ID digests the source ID and the complete record so Firehose
 // redelivery is idempotent. NODATA and SKIPDATA records carry no flow and

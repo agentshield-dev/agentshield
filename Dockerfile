@@ -48,7 +48,7 @@ WORKDIR /home/nonroot
 USER 65532:65532
 # agentshield listens on 127.0.0.1:8088 by default, which is unreachable from outside the
 # container. The HTTP API is unauthenticated: pass --listen 0.0.0.0:8088 only behind authenticated
-# infrastructure (see docs/operations/security-model.md). Live remediation is disabled on a
+# infrastructure (see https://agent-shield.dev/docs/operations/security/). Live remediation is disabled on a
 # non-loopback listen address.
 EXPOSE 8088
 ENTRYPOINT ["/usr/local/bin/agentshield"]

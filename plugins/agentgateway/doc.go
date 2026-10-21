@@ -39,5 +39,5 @@
 // access-log transport or resumable cursor is included yet, so nothing calls
 // them outside tests.
 //
-// See docs/plugins/agentgateway.md.
+// See https://agent-shield.dev/docs/plugins/agentgateway/.
 package agentgateway

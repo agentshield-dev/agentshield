@@ -19,7 +19,7 @@ import (
 
 // The access-log types and functions are unexported until an access-log
 // transport calls ingestAccessLog; nothing in the binary produces records yet.
-// See docs/plugins/agentgateway.md.
+// See https://agent-shield.dev/docs/plugins/agentgateway/.
 
 // accessLogConfig supplies the authorities used for endpoint claims.
 // NetworkID defaults to ClusterID.

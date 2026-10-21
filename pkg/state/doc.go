@@ -52,6 +52,6 @@
 // Schema files are embedded and verified by checksum at startup. Until the
 // first release, baseline changes require recreating the database.
 //
-// See docs/architecture/publication-and-storage.md and
-// docs/concepts/data-model.md.
+// See https://agent-shield.dev/docs/architecture/publication-and-storage/ and
+// https://agent-shield.dev/docs/concepts/data-model/.
 package state

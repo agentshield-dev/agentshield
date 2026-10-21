@@ -58,5 +58,6 @@
 // addresses are never exposed to CEL; only their [telemetry] destination class
 // is.
 //
-// See docs/architecture/detection-rules.md for rule authoring and storage.
+// See https://agent-shield.dev/docs/architecture/detection-rules/ for rule
+// authoring and storage.
 package detector

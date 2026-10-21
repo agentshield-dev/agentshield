@@ -92,6 +92,6 @@
 // default for servers with live remediation.
 //
 // Exposing this server beyond loopback requires authenticated infrastructure
-// in front of it. See docs/operations/security-model.md and
-// docs/operations/configuration.md.
+// in front of it. See https://agent-shield.dev/docs/operations/security/ and
+// https://agent-shield.dev/docs/operations/configuration/.
 package api

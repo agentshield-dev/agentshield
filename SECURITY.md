@@ -22,5 +22,5 @@ URLs, and real telemetry or provider payloads.
 
 The HTTP API and UI have no authentication. Keep the default loopback listener
 unless access is protected by authenticated infrastructure. Read the
-[security model](docs/operations/security-model.md) for trust boundaries,
+[security model](https://agent-shield.dev/docs/operations/security/) for trust boundaries,
 model endpoint data sharing, and operational limitations.
