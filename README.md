@@ -1,10 +1,7 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/agentshield-logo-color-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/images/agentshield-logo-color.svg">
-    <img src="docs/images/agentshield-logo-color.svg" alt="agentshield" width="400">
-  </picture>
+  <img src="docs/images/agentshield-logo-color-dark.svg#gh-dark-mode-only" alt="agentshield" width="400">
+  <img src="docs/images/agentshield-logo-color.svg#gh-light-mode-only" alt="agentshield" width="400">
   <p>
     <a href="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml"><img src="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml/badge.svg" alt="Build status"></a>
     <a href="https://github.com/agentshield-dev/agentshield/blob/main/LICENSE"><img src="https://img.shields.io/github/license/agentshield-dev/agentshield?style=flat" alt="License: Apache 2.0"></a>
