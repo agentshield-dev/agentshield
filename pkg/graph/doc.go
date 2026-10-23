@@ -51,5 +51,5 @@
 // [SecuritySemanticsAttribute]. The compiler validates every envelope present
 // and requires canonical encoding; it does not enforce that one is present.
 //
-// See docs/concepts/data-model.md for the full model.
+// See https://agent-shield.dev/docs/concepts/data-model/ for the full model.
 package graph

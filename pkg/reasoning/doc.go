@@ -89,6 +89,7 @@
 //   - The cursor advances only after the sinks record the evaluation.
 //   - Detection never calls a model; rule findings never depend on one.
 //
-// See docs/architecture/change-feed-and-reasoning.md for the design and
-// docs/operations/configuration.md for runtime flags.
+// See https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/ for
+// the design and https://agent-shield.dev/docs/operations/configuration/ for
+// runtime flags.
 package reasoning

@@ -184,7 +184,7 @@ func (server *Server) handleRemediationApprove(writer http.ResponseWriter, reque
 }
 
 // recordRemediation stores session's execution outcome. Sessions live in
-// memory only; see docs/architecture/remediation.md.
+// memory only; see https://agent-shield.dev/docs/architecture/remediation/.
 func (server *Server) recordRemediation(session preparedRemediation) {
 	server.sessionsMu.Lock()
 	server.sessions[session.plan.ID] = session

@@ -19,7 +19,7 @@ import (
 
 // The Hubble flow types and functions are unexported until a Hubble Relay
 // transport calls ingestHubbleFlow; nothing in the binary produces flows yet.
-// See docs/plugins/cilium.md.
+// See https://agent-shield.dev/docs/plugins/cilium/.
 
 // hubbleConfig supplies the authorities used for flow endpoint claims.
 // NetworkID defaults to ClusterID.

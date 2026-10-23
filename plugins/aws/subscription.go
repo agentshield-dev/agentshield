@@ -93,7 +93,7 @@ type cloudTrailEvent struct {
 
 // InventoryEventSubscriptions declares the CloudTrail EC2 events that affect
 // each inventory collection. The EventBridge rule documented in
-// docs/plugins/aws.md must cover the same event names.
+// https://agent-shield.dev/docs/plugins/aws/ must cover the same event names.
 func InventoryEventSubscriptions() []EventSubscription {
 	return []EventSubscription{
 		{

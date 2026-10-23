@@ -52,6 +52,6 @@
 //
 // The HTTP surface for this lifecycle is in pkg/api. Its routes are always
 // registered but return 503 unless live discovery runs on a loopback
-// listener. See docs/architecture/remediation.md and
-// docs/operations/security-model.md.
+// listener. See https://agent-shield.dev/docs/architecture/remediation/ and
+// https://agent-shield.dev/docs/operations/security/.
 package remediation

@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
-  <img src="docs/images/agentshield-logo-color-dark.svg#gh-dark-mode-only" alt="agentshield" width="400">
-  <img src="docs/images/agentshield-logo-color.svg#gh-light-mode-only" alt="agentshield" width="400">
+  <img src="https://agent-shield.dev/docs/images/agentshield-logo-color-dark.svg#gh-dark-mode-only" alt="agentshield" width="400">
+  <img src="https://agent-shield.dev/docs/images/agentshield-logo-color.svg#gh-light-mode-only" alt="agentshield" width="400">
   <p>
     <a href="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml"><img src="https://github.com/agentshield-dev/agentshield/actions/workflows/ci.yml/badge.svg" alt="Build status"></a>
     <a href="https://github.com/agentshield-dev/agentshield/blob/main/LICENSE"><img src="https://img.shields.io/github/license/agentshield-dev/agentshield?style=flat" alt="License: Apache 2.0"></a>
@@ -13,15 +13,15 @@
 
 Agentshield finds evidence-backed lateral-movement paths and risky security changes in Kubernetes environments that run Istio ambient mesh, Cilium, and agentgateway, and in AWS. It builds one graph of your workloads, identities, network policies, and observed traffic, flags changes that open new paths or remove protection, has a language model investigate them against the graph, and proposes fixes that a person must approve before anything changes.
 
-![agentshield findings view with a selected finding, evidence, and proposed remediations.](docs/images/ui-finding-detail.png)
+![agentshield findings view with a selected finding, evidence, and proposed remediations.](https://agent-shield.dev/docs/images/ui-finding-detail.png)
 
 *Finding details, evidence, and proposed remediations, shown with synthetic demo data.*
 
-![agentshield environment graph showing a selected workload and its neighboring resources.](docs/images/ui-graph-neighborhood.png)
+![agentshield environment graph showing a selected workload and its neighboring resources.](https://agent-shield.dev/docs/images/ui-graph-neighborhood.png)
 
 *A selected workload and its relationships in the environment graph.*
 
-![agentshield explicit approval dialog showing a Kubernetes NetworkPolicy change before it is applied.](docs/images/ui-remediation-approval.png)
+![agentshield explicit approval dialog showing a Kubernetes NetworkPolicy change before it is applied.](https://agent-shield.dev/docs/images/ui-remediation-approval.png)
 
 *The approval step displays the exact change before it is applied.*
 
@@ -35,7 +35,7 @@ cd agentshield
 make demo
 ```
 
-Open <http://127.0.0.1:5173>. Choose a scenario, trigger its observation, and prepare and approve the proposed remediation. Reset restores the clean environment. The first run spends most of its time on `pnpm install`, and everything stays in your browser. More in [Getting started](docs/getting-started.md#1-explore-the-ui-with-fake-data).
+Open <http://127.0.0.1:5173>. Choose a scenario, trigger its observation, and prepare and approve the proposed remediation. Reset restores the clean environment. The first run spends most of its time on `pnpm install`, and everything stays in your browser. More in [Getting started](https://agent-shield.dev/docs/getting-started/).
 
 ## Why
 
@@ -53,7 +53,7 @@ It is for platform and security engineers running Kubernetes with Istio ambient,
   - AWS: EC2 instances, ENIs, and Security Groups, with optional CloudTrail change events through EventBridge and SQS.
 - **Records where every fact came from.** Each resource has a stable identity (for example, cluster ID plus Kubernetes UID), and each fact records the plugin, rule, and observation that produced it. The graph is stored in PostgreSQL as versioned, atomically replaced contributions with an ordered change feed.
 - **Ingests traffic telemetry**: Istio waypoint access logs over OTLP/HTTP and AWS VPC Flow Logs through Firehose. Raw events go to JSONL or ClickHouse; per-minute summaries and `communicates-with` edges go into the graph.
-  Istio logs need a custom `envoyOtelAls` extension provider that emits `agentshield.*` attributes; the example labels every caller as a Deployment, so traffic from other workload kinds is rejected. See [Istio telemetry](docs/plugins/istio.md#telemetry).
+  Istio logs need a custom `envoyOtelAls` extension provider that emits `agentshield.*` attributes; the example labels every caller as a Deployment, so traffic from other workload kinds is rejected. See [Istio telemetry](https://agent-shield.dev/docs/plugins/istio/#telemetry).
 - **Detects risky changes.** Built-in detectors look for new exposure, lost governance, changed policy, new RBAC bindings, and workloads reaching destinations they never reached before, while ignoring rollouts and scaling. You can add versioned CEL rules with audited activation and hot reload, and have a model draft a rule for each new Deployment (shadow mode until you approve it). Active rule matches become findings without a model call.
 - **Investigates with a model.** A model looks into each signal through six read-only MCP graph tools. Agentshield accepts a finding only if it cites facts and evidence the graph actually returned, and invalidates it when those resources change.
 - **Proposes fixes behind an approval gate.** Findings can suggest a Kubernetes NetworkPolicy, CiliumNetworkPolicy, or Istio `STRICT` PeerAuthentication. A person prepares (plans and dry-runs) and approves each one, and agentshield verifies the result.
@@ -68,19 +68,19 @@ Detection itself never calls a model. It runs whenever one of the two model-call
 | `--agentic-investigation` | off | at most once per admitted investigation | A model agent investigates built-in novelty signals (new communication paths, exposure, lost governance) and may promote findings. Runs in its own sampled queue. Requires an OpenAI Responses-compatible endpoint. |
 | `--deployment-rule-authoring` | off | once per Kubernetes Deployment Pod template revision | A model agent drafts a detection rule for each Deployment from its observed behavior, after `--deployment-rule-baseline-window` (default 6h). Drafts run in shadow mode until an operator approves them. |
 
-When detection runs, a match of an active rule (an operator-activated CEL rule or an approved Deployment rule) becomes a finding directly, with no model call. Built-in novelty signals become findings only through agentic investigation, which records a finding only when the model's answer passes validation: it must cite facts and evidence the graph returned, including at least one medium-or-higher-risk signal. Agentic investigation drains its own durable queue, so a slow or failing model never delays detection. Batching, sampling, deduplication, and an hourly budget bound its spend; see [Change feed and reasoning](docs/architecture/change-feed-and-reasoning.md#the-investigation-queue).
+When detection runs, a match of an active rule (an operator-activated CEL rule or an approved Deployment rule) becomes a finding directly, with no model call. Built-in novelty signals become findings only through agentic investigation, which records a finding only when the model's answer passes validation: it must cite facts and evidence the graph returned, including at least one medium-or-higher-risk signal. Agentic investigation drains its own durable queue, so a slow or failing model never delays detection. Batching, sampling, deduplication, and an hourly budget bound its spend; see [Change feed and reasoning](https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/#the-investigation-queue).
 
 Without either feature you still get discovery, the graph and its change history, telemetry ingestion and rollups, and the HTTP API and UI for browsing resources, relationships, and sources. You get no findings, and so no remediation proposals, because proposals are attached to findings.
 
-Graph data is sent to the model endpoint; see the [security model](docs/operations/security-model.md#model-endpoints). Telemetry detection rules currently run only when a graph change opens a detection window; see [Detection rules](docs/architecture/detection-rules.md#inputs).
+Graph data is sent to the model endpoint; see the [security model](https://agent-shield.dev/docs/operations/security/#model-endpoints). Telemetry detection rules currently run only when a graph change opens a detection window; see [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#inputs).
 
 ## Status
 
 Agentshield is an early, pre-1.0 project. Expect breaking changes to APIs, the database schema, and flags.
 
-- The HTTP API and UI have **no authentication**, so the server binds to `127.0.0.1:8088` by default; read the [security model](docs/operations/security-model.md) before changing that.
+- The HTTP API and UI have **no authentication**, so the server binds to `127.0.0.1:8088` by default; read the [security model](https://agent-shield.dev/docs/operations/security/) before changing that.
 - One process per database; no high availability.
-- Tagged releases publish binaries on GitHub. Build a container image from the `Dockerfile` and deploy it with the [Helm chart](deploy/kubernetes/README.md); no container image is published yet.
+- Tagged releases publish binaries on GitHub. Build a container image from the `Dockerfile` and deploy it with the [Helm chart](https://agent-shield.dev/docs/operations/helm/); no container image is published yet.
 - Hubble flow and agentgateway access-log normalizers exist, but no transport feeds them yet. Today's telemetry sources are Istio waypoint access logs (via OpenTelemetry) and AWS VPC Flow Logs (via Firehose).
 
 ## How it works
@@ -91,11 +91,11 @@ Agentshield is an early, pre-1.0 project. Expect breaking changes to APIs, the d
 4. Detectors turn graph changes into signals, a model investigates each signal through read-only graph tools, and only answers that cite real graph evidence become findings.
 5. A finding can propose a fix, which runs only after a person prepares and approves it.
 
-The [pipeline diagram](docs/concepts/overview.md#pipeline) shows this flow. More detail: [What agentshield does](docs/concepts/overview.md) and the [architecture overview](docs/architecture/overview.md).
+The [pipeline diagram](https://agent-shield.dev/docs/concepts/overview/#pipeline) shows this flow. More detail: [What agentshield does](https://agent-shield.dev/docs/concepts/overview/) and the [architecture overview](https://agent-shield.dev/docs/architecture/).
 
 ## How well does it work?
 
-There are no published results yet. The evidence today is the evaluation suite in [`evals/`](evals/README.md): six campaigns, run against a disposable kind cluster with Cilium, Istio ambient, and agentgateway. They come in three attack/benign pairs, one per threat model:
+There are no published results yet. The evidence today is the [evaluation suite](https://agent-shield.dev/docs/operations/evals/): six campaigns, run against a disposable kind cluster with Cilium, Istio ambient, and agentgateway. They come in three attack/benign pairs, one per threat model:
 
 - a compromised checkout service reading a payment signing key from a secrets manager, against a governed secret-rotation controller;
 - a compromised ML workspace build worker reading workspace secrets, against the governed workspace secrets controller;
@@ -103,9 +103,9 @@ There are no published results yet. The evidence today is the evaluation suite i
 
 Each campaign generates real traffic in the cluster and waits until the plugin-produced observation reaches the graph before scoring; the expected outcome is never shown to the model. An attack campaign counts as a true positive if it produces a promoted finding, and a benign campaign counts as a true negative if it produces none. Each campaign report also records whether the finding category matched. A complete run reports security recall and benign specificity in `summary.json`, along with token usage and model latency. Six campaigns are a smoke test of the end-to-end path, not a measure of detection rates in general.
 
-To reproduce, run `make eval-up`, `make eval-check`, and `make eval-run`. The run makes real, billed model calls; [evals/README.md](evals/README.md) has the requirements and the output format.
+To reproduce, run `make eval-up`, `make eval-check`, and `make eval-run`. The run makes real, billed model calls; the [evaluation guide](https://agent-shield.dev/docs/operations/evals/) has the requirements and the output format.
 
-A separate rule suite (`make eval-rules`) scores detection rules on nine campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Deployment rule author drafts. See [rule evals](evals/README.md#rule-evals).
+A separate rule suite (`make eval-rules`) scores detection rules on nine campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Deployment rule author drafts. See [rule evals](https://agent-shield.dev/docs/operations/evals/#rule-evals).
 
 ## Quickstart
 
@@ -130,16 +130,16 @@ Open `http://127.0.0.1:8088` to browse the cluster graph. To get findings, also 
 
 Discovery only reads, but `make run` enables live remediation with your kubectl credentials, so a fix you approve in the UI is applied to the cluster. Use a read-only context if you only want to look.
 
-[Getting started](docs/getting-started.md) covers this path in detail and a full evaluation cluster with Cilium, Istio ambient, and agentgateway (`make eval-up`).
+[Getting started](https://agent-shield.dev/docs/getting-started/) covers this path in detail and a full evaluation cluster with Cilium, Istio ambient, and agentgateway (`make eval-up`).
 
 ## Binaries
 
 | Command | Purpose | Docs |
 | --- | --- | --- |
-| `cmd/agentshield` | The service: discovery, telemetry, graph API, UI, detection, agentic investigation, and remediation | [Configuration](docs/operations/configuration.md#agentshield) |
-| `cmd/agentshield-detector-rules` | Validate, save, activate, and show CEL rulesets; review Deployment rules; inspect authoring jobs, detection signals, and the investigation queue | [Detection rules](docs/architecture/detection-rules.md#managing-rulesets) |
-| `cmd/agentshield-deployment-author` | Run the Deployment rule author once against a local JSON file, or print its request with `--dry-run` | [Detection rules](docs/architecture/detection-rules.md#trying-the-author-without-a-cluster) |
-| `cmd/agentshield-reasoning-mcp` | Serve the reasoning MCP graph tools over streamable HTTP for a saved packet | [Change feed and reasoning](docs/architecture/change-feed-and-reasoning.md#investigation-tools) |
+| `cmd/agentshield` | The service: discovery, telemetry, graph API, UI, detection, agentic investigation, and remediation | [Configuration](https://agent-shield.dev/docs/operations/configuration/#agentshield) |
+| `cmd/agentshield-detector-rules` | Validate, save, activate, and show CEL rulesets; review Deployment rules; inspect authoring jobs, detection signals, and the investigation queue | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#managing-rulesets) |
+| `cmd/agentshield-deployment-author` | Run the Deployment rule author once against a local JSON file, or print its request with `--dry-run` | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#trying-the-author-without-a-cluster) |
+| `cmd/agentshield-reasoning-mcp` | Serve the reasoning MCP graph tools over streamable HTTP for a saved packet | [Change feed and reasoning](https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/#investigation-tools) |
 
 ## Documentation
 
@@ -147,14 +147,14 @@ Run `make docs-reference` to generate the complete code-backed reference set.
 See [Generated reference docs](CONTRIBUTING.md#generated-reference-docs) for
 coverage, local website updates, and the website workflow that opens update PRs.
 
-Start with the [documentation index](docs/README.md). Common destinations:
+Start with the [documentation index](https://agent-shield.dev/docs/). Common destinations:
 
-- [Getting started](docs/getting-started.md)
-- [Glossary](docs/concepts/glossary.md) and [data model](docs/concepts/data-model.md)
-- [Architecture overview](docs/architecture/overview.md)
-- [Writing a plugin](docs/plugins/README.md)
-- [Configuration](docs/operations/configuration.md) and [Helm deployment](deploy/kubernetes/README.md)
-- [Testing](docs/development/testing.md)
+- [Getting started](https://agent-shield.dev/docs/getting-started/)
+- [Glossary](https://agent-shield.dev/docs/concepts/glossary/) and [data model](https://agent-shield.dev/docs/concepts/data-model/)
+- [Architecture overview](https://agent-shield.dev/docs/architecture/)
+- [Writing a plugin](https://agent-shield.dev/docs/plugins/write-a-plugin/)
+- [Configuration](https://agent-shield.dev/docs/operations/configuration/) and [Helm deployment](https://agent-shield.dev/docs/operations/helm/)
+- [Testing](https://agent-shield.dev/docs/development/testing/)
 
 ## Contributing
 

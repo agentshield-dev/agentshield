@@ -8,18 +8,18 @@
 - Node.js 24 and [pnpm](https://pnpm.io) for UI work
 - kind and kubectl for local clusters and end-to-end tests
 
-Follow [Getting started](docs/getting-started.md) to run the service locally.
+Follow [Getting started](https://agent-shield.dev/docs/getting-started/) to run the service locally.
 
 ## Design docs
 
 Read the docs for the area you are changing:
 
-- [Data model](docs/concepts/data-model.md) for identity, assertions, and provenance.
-- [Plugin contract](docs/plugins/README.md) for discovery, contribution replacement, and plugin tests.
-- [Publication and storage](docs/architecture/publication-and-storage.md) for generations, persistence, and migrations.
-- [Telemetry](docs/architecture/telemetry.md) for ingestion, rollups, and backpressure.
+- [Data model](https://agent-shield.dev/docs/concepts/data-model/) for identity, assertions, and provenance.
+- [Plugin contract](https://agent-shield.dev/docs/plugins/contract/) for discovery, contribution replacement, and plugin tests.
+- [Publication and storage](https://agent-shield.dev/docs/architecture/publication-and-storage/) for generations, persistence, and migrations.
+- [Telemetry](https://agent-shield.dev/docs/architecture/telemetry/) for ingestion, rollups, and backpressure.
 
-The [docs index](docs/README.md) links to the remaining design docs.
+The [docs index](https://agent-shield.dev/docs/) links to the remaining design docs.
 
 ## Generated reference docs
 
@@ -44,11 +44,11 @@ website PR. Update `doc.go`, not the generated Markdown.
 
 ## Testing
 
-Run `go test -race ./path/to/package` for the packages you changed, then `make test` and `make lint`. [Testing](docs/development/testing.md) lists the integration, UI, and evaluation suites and when to use them.
+Run `go test -race ./path/to/package` for the packages you changed, then `make test` and `make lint`. [Testing](https://agent-shield.dev/docs/development/testing/) lists the integration, UI, and evaluation suites and when to use them.
 
 Database tests truncate their target. Use a disposable database, never one whose data you need.
 
-Changes to Kubernetes or Istio plugin projection need a cluster evaluation before merging. A maintainer can run it; the setup and billed model calls are described in [Testing](docs/development/testing.md#evaluation-suite).
+Changes to Kubernetes or Istio plugin projection need a cluster evaluation before merging. A maintainer can run it; the setup and billed model calls are described in [Testing](https://agent-shield.dev/docs/development/testing/#evaluation-suite).
 
 ## Pull requests
 

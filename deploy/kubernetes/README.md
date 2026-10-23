@@ -5,7 +5,7 @@ ClusterRole, a `ClusterIP` Service, health probes, and
 a local JSONL telemetry sink. PostgreSQL is required and is supplied through a
 Secret you create. AgentShield is pre-1.0; no container image is published.
 
-Read the [security model](../../docs/operations/security-model.md) before
+Read the [security model](https://agent-shield.dev/docs/operations/security/) before
 installing. The HTTP API has no authentication.
 
 ## Install
@@ -48,7 +48,7 @@ Secret referenced by `database.existingSecret` (key `url` by default).
 Use TLS outside loopback.
 
 The role needs DDL rights at startup to apply pending
-[migrations](../../docs/architecture/publication-and-storage.md#schema-migrations).
+[migrations](https://agent-shield.dev/docs/architecture/publication-and-storage/#schema-migrations).
 Never use this database for integration tests; those tests truncate their
 target. Change-feed and contribution history have no retention policy yet.
 
@@ -82,7 +82,7 @@ The schema creates the `agentshield` database, a raw event table with a
 30-day TTL, and per-minute rollups with a 180-day TTL. Adjust the schema if
 you choose a different database name. If ClickHouse is unavailable, ingestion
 applies backpressure rather than dropping events; see
-[Telemetry](../../docs/architecture/telemetry.md#failure-behavior).
+[Telemetry](https://agent-shield.dev/docs/architecture/telemetry/#failure-behavior).
 
 ## Process requirements
 
@@ -118,6 +118,6 @@ but its service account can read all cluster Secrets. The ClusterRole does not
 grant write permissions, and live remediation remains disabled on this
 non-loopback listener.
 
-See [Configuration](../../docs/operations/configuration.md) for every flag,
-and the [AWS plugin](../../docs/plugins/aws.md#vpc-flow-log-telemetry) for
+See [Configuration](https://agent-shield.dev/docs/operations/configuration/) for every flag,
+and the [AWS plugin](https://agent-shield.dev/docs/plugins/aws/#vpc-flow-log-telemetry) for
 Firehose ingestion setup.

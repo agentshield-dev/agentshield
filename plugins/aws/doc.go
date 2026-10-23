@@ -41,5 +41,5 @@
 // delivery as backpressure, and a delivery abandoned while blocked returns 503
 // so Firehose retries. Raw events reach the sink before any graph rollup.
 //
-// See docs/plugins/aws.md.
+// See https://agent-shield.dev/docs/plugins/aws/.
 package aws

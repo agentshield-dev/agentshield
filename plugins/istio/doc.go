@@ -39,5 +39,6 @@
 // The package also implements the peer-authentication/v1 remediation action,
 // which requires mutual TLS for a Pod with a STRICT PeerAuthentication.
 //
-// See docs/plugins/istio.md for the telemetry attribute contract.
+// See https://agent-shield.dev/docs/plugins/istio/ for the telemetry attribute
+// contract.
 package istio

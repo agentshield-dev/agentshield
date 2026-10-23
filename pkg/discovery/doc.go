@@ -61,6 +61,7 @@
 // publish from the next value. Package state rejects older generations and
 // treats a same-generation, same-input retry as idempotent.
 //
-// See docs/plugins/README.md for authoring guidance and
-// docs/architecture/publication-and-storage.md for what publication does.
+// See https://agent-shield.dev/docs/plugins/contract/ for authoring guidance
+// and https://agent-shield.dev/docs/architecture/publication-and-storage/ for
+// what publication does.
 package discovery

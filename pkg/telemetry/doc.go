@@ -41,5 +41,5 @@
 //   - Properties and evidence may be sensitive. This package does not log
 //     them; keep it that way.
 //
-// See docs/architecture/telemetry.md.
+// See https://agent-shield.dev/docs/architecture/telemetry/.
 package telemetry

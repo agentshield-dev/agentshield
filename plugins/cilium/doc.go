@@ -37,5 +37,5 @@
 // The package also implements the cilium-network-policy/v1 remediation action,
 // which declares ingress isolation for a Pod with a CiliumNetworkPolicy.
 //
-// See docs/plugins/cilium.md.
+// See https://agent-shield.dev/docs/plugins/cilium/.
 package cilium
