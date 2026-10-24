@@ -5,7 +5,7 @@
 # platform and cross-compile, so `docker buildx build --platform linux/amd64,linux/arm64` works
 # without emulation.
 
-FROM --platform=$BUILDPLATFORM node:24.22.1-trixie-slim AS ui
+FROM --platform=$BUILDPLATFORM node:26.12.0-trixie-slim AS ui
 WORKDIR /src/ui
 # corepack provides the pnpm version pinned by packageManager in ui/package.json.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
