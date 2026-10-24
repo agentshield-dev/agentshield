@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # distroless/static supplies CA certificates and a nonroot user (65532, the same UID the evals
 # image uses) and nothing else. The digest pins ca-certificates 20250419+deb13u1 or later, which
 # distrusts the compromised eMudhra intermediates.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 COPY --from=build /out/ /usr/local/bin/
 # The default --telemetry-jsonl path is relative (.agentshield/), so start in a writable directory.
 WORKDIR /home/nonroot
