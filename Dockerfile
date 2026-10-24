@@ -5,7 +5,7 @@
 # platform and cross-compile, so `docker buildx build --platform linux/amd64,linux/arm64` works
 # without emulation.
 
-FROM --platform=$BUILDPLATFORM node:24.21.0-trixie-slim AS ui
+FROM --platform=$BUILDPLATFORM node:24.22.1-trixie-slim AS ui
 WORKDIR /src/ui
 # corepack provides the pnpm version pinned by packageManager in ui/package.json.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY ui/ ./
 RUN pnpm build
 
-FROM --platform=$BUILDPLATFORM golang:1.27.2-trixie AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie AS build
 ARG TARGETOS
 ARG TARGETARCH
 # .git is excluded from the build context, so the version and commit come from build arguments.
@@ -33,15 +33,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     test -f ui/dist/index.html && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -o /out/ \
-      -ldflags="-s -w -X github.com/agentshield-dev/agentshield/internal/version.Version=${VERSION} -X github.com/agentshield-dev/agentshield/internal/version.Commit=${COMMIT}" \
-      ./cmd/agentshield \
-      ./cmd/agentshield-reasoning-mcp \
-      ./cmd/agentshield-detector-rules \
-      ./cmd/agentshield-deployment-author
+    -ldflags="-s -w -X github.com/agentshield-dev/agentshield/internal/version.Version=${VERSION} -X github.com/agentshield-dev/agentshield/internal/version.Commit=${COMMIT}" \
+    ./cmd/agentshield \
+    ./cmd/agentshield-reasoning-mcp \
+    ./cmd/agentshield-detector-rules \
+    ./cmd/agentshield-deployment-author
 
 # distroless/static supplies CA certificates and a nonroot user (65532, the same UID the evals
-# image uses) and nothing else.
-FROM gcr.io/distroless/static-debian13:nonroot
+# image uses) and nothing else. The digest pins ca-certificates 20250419+deb13u1 or later, which
+# distrusts the compromised eMudhra intermediates.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 COPY --from=build /out/ /usr/local/bin/
 # The default --telemetry-jsonl path is relative (.agentshield/), so start in a writable directory.
 WORKDIR /home/nonroot

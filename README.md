@@ -27,7 +27,7 @@ Agentshield finds evidence-backed lateral-movement paths and risky security chan
 
 ## See it in 60 seconds
 
-The web UI ships with an interactive playground that runs the real UI against a fake in-browser backend. It needs only `make`, Node.js 22.12 or later (`ui/.nvmrc` pins 24), and pnpm 11 (`corepack enable` provides it). No Go, database, cluster, or model.
+The web UI ships with an interactive playground that runs the real UI against a fake in-browser backend. It needs only `make`, Node.js 22.23.4, 24.22.1, or 26.12.1 or later on their release lines (`ui/.nvmrc` pins 24), and pnpm 11 (`corepack enable` provides it). No Go, database, cluster, or model.
 
 ```bash
 git clone https://github.com/agentshield-dev/agentshield.git
@@ -114,7 +114,7 @@ You need:
 - Go 1.27 or later (`go.mod`)
 - Docker with Compose v2, for PostgreSQL 16 and kind
 - [kind](https://kind.sigs.k8s.io) and kubectl, or any Kubernetes 1.30+ cluster in your current kubectl context
-- To build the web UI: Node.js 24 (`ui/.nvmrc`; `ui/package.json` accepts 22.12 or later) and pnpm 11 (`packageManager` in `ui/package.json`). pnpm installs TypeScript and Vite. Skip the UI with `make run UI=0`.
+- To build the web UI: Node.js 24 (`ui/.nvmrc`; `ui/package.json` accepts 22.23.4, 24.22.1, or 26.12.1 or later on their release lines) and pnpm 11 (`packageManager` in `ui/package.json`). pnpm installs TypeScript and Vite. Skip the UI with `make run UI=0`.
 
 ```bash
 kind create cluster --name agentshield-demo

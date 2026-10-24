@@ -39,3 +39,12 @@ updates:
       actions:
         patterns: ['*']
         update-types: [minor, patch]
+  # Base images are pinned by version and digest; this keeps them current with security fixes.
+  - package-ecosystem: docker
+    directories: [/, /evals/config]
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ['*']
+        update-types: [minor, patch]
