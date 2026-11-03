@@ -158,6 +158,19 @@ type Contribution struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type ContributionDelta struct {
+	PluginID         string      `json:"pluginId"`
+	SourceID         string      `json:"sourceId"`
+	Name             string      `json:"name"`
+	BaseGeneration   uint64      `json:"baseGeneration"`
+	Generation       uint64      `json:"generation"`
+	Added            graph.Input `json:"added"`
+	Retracted        graph.Input `json:"retracted"`
+	SourceObservedAt time.Time   `json:"sourceObservedAt"`
+	Ready            bool        `json:"ready"`
+	SourceHealth     string      `json:"sourceHealth"`
+}
+
 // GraphView is a compiled graph at one committed publication revision.
 // GeneratedAt is the most recent contribution head update.
 type GraphView struct {
@@ -384,6 +397,50 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 		return Publication{}, err
 	}
 	return publication, nil
+}
+
+func (s *Store) ApplyContributionDelta(ctx context.Context, delta ContributionDelta) (Publication, error) {
+	if delta.BaseGeneration == 0 || delta.Generation != delta.BaseGeneration+1 {
+		return Publication{}, errors.New("contribution delta generation must immediately follow its positive base generation")
+	}
+	contribution := Contribution{
+		PluginID: delta.PluginID, SourceID: delta.SourceID, Name: delta.Name, Generation: delta.Generation,
+		Input: delta.Added, SourceObservedAt: delta.SourceObservedAt, Ready: delta.Ready, SourceHealth: delta.SourceHealth,
+	}
+	if err := validateContribution(contribution); err != nil {
+		return Publication{}, err
+	}
+	retracted := contribution
+	retracted.Input = delta.Retracted
+	if err := validateContribution(retracted); err != nil {
+		return Publication{}, err
+	}
+	if delta.Generation > math.MaxInt64 {
+		return Publication{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
+	}
+	contribution.UpdatedAt = time.Now().UTC()
+	if contribution.SourceObservedAt.IsZero() {
+		contribution.SourceObservedAt = contribution.UpdatedAt
+	} else {
+		contribution.SourceObservedAt = contribution.SourceObservedAt.UTC()
+	}
+	if contribution.SourceHealth == "" {
+		contribution.SourceHealth = SourceHealthHealthy
+	}
+	encoded, err := json.Marshal(delta)
+	if err != nil {
+		return Publication{}, fmt.Errorf("encode contribution delta: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	added, err := s.compiler.CompileContribution(delta.Added)
+	if err != nil {
+		return Publication{}, fmt.Errorf("compile contribution additions: %w", err)
+	}
+	retractedSnapshot, err := s.compiler.CompileContribution(delta.Retracted)
+	if err != nil {
+		return Publication{}, fmt.Errorf("compile contribution retractions: %w", err)
+	}
+	return s.publishContributionDelta(ctx, contribution, delta.BaseGeneration, digest, added, retractedSnapshot)
 }
 
 // contributionInputDigest identifies the submitted input for same-generation

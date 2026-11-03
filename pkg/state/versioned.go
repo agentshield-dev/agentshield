@@ -108,6 +108,122 @@ func (s *Store) publishContribution(ctx context.Context, contribution Contributi
 	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
 }
 
+func (s *Store) publishContributionDelta(ctx context.Context, contribution Contribution, baseGeneration uint64, inputDigest [32]byte, added, retracted graph.Snapshot) (Publication, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
+	defer cancel()
+	s.materializerMu.Lock()
+	defer s.materializerMu.Unlock()
+	tx, err := s.beginPublication(ctx)
+	if err != nil {
+		return Publication{}, err
+	}
+	publication, err := s.commitDeltaCandidate(ctx, tx, contribution, baseGeneration, inputDigest, added, retracted)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return Publication{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Publication{}, fmt.Errorf("commit contribution delta: %w", err)
+	}
+	s.materialized = nil
+	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
+}
+
+func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, baseGeneration uint64, inputDigest [32]byte, added, retracted graph.Snapshot) (contributionPublication, error) {
+	var revision int64
+	var generatedAt *time.Time
+	if err := tx.QueryRow(ctx, `SELECT revision, generated_at FROM graph_state WHERE singleton=true FOR UPDATE`).Scan(&revision, &generatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("lock graph revision: %w", err)
+	}
+	contributionID, err := resolveContribution(ctx, tx, contribution)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	head, hasHead, err := readContributionHead(ctx, tx, contributionID)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	if hasHead && int64(contribution.Generation) == head.generation {
+		if !equalBytes(head.inputDigest, inputDigest[:]) {
+			return contributionPublication{}, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
+		}
+		publicationTime := contribution.UpdatedAt
+		if generatedAt != nil {
+			publicationTime = *generatedAt
+		}
+		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
+	}
+	if !hasHead || head.generation != int64(baseGeneration) {
+		return contributionPublication{}, fmt.Errorf("contribution delta base generation %d does not match current generation", baseGeneration)
+	}
+	preparedAdded, err := prepareCompiledAssertions(added)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	preparedRetracted, err := prepareCompiledAssertions(retracted)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	delta := membershipDelta{added: preparedAdded.refs, retracted: preparedRetracted.refs}
+	if err := applyMembershipDelta(ctx, tx, contributionID, delta); err != nil {
+		return contributionPublication{}, err
+	}
+	if err := persistCompiledAssertions(ctx, tx, preparedAdded, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
+		return contributionPublication{}, err
+	}
+	status := contributionStatus(contribution)
+	versionID, err := recordContributionVersion(ctx, tx, contributionID, contribution, inputDigest, status)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	changedResources, err := reconcileProjectionDelta(ctx, tx, s.compiler, delta, contribution.UpdatedAt, s.unresolvedRetention)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
+		return contributionPublication{}, err
+	}
+	metadataChanged := head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status
+	if !telemetryOnlyChanges(delta.added, delta.retracted) || metadataChanged {
+		if err := appendChangeEvent(ctx, tx, versionID, contribution, status, delta); err != nil {
+			return contributionPublication{}, err
+		}
+	}
+	revision++
+	if _, err := tx.Exec(ctx, `UPDATE graph_state SET revision=$1, generated_at=$2 WHERE singleton=true`, revision, contribution.UpdatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("advance graph revision: %w", err)
+	}
+	return contributionPublication{VersionID: versionID, Revision: uint64(revision), GeneratedAt: contribution.UpdatedAt}, nil
+}
+
+func applyMembershipDelta(ctx context.Context, tx pgx.Tx, contributionID int64, delta membershipDelta) error {
+	for _, ref := range delta.retracted {
+		result, err := tx.Exec(ctx, `DELETE FROM contribution_current_assertions WHERE contribution_id=$1 AND assertion_type=$2 AND assertion_id=$3`, contributionID, ref.Type, ref.ID)
+		if err != nil {
+			return fmt.Errorf("retract contribution assertion: %w", err)
+		}
+		if result.RowsAffected() != 1 {
+			return fmt.Errorf("cannot retract unowned %s assertion %s", ref.Type, ref.ID)
+		}
+	}
+	for _, ref := range delta.added {
+		result, err := tx.Exec(ctx, `INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, contributionID, ref.Type, ref.ID)
+		if err != nil {
+			return fmt.Errorf("add contribution assertion: %w", err)
+		}
+		if result.RowsAffected() != 1 {
+			return fmt.Errorf("cannot add already owned %s assertion %s", ref.Type, ref.ID)
+		}
+	}
+	return nil
+}
+
 func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph, error) {
 	var revision int64
 	if err := s.pool.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {

@@ -487,6 +487,43 @@ func TestPostgreSQLPublicationPreservesUnchangedProjectionRows(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLContributionDeltaUpdatesMembershipAndRejectsStaleBase(t *testing.T) {
+	store, _ := integrationStore(t)
+	first := testContribution("inventory", 1, "a")
+	if _, err := store.ReplaceContribution(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := testContribution("inventory", 2, "b")
+	delta := ContributionDelta{
+		PluginID: "test", SourceID: "source", Name: "inventory", BaseGeneration: 1, Generation: 2,
+		Added: second.Input, Retracted: first.Input, Ready: true, SourceHealth: SourceHealthHealthy,
+	}
+	publication, err := store.ApplyContributionDelta(context.Background(), delta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := store.ApplyContributionDelta(context.Background(), delta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Revision != publication.Revision {
+		t.Fatalf("delta retry revision = %d, want %d", retry.Revision, publication.Revision)
+	}
+	view, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Snapshot.Resources) != 1 || view.Snapshot.Resources[0].Identity.ImmutableKey != "b" {
+		t.Fatalf("delta graph resources = %+v, want b", view.Snapshot.Resources)
+	}
+	stale := delta
+	stale.BaseGeneration = 3
+	stale.Generation = 4
+	if _, err := store.ApplyContributionDelta(context.Background(), stale); err == nil || !strings.Contains(err.Error(), "does not match current generation") {
+		t.Fatalf("stale delta error = %v", err)
+	}
+}
+
 func TestPostgreSQLResourceQueryUsesCurrentProjection(t *testing.T) {
 	store, _ := integrationStore(t)
 	contribution := testContribution("inventory", 1, "checkout")
