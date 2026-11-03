@@ -14,6 +14,7 @@ Follow [Getting started](https://agent-shield.dev/docs/getting-started/) to run 
 
 Read the docs for the area you are changing:
 
+- [Architecture decision records](adr/) for accepted implementation decisions and their tradeoffs.
 - [Data model](https://agent-shield.dev/docs/concepts/data-model/) for identity, assertions, and provenance.
 - [Plugin contract](https://agent-shield.dev/docs/plugins/contract/) for discovery, contribution replacement, and plugin tests.
 - [Publication and storage](https://agent-shield.dev/docs/architecture/publication-and-storage/) for generations, persistence, and migrations.
