@@ -635,6 +635,33 @@ func prepareCompiledAssertions(compiled graph.Snapshot) (preparedAssertions, err
 }
 
 func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, prepared preparedAssertions, added []assertionRef) error {
+	if len(prepared.identities) > 0 {
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE incoming_resource_identities (resource_id uuid PRIMARY KEY, scheme_group text NOT NULL, scheme_version text NOT NULL, scheme_kind text NOT NULL, authority_id text NOT NULL, immutable_key text NOT NULL) ON COMMIT DROP`); err != nil {
+			return fmt.Errorf("create incoming resource identities: %w", err)
+		}
+		rows := make([][]any, 0, len(prepared.identities))
+		for resourceID, claim := range prepared.identities {
+			rows = append(rows, []any{resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey})
+		}
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_resource_identities"}, []string{"resource_id", "scheme_group", "scheme_version", "scheme_kind", "authority_id", "immutable_key"}, pgx.CopyFromRows(rows)); err != nil {
+			return fmt.Errorf("stage incoming resource identities: %w", err)
+		}
+		var collision string
+		err := tx.QueryRow(ctx, `
+			SELECT incoming.resource_id
+			FROM incoming_resource_identities incoming
+			JOIN resource_identities stored USING (resource_id)
+			WHERE (stored.scheme_group, stored.scheme_version, stored.scheme_kind, stored.authority_id, stored.immutable_key)
+			   IS DISTINCT FROM
+			      (incoming.scheme_group, incoming.scheme_version, incoming.scheme_kind, incoming.authority_id, incoming.immutable_key)
+			LIMIT 1`).Scan(&collision)
+		if err == nil {
+			return fmt.Errorf("resource ID %s collides with a different identity claim", collision)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("validate resource identities: %w", err)
+		}
+	}
 	identitySet := make(map[string]struct{})
 	for _, ref := range added {
 		for _, resourceID := range prepared.inserts[ref].identityIDs {
