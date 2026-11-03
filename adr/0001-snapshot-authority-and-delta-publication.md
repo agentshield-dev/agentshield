@@ -97,6 +97,8 @@ Approximate allocations for the same operation were:
 
 The host also produced isolated 23-second, 90-second, and 118-second PostgreSQL stalls during selective-replacement runs. Those samples are excluded from the normal ranges rather than hidden in an average. A noisy mixed 100,000-assertion delta run ranged from 106 to 394 ms; the table uses a fresh isolated run. The allocation curve shows the architectural distinction: selective replacement is faster but linear in contribution size, while explicit delta publication removes whole-contribution allocation and grows much more slowly with indexed table size for a localized change.
 
+Required follow-up: reproduce and diagnose the recurring host-level stalls before using these results for capacity planning. Capture PostgreSQL wait events and checkpoints, container CPU and I/O throttling, host memory pressure and swapping, filesystem latency, and concurrent host activity so the investigation can distinguish a database execution problem from benchmark-environment contention.
+
 These measurements support the publication contract. They are not service-level objectives. Production limits require representative provider payloads, concurrent publishers, and sustained-load measurements.
 
 ## Consequences
