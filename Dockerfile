@@ -38,10 +38,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     ./cmd/agentshield-detector-rules \
     ./cmd/agentshield-deployment-author
 
-# distroless/static supplies CA certificates and a nonroot user (65532, the same UID the evals
-# image uses) and nothing else. The digest pins ca-certificates 20250419+deb13u1 or later, which
-# distrusts the compromised eMudhra intermediates.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+# chainguard/static supplies CA certificates and a nonroot user (65532, the same UID the evals
+# image uses) and nothing else. Only :latest is published, so the digest pins the base.
+FROM cgr.dev/chainguard/static@sha256:fc42af33e643f20d08baf03cddcc1c02ba57052dfb02edb0d79f3fc47bcea8d9
 COPY --from=build /out/ /usr/local/bin/
 # The default --telemetry-jsonl path is relative (.agentshield/), so start in a writable directory.
 WORKDIR /home/nonroot

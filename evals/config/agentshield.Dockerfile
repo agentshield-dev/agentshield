@@ -1,6 +1,6 @@
-# Same base as the release image: distroless/static supplies CA certificates, which the
+# Same base as the release image: chainguard/static supplies CA certificates, which the
 # model-calling features need for HTTPS, and the nonroot user 65532.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM cgr.dev/chainguard/static@sha256:fc42af33e643f20d08baf03cddcc1c02ba57052dfb02edb0d79f3fc47bcea8d9
 COPY agentshield /agentshield
 USER 65532:65532
 ENTRYPOINT ["/agentshield"]
