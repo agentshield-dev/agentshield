@@ -152,7 +152,7 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 		}
 		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
 	}
-	newRefs, err := persistCompiledAssertions(ctx, tx, compiled)
+	prepared, err := prepareCompiledAssertions(compiled)
 	if err != nil {
 		return contributionPublication{}, err
 	}
@@ -161,8 +161,17 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 	if err != nil {
 		return contributionPublication{}, err
 	}
-	delta, err := replaceMembership(ctx, tx, contributionID, newRefs)
+	delta, err := replaceMembership(ctx, tx, contributionID, prepared.refs)
 	if err != nil {
+		return contributionPublication{}, err
+	}
+	if err := persistCompiledAssertions(ctx, tx, prepared, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
 		return contributionPublication{}, err
 	}
 	var changedResources []graph.Resource
@@ -349,12 +358,6 @@ func replaceMembership(ctx context.Context, tx pgx.Tx, contributionID int64, new
 	sortAssertionRefs(delta.added)
 	sortAssertionRefs(delta.retracted)
 	changed.Close()
-	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
-		return membershipDelta{}, err
-	}
-	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
-		return membershipDelta{}, err
-	}
 	return delta, nil
 }
 
@@ -452,18 +455,19 @@ type assertionTable[T any] struct {
 }
 
 type assertionInsert struct {
-	ref   assertionRef
-	query string
-	args  []any
+	ref         assertionRef
+	identityIDs []string
+	query       string
+	args        []any
 }
 
-func (table assertionTable[T]) prepare(content any, values ...any) (assertionInsert, error) {
+func (table assertionTable[T]) prepare(content any, identityIDs []string, values ...any) (assertionInsert, error) {
 	id, digest, err := contentAddress(table.assertionType, content)
 	if err != nil {
 		return assertionInsert{}, err
 	}
 	return assertionInsert{
-		ref: assertionRef{Type: table.assertionType, ID: id}, query: table.insert,
+		ref: assertionRef{Type: table.assertionType, ID: id}, identityIDs: identityIDs, query: table.insert,
 		args: append([]any{id, digest[:]}, values...),
 	}, nil
 }
@@ -551,9 +555,15 @@ var telemetryAssertions = assertionTable[graph.TelemetryAssertion]{
 // persistCompiledAssertions stores every assertion in a compiled contribution
 // snapshot, including the competing assertions of identity conflicts, and
 // returns their sorted references.
-func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, compiled graph.Snapshot) ([]assertionRef, error) {
+type preparedAssertions struct {
+	identities map[string]graph.IdentityClaim
+	inserts    map[assertionRef]assertionInsert
+	refs       []assertionRef
+}
+
+func prepareCompiledAssertions(compiled graph.Snapshot) (preparedAssertions, error) {
 	identities := make(map[string]graph.IdentityClaim)
-	var inserts []assertionInsert
+	inserts := make(map[assertionRef]assertionInsert)
 	addIdentity := func(resourceID string, claim graph.IdentityClaim) error {
 		if current, exists := identities[resourceID]; exists && current != claim {
 			return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
@@ -565,65 +575,80 @@ func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, compiled graph.Sn
 		if err != nil {
 			return err
 		}
-		inserts = append(inserts, insert)
+		inserts[insert.ref] = insert
 		return nil
 	}
 	for _, resource := range compiled.Resources {
 		if err := addIdentity(resource.ID, resource.Identity); err != nil {
-			return nil, err
+			return preparedAssertions{}, err
 		}
 		for _, assertion := range resource.Assertions {
-			if err := addAssertion(resourceAssertions.prepare(assertion, resource.ID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(resourceAssertions.prepare(assertion, []string{resource.ID}, resource.ID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, conflict := range compiled.Conflicts {
 		for _, assertion := range conflict.Assertions {
 			if err := addIdentity(conflict.ResourceID, assertion.Claim); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(resourceAssertions.prepare(assertion, conflict.ResourceID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(resourceAssertions.prepare(assertion, []string{conflict.ResourceID}, conflict.ResourceID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, facet := range compiled.Facets {
 		for _, assertion := range facet.Assertions {
 			if err := addIdentity(facet.ResourceID, assertion.Resource); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(facetAssertions.prepare(assertion, facet.ID, facet.ResourceID, facet.Kind, facet.Key, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(facetAssertions.prepare(assertion, []string{facet.ResourceID}, facet.ID, facet.ResourceID, facet.Kind, facet.Key, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, relationship := range compiled.Relationships {
 		for _, assertion := range relationship.Assertions {
 			if err := addIdentity(relationship.SubjectID, assertion.Subject); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
 			if err := addIdentity(relationship.ObjectID, assertion.Object); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(relationshipAssertions.prepare(assertion, relationship.ID, relationship.SubjectID, relationship.ObjectID, relationship.Predicate, relationship.Qualifier, objectJSON(assertion.Properties), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(relationshipAssertions.prepare(assertion, []string{relationship.SubjectID, relationship.ObjectID}, relationship.ID, relationship.SubjectID, relationship.ObjectID, relationship.Predicate, relationship.Qualifier, objectJSON(assertion.Properties), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, event := range compiled.Telemetry {
-		if err := addAssertion(telemetryAssertions.prepare(event, event.ID, event.EventID, event.Kind, event.SubjectID, event.ObjectID, event.Operation, event.Outcome, event.Coverage, int64(event.Count), objectJSON(event.Properties), event.PluginID, event.SourceID, event.RuleID, stringSliceJSON(event.EvidenceIDs))); err != nil {
-			return nil, err
+		if err := addAssertion(telemetryAssertions.prepare(event, nil, event.ID, event.EventID, event.Kind, event.SubjectID, event.ObjectID, event.Operation, event.Outcome, event.Coverage, int64(event.Count), objectJSON(event.Properties), event.PluginID, event.SourceID, event.RuleID, stringSliceJSON(event.EvidenceIDs))); err != nil {
+			return preparedAssertions{}, err
 		}
 	}
-	identityIDs := make([]string, 0, len(identities))
-	for resourceID := range identities {
+	refs := make([]assertionRef, 0, len(inserts))
+	for ref := range inserts {
+		refs = append(refs, ref)
+	}
+	sortAssertionRefs(refs)
+	return preparedAssertions{identities: identities, inserts: inserts, refs: refs}, nil
+}
+
+func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, prepared preparedAssertions, added []assertionRef) error {
+	identitySet := make(map[string]struct{})
+	for _, ref := range added {
+		for _, resourceID := range prepared.inserts[ref].identityIDs {
+			identitySet[resourceID] = struct{}{}
+		}
+	}
+	identityIDs := make([]string, 0, len(identitySet))
+	for resourceID := range identitySet {
 		identityIDs = append(identityIDs, resourceID)
 	}
 	slices.Sort(identityIDs)
 	var identityBatch pgx.Batch
 	for _, resourceID := range identityIDs {
-		claim := identities[resourceID]
+		claim := prepared.identities[resourceID]
 		identityBatch.Queue(`
 			INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
 			VALUES ($1,$2,$3,$4,$5,$6)
@@ -641,32 +666,30 @@ func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, compiled graph.Sn
 		if err := identityResults.QueryRow().Scan(&storedID); err != nil {
 			_ = identityResults.Close()
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
+				return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
 			}
-			return nil, fmt.Errorf("persist resource identity %s: %w", resourceID, err)
+			return fmt.Errorf("persist resource identity %s: %w", resourceID, err)
 		}
 	}
 	if err := identityResults.Close(); err != nil {
-		return nil, fmt.Errorf("persist resource identities: %w", err)
+		return fmt.Errorf("persist resource identities: %w", err)
 	}
-	refs := make([]assertionRef, 0, len(inserts))
 	var assertionBatch pgx.Batch
-	for _, insert := range inserts {
+	for _, ref := range added {
+		insert := prepared.inserts[ref]
 		assertionBatch.Queue(insert.query, insert.args...)
-		refs = append(refs, insert.ref)
 	}
 	assertionResults := tx.SendBatch(ctx, &assertionBatch)
-	for _, insert := range inserts {
+	for _, ref := range added {
 		if _, err := assertionResults.Exec(); err != nil {
 			_ = assertionResults.Close()
-			return nil, fmt.Errorf("persist %s assertion: %w", insert.ref.Type, err)
+			return fmt.Errorf("persist %s assertion: %w", ref.Type, err)
 		}
 	}
 	if err := assertionResults.Close(); err != nil {
-		return nil, fmt.Errorf("persist assertions: %w", err)
+		return fmt.Errorf("persist assertions: %w", err)
 	}
-	sortAssertionRefs(refs)
-	return refs, nil
+	return nil
 }
 
 // contentAddress hashes the assertion type and its JSON encoding. The compiler
