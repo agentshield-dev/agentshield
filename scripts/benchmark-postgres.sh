@@ -33,4 +33,5 @@ port="${address##*:}"
 export AGENTSHIELD_TEST_DATABASE_URL="postgres://agentshield:${password}@127.0.0.1:${port}/agentshield_benchmark?sslmode=disable"
 
 cd "$repo_root"
-go test -run '^$' -bench '^BenchmarkPostgreSQL(Publication|Latest)$' -benchmem -count=3 ./pkg/state
+go test -run '^$' -bench "${AGENTSHIELD_BENCHMARK_PATTERN:-^BenchmarkPostgreSQL(Publication|DeltaPublication|Latest)$}" \
+  -benchtime "${AGENTSHIELD_BENCHMARK_TIME:-1s}" -benchmem -count "${AGENTSHIELD_BENCHMARK_COUNT:-3}" ./pkg/state

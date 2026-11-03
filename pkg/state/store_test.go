@@ -516,10 +516,25 @@ func TestPostgreSQLContributionDeltaUpdatesMembershipAndRejectsStaleBase(t *test
 	if len(view.Snapshot.Resources) != 1 || view.Snapshot.Resources[0].Identity.ImmutableKey != "b" {
 		t.Fatalf("delta graph resources = %+v, want b", view.Snapshot.Resources)
 	}
+	overlap := delta
+	overlap.BaseGeneration = 2
+	overlap.Generation = 3
+	overlap.Added = second.Input
+	overlap.Retracted = second.Input
+	if _, err := store.ApplyContributionDelta(context.Background(), overlap); !errors.Is(err, ErrContributionDeltaMembershipMismatch) || !strings.Contains(err.Error(), "both added and retracted") {
+		t.Fatalf("overlapping delta error = %v", err)
+	}
+	third := testContribution("inventory", 4, "c")
+	if _, err := store.ApplyContributionDelta(context.Background(), ContributionDelta{
+		PluginID: "test", SourceID: "source", Name: "inventory", BaseGeneration: 2, Generation: 4,
+		Added: third.Input, Retracted: second.Input, Ready: true, SourceHealth: SourceHealthHealthy,
+	}); err != nil {
+		t.Fatalf("gapped delta generation: %v", err)
+	}
 	stale := delta
-	stale.BaseGeneration = 3
-	stale.Generation = 4
-	if _, err := store.ApplyContributionDelta(context.Background(), stale); err == nil || !strings.Contains(err.Error(), "does not match current generation") {
+	stale.BaseGeneration = 2
+	stale.Generation = 5
+	if _, err := store.ApplyContributionDelta(context.Background(), stale); !errors.Is(err, ErrContributionDeltaBaseMismatch) {
 		t.Fatalf("stale delta error = %v", err)
 	}
 }

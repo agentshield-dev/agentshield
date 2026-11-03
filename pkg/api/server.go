@@ -353,10 +353,7 @@ func (server *Server) handleEvents(writer http.ResponseWriter, request *http.Req
 			return true
 		}
 		payload, _ := json.Marshal(map[string]any{"revision": record.Revision, "generatedAt": record.GeneratedAt})
-		if !send("event: graph\ndata: " + string(payload) + "\n\n") {
-			return false
-		}
-		return true
+		return send("event: graph\ndata: " + string(payload) + "\n\n")
 	}
 	poll := time.NewTicker(server.eventPollInterval)
 	defer poll.Stop()

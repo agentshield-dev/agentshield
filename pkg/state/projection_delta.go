@@ -452,11 +452,3 @@ func projectionSetUUIDs(values map[string]struct{}) ([]uuid.UUID, error) {
 	}
 	return projectionUUIDs(keys)
 }
-
-func cloneProjectionSet(values map[string]struct{}) map[string]struct{} {
-	result := make(map[string]struct{}, len(values))
-	for value := range values {
-		result[value] = struct{}{}
-	}
-	return result
-}

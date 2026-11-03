@@ -27,6 +27,14 @@ var ErrNotMaterialized = errors.New("graph is not materialized")
 // ErrGraphEntityNotFound is returned by current-projection detail reads.
 var ErrGraphEntityNotFound = errors.New("graph entity not found")
 
+// ErrContributionDeltaBaseMismatch requires the publisher to recover with a
+// complete contribution replacement based on the current durable generation.
+var ErrContributionDeltaBaseMismatch = errors.New("contribution delta base generation does not match current generation")
+
+// ErrContributionDeltaMembershipMismatch requires the publisher to recover
+// with a complete contribution replacement.
+var ErrContributionDeltaMembershipMismatch = errors.New("contribution delta does not match current membership")
+
 // Source health values accepted on a Contribution. They describe the upstream
 // source, independently of contribution readiness.
 const (
@@ -158,6 +166,8 @@ type Contribution struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// ContributionDelta advances one existing contribution by explicitly adding
+// and retracting assertions relative to BaseGeneration.
 type ContributionDelta struct {
 	PluginID         string      `json:"pluginId"`
 	SourceID         string      `json:"sourceId"`
@@ -400,8 +410,8 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 }
 
 func (s *Store) ApplyContributionDelta(ctx context.Context, delta ContributionDelta) (Publication, error) {
-	if delta.BaseGeneration == 0 || delta.Generation != delta.BaseGeneration+1 {
-		return Publication{}, errors.New("contribution delta generation must immediately follow its positive base generation")
+	if delta.BaseGeneration == 0 || delta.Generation <= delta.BaseGeneration {
+		return Publication{}, errors.New("contribution delta generation must be newer than its positive base generation")
 	}
 	contribution := Contribution{
 		PluginID: delta.PluginID, SourceID: delta.SourceID, Name: delta.Name, Generation: delta.Generation,
@@ -427,7 +437,10 @@ func (s *Store) ApplyContributionDelta(ctx context.Context, delta ContributionDe
 	if contribution.SourceHealth == "" {
 		contribution.SourceHealth = SourceHealthHealthy
 	}
-	encoded, err := json.Marshal(delta)
+	encoded, err := json.Marshal(struct {
+		Added     graph.Input `json:"added"`
+		Retracted graph.Input `json:"retracted"`
+	}{Added: delta.Added, Retracted: delta.Retracted})
 	if err != nil {
 		return Publication{}, fmt.Errorf("encode contribution delta: %w", err)
 	}

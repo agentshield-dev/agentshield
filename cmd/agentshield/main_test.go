@@ -257,6 +257,14 @@ func TestParseOptionsRequiresAWSRegionForAWSReceivers(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsDisabledContributionCheckpoints(t *testing.T) {
+	for _, flag := range []string{"--contribution-checkpoint-interval=0s", "--contribution-checkpoint-deltas=0"} {
+		if _, err := parseOptions([]string{flag}); err == nil || !strings.Contains(err.Error(), "checkpoint") {
+			t.Errorf("parseOptions(%q) error = %v, want a checkpoint requirement", flag, err)
+		}
+	}
+}
+
 func TestRulesSubcommandRunsFromMainBinary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rules.json")
 	if err := os.WriteFile(path, []byte(`{"id":"test","rules":[]}`), 0o600); err != nil {

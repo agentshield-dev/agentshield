@@ -73,7 +73,7 @@ Publishers must produce a complete replacement:
 - when the publisher detects local membership drift;
 - periodically, using a bounded time or accepted-delta count.
 
-The implementation must choose and expose the periodic bound. This ADR does not prescribe its default. Checkpoints should be staggered across contributions so they do not synchronize into a database spike.
+The runtime checkpoints after 1,000 accepted deltas or 15 minutes, whichever is observed first on the contribution's next publication. Both bounds are operator-configurable. Checkpoints should be staggered across contributions so they do not synchronize into a database spike.
 
 At startup, a plugin reads its durable generation, obtains a coherent complete provider view, and publishes the next generation as a replacement. It must not infer retractions from an empty in-memory cache. It may publish deltas only after that replacement commits.
 
@@ -83,19 +83,19 @@ The experiments changed one resource assertion in an already populated contribut
 
 | Contribution size | Projection checkpoint | Selective replacement | Explicit delta |
 | ---: | ---: | ---: | ---: |
-| 10,000 assertions | 0.79-0.89 s | 0.216-0.225 s | 36-65 ms |
-| 50,000 assertions | 3.90-4.18 s | 0.908-0.911 s | 51-86 ms |
-| 100,000 assertions | 8.25-8.57 s | 2.11-2.14 s | 48-117 ms |
+| 10,000 assertions | 0.79-0.89 s | 0.244-0.262 s | 56-66 ms |
+| 50,000 assertions | 3.90-4.18 s | 1.04-1.11 s | 63-94 ms |
+| 100,000 assertions | 8.25-8.57 s | 2.29-2.32 s | 157-185 ms |
 
 Approximate allocations for the same operation were:
 
 | Contribution size | Projection checkpoint | Selective replacement | Explicit delta |
 | ---: | ---: | ---: | ---: |
-| 10,000 assertions | 123 MB | 76-87 MB | 0.17-0.23 MB |
-| 50,000 assertions | 609 MB | about 359 MB | 0.16-0.22 MB |
-| 100,000 assertions | 1.24 GB | 717-845 MB | about 0.16 MB |
+| 10,000 assertions | 123 MB | 76-87 MB | 0.23-0.30 MB |
+| 50,000 assertions | 609 MB | about 424 MB | 0.16-0.24 MB |
+| 100,000 assertions | 1.24 GB | 717-845 MB | about 0.24 MB |
 
-The host also produced isolated 23-second and 90-second PostgreSQL stalls during selective-replacement runs. Those samples are excluded from the normal ranges rather than hidden in an average. The allocation curve and remaining samples still show the architectural distinction: selective replacement is faster but linear in contribution size, while explicit delta publication is effectively independent of total graph size for a localized change.
+The host also produced isolated 23-second, 90-second, and 118-second PostgreSQL stalls during selective-replacement runs. Those samples are excluded from the normal ranges rather than hidden in an average. A noisy mixed 100,000-assertion delta run ranged from 106 to 394 ms; the table uses a fresh isolated run. The allocation curve shows the architectural distinction: selective replacement is faster but linear in contribution size, while explicit delta publication removes whole-contribution allocation and grows much more slowly with indexed table size for a localized change.
 
 These measurements support the publication contract. They are not service-level objectives. Production limits require representative provider payloads, concurrent publishers, and sustained-load measurements.
 
@@ -148,10 +148,6 @@ At that point the durable stream can become the recovery authority and PostgreSQ
 
 ## Implementation boundary
 
-The storage experiments establish feasibility but are not the final public API. Runtime adoption still requires:
+The runtime accepts complete projector output, derives its assertion delta in memory, and sends that delta to PostgreSQL. It forces the first publication of each plugin run to be a complete replacement and periodically checkpoints accepted deltas. PostgreSQL applies small and large deltas with the same set-based transaction contract. Contribution retirement continues to use an authoritative empty replacement.
 
-- a stable representation for retraction handles;
-- contribution retirement semantics;
-- bulk handling for large deltas;
-- restart, stale-base, cursor-loss, drift, and periodic-checkpoint tests;
-- plugin-runtime integration that cannot publish deltas before its initial complete replacement.
+This immediately removes full-contribution database work and centralizes checkpoint recovery, but projector execution and the in-memory diff remain linear in contribution size. Direct object-level projector deltas require a stable retraction-handle API and plugin-specific incremental projection work. They can adopt the existing storage contract without changing checkpoint or recovery semantics.

@@ -154,7 +154,7 @@ func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contributio
 		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
 	}
 	if !hasHead || head.generation != int64(baseGeneration) {
-		return contributionPublication{}, fmt.Errorf("contribution delta base generation %d does not match current generation", baseGeneration)
+		return contributionPublication{}, fmt.Errorf("%w: base %d", ErrContributionDeltaBaseMismatch, baseGeneration)
 	}
 	preparedAdded, err := prepareCompiledAssertions(added)
 	if err != nil {
@@ -165,6 +165,9 @@ func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contributio
 		return contributionPublication{}, err
 	}
 	delta := membershipDelta{added: preparedAdded.refs, retracted: preparedRetracted.refs}
+	if ref, overlaps := overlappingAssertionRef(delta.added, delta.retracted); overlaps {
+		return contributionPublication{}, fmt.Errorf("%w: assertion %s/%s is both added and retracted", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
 	if err := applyMembershipDelta(ctx, tx, contributionID, delta); err != nil {
 		return contributionPublication{}, err
 	}
@@ -203,25 +206,79 @@ func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contributio
 }
 
 func applyMembershipDelta(ctx context.Context, tx pgx.Tx, contributionID int64, delta membershipDelta) error {
-	for _, ref := range delta.retracted {
-		result, err := tx.Exec(ctx, `DELETE FROM contribution_current_assertions WHERE contribution_id=$1 AND assertion_type=$2 AND assertion_id=$3`, contributionID, ref.Type, ref.ID)
-		if err != nil {
-			return fmt.Errorf("retract contribution assertion: %w", err)
-		}
-		if result.RowsAffected() != 1 {
-			return fmt.Errorf("cannot retract unowned %s assertion %s", ref.Type, ref.ID)
+	for _, table := range []string{"added_contribution_assertions", "retracted_contribution_assertions"} {
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE `+table+` (assertion_type text NOT NULL, assertion_id text NOT NULL, PRIMARY KEY (assertion_type, assertion_id)) ON COMMIT DROP`); err != nil {
+			return fmt.Errorf("create contribution delta membership: %w", err)
 		}
 	}
-	for _, ref := range delta.added {
-		result, err := tx.Exec(ctx, `INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, contributionID, ref.Type, ref.ID)
-		if err != nil {
-			return fmt.Errorf("add contribution assertion: %w", err)
+	for table, refs := range map[string][]assertionRef{
+		"added_contribution_assertions": delta.added, "retracted_contribution_assertions": delta.retracted,
+	} {
+		rows := make([][]any, len(refs))
+		for index, ref := range refs {
+			rows[index] = []any{ref.Type, ref.ID}
 		}
-		if result.RowsAffected() != 1 {
-			return fmt.Errorf("cannot add already owned %s assertion %s", ref.Type, ref.ID)
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{table}, []string{"assertion_type", "assertion_id"}, pgx.CopyFromRows(rows)); err != nil {
+			return fmt.Errorf("stage contribution delta membership: %w", err)
 		}
+	}
+	var ref assertionRef
+	err := tx.QueryRow(ctx, `
+		SELECT delta.assertion_type, delta.assertion_id
+		FROM retracted_contribution_assertions delta
+		LEFT JOIN contribution_current_assertions membership
+		  ON membership.contribution_id=$1
+		 AND membership.assertion_type=delta.assertion_type
+		 AND membership.assertion_id=delta.assertion_id
+		WHERE membership.contribution_id IS NULL
+		LIMIT 1`, contributionID).Scan(&ref.Type, &ref.ID)
+	if err == nil {
+		return fmt.Errorf("%w: cannot retract unowned %s assertion %s", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("validate contribution retractions: %w", err)
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT delta.assertion_type, delta.assertion_id
+		FROM added_contribution_assertions delta
+		JOIN contribution_current_assertions membership
+		  ON membership.contribution_id=$1
+		 AND membership.assertion_type=delta.assertion_type
+		 AND membership.assertion_id=delta.assertion_id
+		LIMIT 1`, contributionID).Scan(&ref.Type, &ref.ID)
+	if err == nil {
+		return fmt.Errorf("%w: cannot add already owned %s assertion %s", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("validate contribution additions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM contribution_current_assertions membership
+		USING retracted_contribution_assertions delta
+		WHERE membership.contribution_id=$1
+		  AND membership.assertion_type=delta.assertion_type
+		  AND membership.assertion_id=delta.assertion_id`, contributionID); err != nil {
+		return fmt.Errorf("retract contribution assertions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id)
+		SELECT $1, assertion_type, assertion_id FROM added_contribution_assertions`, contributionID); err != nil {
+		return fmt.Errorf("add contribution assertions: %w", err)
 	}
 	return nil
+}
+
+func overlappingAssertionRef(added, retracted []assertionRef) (assertionRef, bool) {
+	retractedSet := make(map[assertionRef]struct{}, len(retracted))
+	for _, ref := range retracted {
+		retractedSet[ref] = struct{}{}
+	}
+	for _, ref := range added {
+		if _, exists := retractedSet[ref]; exists {
+			return ref, true
+		}
+	}
+	return assertionRef{}, false
 }
 
 func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph, error) {
