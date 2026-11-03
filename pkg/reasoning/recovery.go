@@ -43,7 +43,7 @@ type ChangeWindow struct {
 //     later state to earlier changes.
 //
 // A rebase never infers which changes were missed. Callers analyze nothing
-// for it and treat findings from older digests as stale.
+// for it and treat findings from older revisions as stale.
 func ReadChangeWindow(ctx context.Context, reader ChangeReader, afterSequence uint64, limit int) (ChangeWindow, error) {
 	if reader == nil {
 		return ChangeWindow{}, errors.New("change reader is required")

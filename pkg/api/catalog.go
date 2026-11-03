@@ -22,7 +22,7 @@ type graphCounts struct {
 }
 
 type overviewResponse struct {
-	GraphSHA256           string              `json:"graphSha256"`
+	GraphRevision         uint64              `json:"graphRevision"`
 	GeneratedAt           time.Time           `json:"generatedAt"`
 	Counts                graphCounts         `json:"counts"`
 	Manifest              state.GraphManifest `json:"manifest"`
@@ -31,19 +31,19 @@ type overviewResponse struct {
 }
 
 type resourcesResponse struct {
-	GraphSHA256 string           `json:"graphSha256"`
-	Resources   []graph.Resource `json:"resources"`
-	NextCursor  string           `json:"nextCursor,omitempty"`
+	GraphRevision uint64           `json:"graphRevision"`
+	Resources     []graph.Resource `json:"resources"`
+	NextCursor    string           `json:"nextCursor,omitempty"`
 }
 
 type relationshipsResponse struct {
-	GraphSHA256   string               `json:"graphSha256"`
+	GraphRevision uint64               `json:"graphRevision"`
 	Relationships []graph.Relationship `json:"relationships"`
 	NextCursor    string               `json:"nextCursor,omitempty"`
 }
 
 type resourceResponse struct {
-	GraphSHA256     string               `json:"graphSha256"`
+	GraphRevision   uint64               `json:"graphRevision"`
 	Resource        graph.Resource       `json:"resource"`
 	Relationships   []graph.Relationship `json:"relationships"`
 	Facets          []graph.Facet        `json:"facets"`
@@ -52,10 +52,10 @@ type resourceResponse struct {
 }
 
 type relationshipResponse struct {
-	GraphSHA256  string             `json:"graphSha256"`
-	Relationship graph.Relationship `json:"relationship"`
-	Subject      graph.Resource     `json:"subject"`
-	Object       graph.Resource     `json:"object"`
+	GraphRevision uint64             `json:"graphRevision"`
+	Relationship  graph.Relationship `json:"relationship"`
+	Subject       graph.Resource     `json:"subject"`
+	Object        graph.Resource     `json:"object"`
 }
 
 type exposureFact struct {
@@ -73,9 +73,9 @@ type exposureFact struct {
 }
 
 type exposuresResponse struct {
-	GraphSHA256 string         `json:"graphSha256"`
-	Exposures   []exposureFact `json:"exposures"`
-	NextCursor  string         `json:"nextCursor,omitempty"`
+	GraphRevision uint64         `json:"graphRevision"`
+	Exposures     []exposureFact `json:"exposures"`
+	NextCursor    string         `json:"nextCursor,omitempty"`
 }
 
 func (server *Server) handleOverview(writer http.ResponseWriter, request *http.Request) {
@@ -101,7 +101,7 @@ func (server *Server) handleOverview(writer http.ResponseWriter, request *http.R
 		return
 	}
 	writeJSON(writer, http.StatusOK, overviewResponse{
-		GraphSHA256: record.SHA256, GeneratedAt: record.GeneratedAt,
+		GraphRevision: record.Revision, GeneratedAt: record.GeneratedAt,
 		Counts:   graphCounts{Resources: len(record.Snapshot.Resources), Relationships: len(record.Snapshot.Relationships), Facets: len(record.Snapshot.Facets), Telemetry: len(record.Snapshot.Telemetry), ExposureFacts: len(exposures)},
 		Manifest: manifest, ActiveFindings: findings.Findings, ActiveFindingsHasMore: findings.HasMore,
 	})
@@ -122,7 +122,7 @@ func (server *Server) handleResources(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusServiceUnavailable, "load resources", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, resourcesResponse{GraphSHA256: page.GraphSHA256, Resources: page.Resources, NextCursor: encodeCursor(page.Next)})
+	writeJSON(writer, http.StatusOK, resourcesResponse{GraphRevision: page.GraphRevision, Resources: page.Resources, NextCursor: encodeCursor(page.Next)})
 }
 
 func (server *Server) handleResource(writer http.ResponseWriter, request *http.Request) {
@@ -141,7 +141,7 @@ func (server *Server) handleResource(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusInternalServerError, "query resource findings", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, resourceResponse{GraphSHA256: detail.GraphSHA256, Resource: detail.Resource, Relationships: detail.Relationships, Facets: detail.Facets, Findings: findings.Findings, FindingsHasMore: findings.HasMore})
+	writeJSON(writer, http.StatusOK, resourceResponse{GraphRevision: detail.GraphRevision, Resource: detail.Resource, Relationships: detail.Relationships, Facets: detail.Facets, Findings: findings.Findings, FindingsHasMore: findings.HasMore})
 }
 
 func (server *Server) handleRelationships(writer http.ResponseWriter, request *http.Request) {
@@ -159,7 +159,7 @@ func (server *Server) handleRelationships(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusServiceUnavailable, "load relationships", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, relationshipsResponse{GraphSHA256: page.GraphSHA256, Relationships: page.Relationships, NextCursor: encodeCursor(page.Next)})
+	writeJSON(writer, http.StatusOK, relationshipsResponse{GraphRevision: page.GraphRevision, Relationships: page.Relationships, NextCursor: encodeCursor(page.Next)})
 }
 
 func (server *Server) handleRelationship(writer http.ResponseWriter, request *http.Request) {
@@ -175,7 +175,7 @@ func (server *Server) handleRelationship(writer http.ResponseWriter, request *ht
 		writeError(writer, status, "load relationship", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, relationshipResponse{GraphSHA256: detail.GraphSHA256, Relationship: detail.Relationship, Subject: detail.Subject, Object: detail.Object})
+	writeJSON(writer, http.StatusOK, relationshipResponse{GraphRevision: detail.GraphRevision, Relationship: detail.Relationship, Subject: detail.Subject, Object: detail.Object})
 }
 
 func (server *Server) handleExposures(writer http.ResponseWriter, request *http.Request) {
@@ -212,7 +212,7 @@ func (server *Server) handleExposures(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusBadRequest, "query exposure facts", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, exposuresResponse{GraphSHA256: record.SHA256, Exposures: page, NextCursor: next})
+	writeJSON(writer, http.StatusOK, exposuresResponse{GraphRevision: record.Revision, Exposures: page, NextCursor: next})
 }
 
 func collectExposureFacts(snapshot graph.Snapshot) ([]exposureFact, error) {

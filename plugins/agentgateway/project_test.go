@@ -37,7 +37,7 @@ func TestProjectAgentgatewaySemanticsCompileAndRemainDeterministic(t *testing.T)
 		t.Fatal(err)
 	}
 	compiler := graph.NewCompiler(registry)
-	var expectedHash string
+	var expectedGraph string
 	for seed := int64(0); seed < 10; seed++ {
 		shuffled := append([]*unstructured.Unstructured(nil), objects...)
 		rand.New(rand.NewSource(seed)).Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
@@ -77,14 +77,15 @@ func TestProjectAgentgatewaySemanticsCompileAndRemainDeterministic(t *testing.T)
 		if err != nil {
 			t.Fatalf("compile projected input: %v", err)
 		}
-		hash, err := snapshot.Hash()
+		encoded, err := snapshot.CanonicalJSON()
 		if err != nil {
 			t.Fatal(err)
 		}
+		canonical := string(encoded)
 		if seed == 0 {
-			expectedHash = hash
-		} else if hash != expectedHash {
-			t.Fatalf("seed %d hash = %s, want %s", seed, hash, expectedHash)
+			expectedGraph = canonical
+		} else if canonical != expectedGraph {
+			t.Fatalf("seed %d produced a different graph", seed)
 		}
 	}
 }

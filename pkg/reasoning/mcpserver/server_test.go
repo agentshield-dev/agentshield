@@ -7,13 +7,13 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestStreamableHTTPServesMCPTools(t *testing.T) {
 	provider, err := reasoning.NewContextProvider(reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "anchor"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "anchor"}},
 	}, reasoning.DefaultContextLimits())
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestStreamableHTTPServesMCPTools(t *testing.T) {
 
 func TestServerExposesBoundedContextTools(t *testing.T) {
 	provider, err := reasoning.NewContextProvider(reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "anchor"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "anchor"}},
 	}, reasoning.DefaultContextLimits())
 	if err != nil {
 		t.Fatal(err)

@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
 // ErrNotMaterialized is returned by graph reads before any contribution has
@@ -159,11 +159,11 @@ type Contribution struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// GraphView is a compiled canonical graph with its SHA-256 digest.
+// GraphView is a compiled graph at one committed publication revision.
 // GeneratedAt is the most recent contribution head update.
 type GraphView struct {
 	GeneratedAt time.Time      `json:"generatedAt"`
-	SHA256      string         `json:"sha256"`
+	Revision    uint64         `json:"revision"`
 	Snapshot    graph.Snapshot `json:"snapshot"`
 }
 
@@ -185,7 +185,7 @@ type NativeEvent struct {
 
 // Neighborhood is a bounded subgraph around one resource.
 type Neighborhood struct {
-	SHA256        string               `json:"sha256"`
+	Revision      uint64               `json:"revision"`
 	Resources     []graph.Resource     `json:"resources"`
 	Relationships []graph.Relationship `json:"relationships"`
 }

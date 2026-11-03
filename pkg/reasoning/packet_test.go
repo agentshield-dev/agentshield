@@ -21,7 +21,7 @@ func TestBuildPacketIncludesBoundedDescriptiveContextAndDefersTelemetry(t *testi
 		}},
 	}}
 	checkpoint := state.GraphCheckpoint{ThroughSequence: 7, View: state.GraphView{
-		SHA256: "graph-sha",
+		Revision: 1,
 		Snapshot: graph.Snapshot{
 			Resources: []graph.Resource{{
 				ID: "resource-1", Kind: "vendor/workload",
@@ -129,7 +129,7 @@ func TestBuildPacketWithSignalsSeparatesTriggerFromTelemetry(t *testing.T) {
 	}
 	packet, canonical, err := BuildPacketWithSignals(
 		[]state.ContributionChangeEvent{{Sequence: 2}},
-		state.GraphCheckpoint{ThroughSequence: 2, View: state.GraphView{SHA256: "current", Snapshot: current}},
+		state.GraphCheckpoint{ThroughSequence: 2, View: state.GraphView{Revision: 1, Snapshot: current}},
 		&previous, false, []detector.InvestigationSignal{signal},
 		time.Date(2026, 10, 6, 12, 1, 0, 0, time.UTC),
 		DefaultLimits(),
@@ -176,7 +176,7 @@ func TestBuildPacketWithSignalsRetainsAnchorsWhenResourcesAreTruncated(t *testin
 	limits.Resources = 2
 	packet, _, err := BuildPacketWithSignals(
 		[]state.ContributionChangeEvent{{Sequence: 1}},
-		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "current", Snapshot: current}},
+		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1, Snapshot: current}},
 		nil, false, []detector.InvestigationSignal{{ID: "signal", AnchorIDs: []string{"anchor"}}},
 		time.Unix(1, 0).UTC(), limits,
 	)
@@ -204,7 +204,7 @@ func TestBuildPacketRetainsChangedResourcesWhenResourcesAreTruncated(t *testing.
 		[]state.ContributionChangeEvent{{Sequence: 1, Added: []state.AssertionChange{{
 			AssertionType: "resource", Entity: state.EntityLocator{ID: "changed"},
 		}}}},
-		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "current", Snapshot: current}},
+		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1, Snapshot: current}},
 		nil, false, []detector.InvestigationSignal{{ID: "signal", AnchorIDs: []string{"first"}}},
 		time.Unix(1, 0).UTC(), limits,
 	)
@@ -238,7 +238,7 @@ func TestBuildPacketTruncatesRequiredResourcesAndChangesInsteadOfFailing(t *test
 	limits.Resources, limits.Changes = 2, 3
 	packet, _, err := BuildPacketWithSignals(
 		[]state.ContributionChangeEvent{{Sequence: 1, Added: added}},
-		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "current", Snapshot: graph.Snapshot{Resources: resources}}},
+		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1, Snapshot: graph.Snapshot{Resources: resources}}},
 		nil, false, []detector.InvestigationSignal{{ID: "signal", AnchorIDs: []string{"deployment"}}},
 		time.Unix(1, 0).UTC(), limits,
 	)
@@ -269,7 +269,7 @@ func TestBuildPacketSelectsRelationshipsAndFacetsNearTheChange(t *testing.T) {
 	limits.Resources, limits.Relationships, limits.Facets = 2, 1, 1
 	packet, _, err := BuildPacketWithSignals(
 		[]state.ContributionChangeEvent{{Sequence: 1}},
-		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "current", Snapshot: graph.Snapshot{Resources: resources, Relationships: relationships, Facets: facets}}},
+		state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1, Snapshot: graph.Snapshot{Resources: resources, Relationships: relationships, Facets: facets}}},
 		nil, false, []detector.InvestigationSignal{{ID: "signal", AnchorIDs: []string{"anchor", "peer"}}},
 		time.Unix(1, 0).UTC(), limits,
 	)

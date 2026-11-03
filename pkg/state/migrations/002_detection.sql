@@ -1,7 +1,7 @@
 CREATE TABLE findings (
     finding_id text PRIMARY KEY CHECK (finding_id <> ''),
     analysis_id text NOT NULL CHECK (analysis_id <> ''),
-    graph_sha256 text NOT NULL CHECK (graph_sha256 ~ '^[0-9a-f]{64}$'),
+    graph_revision bigint NOT NULL CHECK (graph_revision > 0),
     category text NOT NULL CHECK (category <> ''),
     severity text NOT NULL CHECK (severity <> ''),
     model_uncertainty text NOT NULL,
@@ -12,15 +12,15 @@ CREATE TABLE findings (
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invalidated')),
     invalidated_at timestamptz,
     invalidated_by_sequence bigint CHECK (invalidated_by_sequence > 0),
-    invalidated_graph_sha256 text CHECK (invalidated_graph_sha256 ~ '^[0-9a-f]{64}$'),
+    invalidated_graph_revision bigint CHECK (invalidated_graph_revision > 0),
     origin text NOT NULL DEFAULT 'agentic_investigation' CHECK (origin IN ('agentic_investigation', 'detection_rule')),
     detection_rule_id text,
     detection_rule_revision bigint,
     created_at timestamptz NOT NULL,
     CONSTRAINT findings_invalidation_consistent CHECK (
-        (status = 'active' AND invalidated_at IS NULL AND invalidated_by_sequence IS NULL AND invalidated_graph_sha256 IS NULL)
+        (status = 'active' AND invalidated_at IS NULL AND invalidated_by_sequence IS NULL AND invalidated_graph_revision IS NULL)
         OR
-        (status = 'invalidated' AND invalidated_at IS NOT NULL AND invalidated_by_sequence IS NOT NULL AND invalidated_graph_sha256 IS NOT NULL)
+        (status = 'invalidated' AND invalidated_at IS NOT NULL AND invalidated_by_sequence IS NOT NULL AND invalidated_graph_revision IS NOT NULL)
     ),
     CONSTRAINT findings_origin_consistent CHECK (
         (origin = 'agentic_investigation' AND model_uncertainty <> ''
@@ -74,7 +74,7 @@ CREATE TABLE detector_active_ruleset (
 CREATE TABLE detection_signals (
     signal_id text PRIMARY KEY CHECK (length(signal_id) BETWEEN 1 AND 256),
     through_sequence bigint NOT NULL CHECK (through_sequence >= 0),
-    graph_sha256 text NOT NULL CHECK (length(graph_sha256) = 64),
+    graph_revision bigint NOT NULL CHECK (graph_revision > 0),
     risk text NOT NULL CHECK (risk IN ('low', 'medium', 'high', 'critical')),
     reasons jsonb NOT NULL CHECK (jsonb_typeof(reasons) = 'array'),
     anchor_ids jsonb NOT NULL CHECK (jsonb_typeof(anchor_ids) = 'array'),

@@ -3,7 +3,6 @@ package evals
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,8 +21,7 @@ func probeEvent(id, subject, object, operation string, observedAt time.Time) gra
 }
 
 func checkpointOf(sequence uint64, snapshot graph.Snapshot) state.GraphCheckpoint {
-	digest := strings.Repeat(string("abcdef"[sequence%6]), 64)
-	return state.GraphCheckpoint{ThroughSequence: sequence, View: state.GraphView{SHA256: digest, Snapshot: snapshot}}
+	return state.GraphCheckpoint{ThroughSequence: sequence, View: state.GraphView{Revision: sequence, Snapshot: snapshot}}
 }
 
 // campaignWindows returns setup, baseline, and observed windows in which the

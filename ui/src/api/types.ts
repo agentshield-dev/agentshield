@@ -93,7 +93,7 @@ export interface Snapshot {
 
 export interface GraphRecord {
 	generatedAt: string;
-	sha256: string;
+	revision: number;
 	snapshot: Snapshot;
 }
 
@@ -126,7 +126,7 @@ export interface Proposal {
 	id: string;
 	findingId: string;
 	analysisId: string;
-	graphSha256: string;
+	graphRevision: number;
 	intent: string;
 	target: RemediationTarget;
 	supportingIds: List<string>;
@@ -139,7 +139,7 @@ export interface Finding {
 	id: string;
 	origin: FindingOrigin;
 	analysisId: string;
-	graphSha256: string;
+	graphRevision: number;
 	category: string;
 	severity: string;
 	modelUncertainty?: string;
@@ -153,7 +153,7 @@ export interface Finding {
 	createdAt: string;
 	invalidatedAt?: string;
 	invalidatedBySequence?: number;
-	invalidatedGraphSha256?: string;
+	invalidatedGraphRevision?: number;
 }
 
 export interface FindingsResponse {
@@ -180,7 +180,7 @@ export interface Plan {
 	sourceId: string;
 	actionId: string;
 	mode: 'executable' | 'advisory-only';
-	graphSha256: string;
+	graphRevision: number;
 	desiredSha256: string;
 	advisory?: string;
 }
@@ -234,7 +234,7 @@ export interface Manifest {
 }
 
 export interface OverviewResponse {
-	graphSha256: string;
+	graphRevision: number;
 	generatedAt: string;
 	counts: {
 		resources: number;

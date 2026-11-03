@@ -206,14 +206,13 @@ INSERT INTO graph_change_sequence (value) VALUES (0);
 CREATE TABLE reasoning_cursors (
     consumer_id text PRIMARY KEY CHECK (consumer_id <> ''),
     through_sequence bigint NOT NULL CHECK (through_sequence >= 0),
-    graph_sha256 text NOT NULL CHECK (graph_sha256 <> ''),
+    graph_revision bigint NOT NULL CHECK (graph_revision > 0),
     updated_at timestamptz NOT NULL
 );
 
 CREATE TABLE graph_state (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     revision bigint NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    digest bytea CHECK (digest IS NULL OR octet_length(digest) = 32),
     generated_at timestamptz
 );
 INSERT INTO graph_state (singleton, revision) VALUES (true, 0);

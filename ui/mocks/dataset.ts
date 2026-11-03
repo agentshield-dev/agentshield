@@ -69,8 +69,6 @@ function uuid(...parts: string[]): string {
 	].join('-');
 }
 
-export const graphSha = (revision: number) => digest256(`graph/${revision}`);
-
 interface Source {
 	pluginId: string;
 	sourceId: string;
@@ -1179,20 +1177,20 @@ function findingSpecs(world: World): FindingSpec[] {
 }
 
 function buildFindings(specs: readonly FindingSpec[]): Finding[] {
-	const current = graphSha(1);
-	const earlier = graphSha(0);
+	const current = 2;
+	const earlier = 1;
 	let active = 0;
 	let older = 0;
 	return specs.map(spec => {
 		const id = `finding:sha256:${digest256(`finding/${spec.key}`)}`;
 		const analysisId = `analysis:sha256:${digest256(`analysis/${Math.floor((spec.older ? older : active) / 6)}`)}`;
 		const signalId = `signal:sha256:${digest256(`signal/${spec.key}`)}`;
-		const graphSha256 = spec.older ? earlier : current;
+		const graphRevision = spec.older ? earlier : current;
 		const remediations: Proposal[] = (spec.proposals ?? []).map(proposal => ({
 			id: `proposal:sha256:${digest256(`proposal/${spec.key}/${proposal.intent}/${proposal.target.id}`)}`,
 			findingId: id,
 			analysisId,
-			graphSha256,
+			graphRevision,
 			intent: proposal.intent,
 			target: {
 				entityId: proposal.target.id,
@@ -1209,7 +1207,7 @@ function buildFindings(specs: readonly FindingSpec[]): Finding[] {
 			id,
 			origin: spec.rule ? 'detection_rule' : 'agentic_investigation',
 			analysisId,
-			graphSha256,
+			graphRevision,
 			category: spec.category,
 			severity: spec.severity,
 			summary: spec.summary,
@@ -1228,7 +1226,7 @@ function buildFindings(specs: readonly FindingSpec[]): Finding[] {
 		if (spec.older) {
 			finding.invalidatedAt = minutesAgo(3);
 			finding.invalidatedBySequence = 5;
-			finding.invalidatedGraphSha256 = current;
+			finding.invalidatedGraphRevision = current;
 		}
 		return finding;
 	});

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrFindingNotFound is returned by GetFinding for an unknown ID.
@@ -30,28 +30,28 @@ const (
 	FindingOriginDetectionRule        = "detection_rule"
 )
 
-// Finding is a promoted reasoning result grounded in one graph digest.
+// Finding is a promoted reasoning result grounded in one graph revision.
 // AffectedEntityIDs drive invalidation when later publications touch those
 // entities.
 type Finding struct {
-	ID                     string                 `json:"id"`
-	Origin                 string                 `json:"origin"`
-	AnalysisID             string                 `json:"analysisId"`
-	GraphSHA256            string                 `json:"graphSha256"`
-	Category               string                 `json:"category"`
-	Severity               string                 `json:"severity"`
-	ModelUncertainty       string                 `json:"modelUncertainty,omitempty"`
-	DetectionRuleID        string                 `json:"detectionRuleId,omitempty"`
-	DetectionRuleRevision  uint64                 `json:"detectionRuleRevision,omitempty"`
-	Summary                string                 `json:"summary"`
-	SignalIDs              []string               `json:"signalIds"`
-	AffectedEntityIDs      []string               `json:"affectedEntityIds"`
-	Remediations           []remediation.Proposal `json:"remediations"`
-	Status                 string                 `json:"status"`
-	CreatedAt              time.Time              `json:"createdAt"`
-	InvalidatedAt          *time.Time             `json:"invalidatedAt,omitempty"`
-	InvalidatedBySequence  *uint64                `json:"invalidatedBySequence,omitempty"`
-	InvalidatedGraphSHA256 string                 `json:"invalidatedGraphSha256,omitempty"`
+	ID                       string                 `json:"id"`
+	Origin                   string                 `json:"origin"`
+	AnalysisID               string                 `json:"analysisId"`
+	GraphRevision            uint64                 `json:"graphRevision"`
+	Category                 string                 `json:"category"`
+	Severity                 string                 `json:"severity"`
+	ModelUncertainty         string                 `json:"modelUncertainty,omitempty"`
+	DetectionRuleID          string                 `json:"detectionRuleId,omitempty"`
+	DetectionRuleRevision    uint64                 `json:"detectionRuleRevision,omitempty"`
+	Summary                  string                 `json:"summary"`
+	SignalIDs                []string               `json:"signalIds"`
+	AffectedEntityIDs        []string               `json:"affectedEntityIds"`
+	Remediations             []remediation.Proposal `json:"remediations"`
+	Status                   string                 `json:"status"`
+	CreatedAt                time.Time              `json:"createdAt"`
+	InvalidatedAt            *time.Time             `json:"invalidatedAt,omitempty"`
+	InvalidatedBySequence    *uint64                `json:"invalidatedBySequence,omitempty"`
+	InvalidatedGraphRevision uint64                 `json:"invalidatedGraphRevision,omitempty"`
 }
 
 // FindingQuery filters and pages findings. BeforeCreatedAt and
@@ -91,11 +91,14 @@ func (query FindingQuery) Validate() error {
 // Validate checks required fields, that invalidation metadata matches the
 // status, and that every remediation proposal belongs to this finding.
 func (finding Finding) Validate() error {
-	values := []string{finding.ID, finding.AnalysisID, finding.GraphSHA256, finding.Category, finding.Severity, finding.Summary}
+	values := []string{finding.ID, finding.AnalysisID, finding.Category, finding.Severity, finding.Summary}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
 			return errors.New("finding requires identity, classification, and summary fields")
 		}
+	}
+	if finding.GraphRevision == 0 {
+		return errors.New("finding requires a graph revision")
 	}
 	switch finding.Origin {
 	case FindingOriginAgenticInvestigation:
@@ -115,10 +118,10 @@ func (finding Finding) Validate() error {
 	if finding.Status != FindingStatusActive && finding.Status != FindingStatusInvalidated {
 		return errors.New("finding status is invalid")
 	}
-	if finding.Status == FindingStatusActive && (finding.InvalidatedAt != nil || finding.InvalidatedBySequence != nil || finding.InvalidatedGraphSHA256 != "") {
+	if finding.Status == FindingStatusActive && (finding.InvalidatedAt != nil || finding.InvalidatedBySequence != nil || finding.InvalidatedGraphRevision != 0) {
 		return errors.New("active finding contains invalidation metadata")
 	}
-	if finding.Status == FindingStatusInvalidated && (finding.InvalidatedAt == nil || finding.InvalidatedBySequence == nil || finding.InvalidatedGraphSHA256 == "") {
+	if finding.Status == FindingStatusInvalidated && (finding.InvalidatedAt == nil || finding.InvalidatedBySequence == nil || finding.InvalidatedGraphRevision == 0) {
 		return errors.New("invalidated finding requires invalidation metadata")
 	}
 	if len(finding.Remediations) > remediation.MaxSuggestions {
@@ -129,7 +132,7 @@ func (finding Finding) Validate() error {
 		if err := proposal.Validate(); err != nil {
 			return fmt.Errorf("validate finding remediation: %w", err)
 		}
-		if proposal.FindingID != finding.ID || proposal.AnalysisID != finding.AnalysisID || proposal.GraphSHA256 != finding.GraphSHA256 {
+		if proposal.FindingID != finding.ID || proposal.AnalysisID != finding.AnalysisID || proposal.GraphRevision != finding.GraphRevision {
 			return errors.New("finding remediation does not match its finding")
 		}
 		if _, found := seen[proposal.ID]; found {
@@ -177,15 +180,15 @@ func (s *Store) PutFinding(ctx context.Context, finding Finding) error {
 	}
 	command, err := s.pool.Exec(ctx, `
 		INSERT INTO findings (
-			finding_id, analysis_id, graph_sha256, category,
+			finding_id, analysis_id, graph_revision, category,
 			severity, model_uncertainty, summary, signal_ids, affected_entity_ids, remediations,
-			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_sha256,
+			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_revision,
 			origin, detection_rule_id, detection_rule_revision
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (finding_id) DO NOTHING`,
-		finding.ID, finding.AnalysisID, finding.GraphSHA256, finding.Category, finding.Severity, finding.ModelUncertainty, finding.Summary,
+		finding.ID, finding.AnalysisID, finding.GraphRevision, finding.Category, finding.Severity, finding.ModelUncertainty, finding.Summary,
 		signalIDs, affectedEntityIDs, remediations, finding.Status, finding.CreatedAt,
-		finding.InvalidatedAt, finding.InvalidatedBySequence, nullIfEmpty(finding.InvalidatedGraphSHA256),
+		finding.InvalidatedAt, finding.InvalidatedBySequence, nullIfZero(finding.InvalidatedGraphRevision),
 		finding.Origin, nullIfEmpty(finding.DetectionRuleID), nullIfZero(finding.DetectionRuleRevision),
 	)
 	if err != nil {
@@ -212,9 +215,9 @@ func (s *Store) GetFinding(ctx context.Context, findingID string) (Finding, erro
 		return Finding{}, errors.New("finding ID is required")
 	}
 	finding, err := scanFinding(s.pool.QueryRow(ctx, `
-		SELECT finding_id, analysis_id, graph_sha256, category,
+		SELECT finding_id, analysis_id, graph_revision, category,
 			severity, model_uncertainty, summary, signal_ids, affected_entity_ids, remediations,
-			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_sha256,
+			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_revision,
 			origin, COALESCE(detection_rule_id, ''), COALESCE(detection_rule_revision, 0)
 		FROM findings WHERE finding_id=$1`, findingID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -249,9 +252,9 @@ func (s *Store) QueryFindings(ctx context.Context, query FindingQuery) (FindingP
 		return FindingPage{}, fmt.Errorf("count findings: %w", err)
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT finding_id, analysis_id, graph_sha256, category,
+		SELECT finding_id, analysis_id, graph_revision, category,
 			severity, model_uncertainty, summary, signal_ids, affected_entity_ids, remediations,
-			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_sha256,
+			status, created_at, invalidated_at, invalidated_by_sequence, invalidated_graph_revision,
 			origin, COALESCE(detection_rule_id, ''), COALESCE(detection_rule_revision, 0)
 		FROM findings
 		WHERE ($1 = '' OR status = $1)
@@ -294,12 +297,12 @@ func scanFinding(row findingRow) (Finding, error) {
 	var finding Finding
 	var signalIDs, affectedEntityIDs, remediations []byte
 	var invalidatedBySequence *int64
-	var invalidatedGraphSHA256 *string
+	var invalidatedGraphRevision *int64
 	var ruleRevision int64
 	err := row.Scan(
-		&finding.ID, &finding.AnalysisID, &finding.GraphSHA256, &finding.Category, &finding.Severity, &finding.ModelUncertainty, &finding.Summary,
+		&finding.ID, &finding.AnalysisID, &finding.GraphRevision, &finding.Category, &finding.Severity, &finding.ModelUncertainty, &finding.Summary,
 		&signalIDs, &affectedEntityIDs, &remediations, &finding.Status, &finding.CreatedAt,
-		&finding.InvalidatedAt, &invalidatedBySequence, &invalidatedGraphSHA256,
+		&finding.InvalidatedAt, &invalidatedBySequence, &invalidatedGraphRevision,
 		&finding.Origin, &finding.DetectionRuleID, &ruleRevision,
 	)
 	if err != nil {
@@ -319,8 +322,8 @@ func scanFinding(row findingRow) (Finding, error) {
 		sequence := uint64(*invalidatedBySequence)
 		finding.InvalidatedBySequence = &sequence
 	}
-	if invalidatedGraphSHA256 != nil {
-		finding.InvalidatedGraphSHA256 = *invalidatedGraphSHA256
+	if invalidatedGraphRevision != nil {
+		finding.InvalidatedGraphRevision = uint64(*invalidatedGraphRevision)
 	}
 	if err := finding.Validate(); err != nil {
 		return Finding{}, fmt.Errorf("validate stored finding: %w", err)
@@ -329,16 +332,16 @@ func scanFinding(row findingRow) (Finding, error) {
 }
 
 // InvalidateFindings marks active agentic investigation findings grounded in a
-// digest other than graphSHA256 as invalidated by throughSequence. A nil
+// revision other than graphRevision as invalidated by throughSequence. A nil
 // affectedEntityIDs invalidates all of them (used on a rebase where change
 // history is unavailable); a non-nil empty slice invalidates none; otherwise
 // only findings touching one of the IDs, or recording no affected entities, are
-// invalidated. Findings already grounded in graphSHA256 are left alone, which
+// invalidated. Findings already grounded in graphRevision are left alone, which
 // keeps repeated evaluation idempotent. Detection rule findings record that a
 // rule matched and are never invalidated.
-func (s *Store) InvalidateFindings(ctx context.Context, graphSHA256 string, throughSequence uint64, affectedEntityIDs []string, invalidatedAt time.Time) error {
-	if graphSHA256 = strings.TrimSpace(graphSHA256); len(graphSHA256) != 64 {
-		return errors.New("invalidation graph digest is required")
+func (s *Store) InvalidateFindings(ctx context.Context, graphRevision uint64, throughSequence uint64, affectedEntityIDs []string, invalidatedAt time.Time) error {
+	if graphRevision == 0 || graphRevision > 1<<63-1 {
+		return errors.New("invalidation graph revision must be positive and bounded")
 	}
 	if throughSequence == 0 {
 		return errors.New("invalidation sequence must be positive")
@@ -351,10 +354,10 @@ func (s *Store) InvalidateFindings(ctx context.Context, graphSHA256 string, thro
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE findings
-		SET status='invalidated', invalidated_at=$1, invalidated_by_sequence=$2, invalidated_graph_sha256=$3
-		WHERE status='active' AND graph_sha256 <> $3 AND origin <> 'detection_rule'
+		SET status='invalidated', invalidated_at=$1, invalidated_by_sequence=$2, invalidated_graph_revision=$3
+		WHERE status='active' AND graph_revision <> $3 AND origin <> 'detection_rule'
 			AND ($4::text[] IS NULL OR affected_entity_ids = '[]'::jsonb OR affected_entity_ids ?| $4::text[])`,
-		invalidatedAt.UTC(), int64(throughSequence), graphSHA256, affectedEntityIDs,
+		invalidatedAt.UTC(), int64(throughSequence), graphRevision, affectedEntityIDs,
 	)
 	if err != nil {
 		return fmt.Errorf("invalidate findings: %w", err)

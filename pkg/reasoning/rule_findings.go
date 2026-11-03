@@ -41,7 +41,7 @@ func RuleFindings(evaluation Evaluation, createdAt time.Time) []state.Finding {
 		groups[key] = append(groups[key], signal)
 	}
 	checkpoint := evaluation.Window.Checkpoint
-	windowDigest := sha256.Sum256([]byte(checkpoint.View.SHA256 + "\x00" + strconv.FormatUint(checkpoint.ThroughSequence, 10)))
+	windowDigest := sha256.Sum256([]byte(strconv.FormatUint(checkpoint.View.Revision, 10) + "\x00" + strconv.FormatUint(checkpoint.ThroughSequence, 10)))
 	findings := make([]state.Finding, 0, len(groups))
 	for key, signals := range groups {
 		signalIDs := make([]string, 0, len(signals))
@@ -63,10 +63,10 @@ func RuleFindings(evaluation Evaluation, createdAt time.Time) []state.Finding {
 		slices.Sort(signalIDs)
 		signalIDs = slices.Compact(signalIDs)
 		reasonList := sortedKeys(reasons)
-		digest := sha256.Sum256([]byte(strings.Join(append([]string{ruleFindingIDDomain, key.id, strconv.FormatUint(key.revision, 10), checkpoint.View.SHA256}, signalIDs...), "\x00")))
+		digest := sha256.Sum256([]byte(strings.Join(append([]string{ruleFindingIDDomain, key.id, strconv.FormatUint(key.revision, 10), strconv.FormatUint(checkpoint.View.Revision, 10)}, signalIDs...), "\x00")))
 		findings = append(findings, state.Finding{
 			ID: "finding:sha256:" + hex.EncodeToString(digest[:]), Origin: state.FindingOriginDetectionRule,
-			AnalysisID: ruleFindingAnalysisID + hex.EncodeToString(windowDigest[:]), GraphSHA256: checkpoint.View.SHA256,
+			AnalysisID: ruleFindingAnalysisID + hex.EncodeToString(windowDigest[:]), GraphRevision: checkpoint.View.Revision,
 			Category: ruleFindingCategory, Severity: string(risk),
 			Summary:         fmt.Sprintf("Detection rule %s (revision %d) matched %d new input(s): %s", key.id, key.revision, len(signalIDs), strings.Join(reasonList, ", ")),
 			DetectionRuleID: key.id, DetectionRuleRevision: key.revision,

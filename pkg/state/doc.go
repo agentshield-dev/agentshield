@@ -45,7 +45,7 @@
 //
 // [Store.Latest] and [Store.ReadGraphCheckpoint] read the active assertion
 // union inside a repeatable-read transaction and compile it after the
-// transaction ends, so the returned graph and its SHA-256 are coherent with
+// transaction ends, so the returned graph and its revision are coherent with
 // each other and with the checkpoint sequence. [Store.CreateManifest] pins the active contribution versions for
 // reproducible analysis.
 //

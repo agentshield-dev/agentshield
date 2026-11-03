@@ -34,7 +34,7 @@
 //	GET  /api/v1/resources[/{id}]         paginated, filterable resource catalog
 //	GET  /api/v1/relationships[/{id}]     paginated relationship catalog
 //	GET  /api/v1/exposures                exposure security semantics
-//	GET  /api/v1/events                   server-sent events on graph digest change
+//	GET  /api/v1/events                   server-sent events on graph revision change
 //	GET  /api/v1/findings[/{id}]          stored findings, cursor-paginated
 //	GET  /api/v1/findings/{id}/remediations/{proposal}/candidates
 //	POST /api/v1/findings/{id}/remediations/{proposal}/prepare
@@ -54,7 +54,7 @@
 //
 // # Graph events
 //
-// The events route streams a "graph" event with the graph digest on connect
+// The events route streams a "graph" event with the graph revision on connect
 // and on every change, plus a keepalive comment every 25 seconds. It replaces
 // the server's whole-response write timeout with a deadline on each write.
 // Each open stream polls [StateStore.GraphRevision] every 500ms and reads the

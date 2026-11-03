@@ -12,7 +12,7 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 )
 
-const remediationTestGraphSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const remediationTestGraphRevision uint64 = 1
 
 func TestPromoteSuppressesOrdinaryCommunicationAndPromotesValidatedPath(t *testing.T) {
 	ordinary := Promote(Packet{}, Response{})
@@ -20,10 +20,10 @@ func TestPromoteSuppressesOrdinaryCommunicationAndPromotesValidatedPath(t *testi
 		t.Fatalf("ordinary communication promotion = %#v", ordinary)
 	}
 	packet := Packet{
-		HydratedGraphSHA256: remediationTestGraphSHA256,
-		Resources:           []Resource{{ID: "a", Kind: "kubernetes/pod"}, {ID: "b"}},
-		Telemetry:           []Telemetry{{ID: "t", SubjectID: "a", ObjectID: "b", EvidenceIDs: []string{"e"}}},
-		Signals:             []detector.InvestigationSignal{{ID: "s", Risk: detector.RiskHigh}},
+		HydratedGraphRevision: remediationTestGraphRevision,
+		Resources:             []Resource{{ID: "a", Kind: "kubernetes/pod"}, {ID: "b"}},
+		Telemetry:             []Telemetry{{ID: "t", SubjectID: "a", ObjectID: "b", EvidenceIDs: []string{"e"}}},
+		Signals:               []detector.InvestigationSignal{{ID: "s", Risk: detector.RiskHigh}},
 	}
 	response := Response{Assessment: Assessment{
 		Decision: "candidate_finding", Category: "possible_lateral_path", SignalIDs: []string{"s"}, AffectedEntityIDs: []string{"a"},
@@ -62,10 +62,10 @@ func TestPromoteSuppressesOrdinaryCommunicationAndPromotesValidatedPath(t *testi
 
 func TestPromoteRejectsCommunicationNoveltyWithoutSecurityConsequence(t *testing.T) {
 	packet := Packet{
-		HydratedGraphSHA256: remediationTestGraphSHA256,
-		Resources:           []Resource{{ID: "a"}, {ID: "b"}},
-		Telemetry:           []Telemetry{{ID: "t", SubjectID: "a", ObjectID: "b", EvidenceIDs: []string{"e"}}},
-		Signals:             []detector.InvestigationSignal{{ID: "s", Risk: detector.RiskHigh}},
+		HydratedGraphRevision: remediationTestGraphRevision,
+		Resources:             []Resource{{ID: "a"}, {ID: "b"}},
+		Telemetry:             []Telemetry{{ID: "t", SubjectID: "a", ObjectID: "b", EvidenceIDs: []string{"e"}}},
+		Signals:               []detector.InvestigationSignal{{ID: "s", Risk: detector.RiskHigh}},
 	}
 	response := Response{Assessment: Assessment{
 		Decision: "candidate_finding", Category: "new_observed_communication", Severity: "medium", ModelUncertainty: "low",
@@ -80,7 +80,7 @@ func TestPromoteRejectsCommunicationNoveltyWithoutSecurityConsequence(t *testing
 
 func TestNewRemediationProposalsRejectFabricatedPromotion(t *testing.T) {
 	packet := Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: remediationTestGraphSHA256,
+		AnalysisID: "analysis", HydratedGraphRevision: remediationTestGraphRevision,
 		Resources: []Resource{{
 			ID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 				Scheme: graph.IdentityScheme{Group: "kubernetes.io", Version: "v1", Kind: "Object"}, AuthorityID: "cluster", ImmutableKey: "v1/pod/uid",
@@ -110,7 +110,7 @@ func TestNewRemediationProposalsHydrateEveryClosedIntentIndependentlyOfTargetKin
 	} {
 		t.Run(string(intent), func(t *testing.T) {
 			packet := Packet{
-				AnalysisID: "analysis", HydratedGraphSHA256: remediationTestGraphSHA256,
+				AnalysisID: "analysis", HydratedGraphRevision: remediationTestGraphRevision,
 				Resources: []Resource{{ID: "target", Kind: "example/unsupported", Identity: graph.IdentityClaim{Scheme: graph.IdentityScheme{Group: "example.io", Version: "v1", Kind: "Object"}, AuthorityID: "authority", ImmutableKey: "object/uid"}}},
 				Telemetry: []Telemetry{{ID: "fact", SubjectID: "target", EvidenceIDs: []string{"evidence"}}},
 				Signals:   []detector.InvestigationSignal{{ID: "signal", Risk: detector.RiskHigh}},
@@ -130,7 +130,7 @@ func TestNewRemediationProposalsHydrateEveryClosedIntentIndependentlyOfTargetKin
 				t.Fatalf("proposals = %#v", proposals)
 			}
 			proposal := proposals[0]
-			if proposal.Intent != intent || proposal.Target.Kind != "example/unsupported" || proposal.FindingID == "" || proposal.GraphSHA256 != remediationTestGraphSHA256 || len(proposal.EvidenceIDs) != 1 || proposal.EvidenceIDs[0] != "evidence" {
+			if proposal.Intent != intent || proposal.Target.Kind != "example/unsupported" || proposal.FindingID == "" || proposal.GraphRevision != remediationTestGraphRevision || len(proposal.EvidenceIDs) != 1 || proposal.EvidenceIDs[0] != "evidence" {
 				t.Fatalf("proposal = %#v", proposal)
 			}
 		})
@@ -144,12 +144,12 @@ func TestPromotionDoesNotInvokeRemediationProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := remediation.NewExecutor(registry, func(context.Context) (remediation.GraphView, error) {
-		return remediation.GraphView{SHA256: remediationTestGraphSHA256}, nil
+		return remediation.GraphView{Revision: remediationTestGraphRevision}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	packet := Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: remediationTestGraphSHA256, Resources: []Resource{{ID: "target", Kind: "kubernetes/pod"}},
+		AnalysisID: "analysis", HydratedGraphRevision: remediationTestGraphRevision, Resources: []Resource{{ID: "target", Kind: "kubernetes/pod"}},
 		Telemetry: []Telemetry{{ID: "fact", SubjectID: "target", EvidenceIDs: []string{"evidence"}}}, Signals: []detector.InvestigationSignal{{ID: "signal", Risk: detector.RiskHigh}},
 	}
 	response := Response{Assessment: Assessment{

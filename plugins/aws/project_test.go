@@ -104,7 +104,7 @@ func TestProjectDeterministicUnderShuffledInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantHash := compileHash(t, want.Input)
+	wantHash := compileCanonical(t, want.Input)
 	random := rand.New(rand.NewSource(42))
 	for iteration := 0; iteration < 50; iteration++ {
 		shuffledInterfaces := slices.Clone(interfaces)
@@ -128,7 +128,7 @@ func TestProjectDeterministicUnderShuffledInput(t *testing.T) {
 		if projectErr != nil {
 			t.Fatal(projectErr)
 		}
-		if gotHash := compileHash(t, got.Input); gotHash != wantHash {
+		if gotHash := compileCanonical(t, got.Input); gotHash != wantHash {
 			t.Fatalf("shuffle %d hash = %s, want %s", iteration, gotHash, wantHash)
 		}
 	}
@@ -195,7 +195,7 @@ func discoveryRegister(registry *graph.Registry) error {
 	return registry.Register(Descriptor().IdentitySchemes[0])
 }
 
-func compileHash(t *testing.T, input graph.Input) string {
+func compileCanonical(t *testing.T, input graph.Input) string {
 	t.Helper()
 	registry := graph.NewRegistry()
 	if err := discoveryRegister(registry); err != nil {
@@ -205,11 +205,11 @@ func compileHash(t *testing.T, input graph.Input) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := snapshot.Hash()
+	encoded, err := snapshot.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return hash
+	return string(encoded)
 }
 
 func resourceByKind(t *testing.T, input graph.Input, kind string) graph.ResourceAssertion {

@@ -3,7 +3,7 @@ package remediation
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,18 +16,18 @@ import (
 
 var testScheme = graph.IdentityScheme{Group: "test.example.io", Version: "v1", Kind: "Object"}
 
-const testGraphSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const testGraphRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 const testActionID = "test-action/v1"
 
 func TestProposalIDIsDeterministic(t *testing.T) {
 	suggestion := Suggestion{Intent: IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"signal", "evidence"}}
 	target := Target{EntityID: "target", Identity: graph.IdentityClaim{Scheme: testScheme, AuthorityID: "cluster", ImmutableKey: "v1/pod/uid"}, Kind: "kubernetes/pod"}
-	first, err := NewProposal("finding", "analysis", testGraphSHA256, suggestion, target, []string{"signal", "evidence", "signal"})
+	first, err := NewProposal("finding", "analysis", canonicalTestGraphRevision(testGraphRevision), suggestion, target, []string{"signal", "evidence", "signal"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewProposal("finding", "analysis", testGraphSHA256, suggestion, target, []string{"evidence", "signal"})
+	second, err := NewProposal("finding", "analysis", canonicalTestGraphRevision(testGraphRevision), suggestion, target, []string{"evidence", "signal"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestProposalValidationRejectsRecomputedMalformedJSONBeforeRouting(t *testin
 	graphReads := 0
 	executor, err := NewExecutor(registry, func(context.Context) (GraphView, error) {
 		graphReads++
-		return testGraphView(testGraphSHA256, "cluster"), nil
+		return testGraphView(testGraphRevision, "cluster"), nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestProposalValidationRejectsRecomputedMalformedJSONBeforeRouting(t *testin
 	}{
 		{name: "empty finding", mutate: func(proposal *Proposal) { proposal.FindingID = "" }},
 		{name: "empty analysis", mutate: func(proposal *Proposal) { proposal.AnalysisID = "" }},
-		{name: "malformed graph digest", mutate: func(proposal *Proposal) { proposal.GraphSHA256 = "graph" }},
+		{name: "missing graph revision", mutate: func(proposal *Proposal) { proposal.GraphRevision = 0 }},
 		{name: "empty support", mutate: func(proposal *Proposal) { proposal.SupportingIDs = nil }},
 		{name: "empty evidence", mutate: func(proposal *Proposal) { proposal.EvidenceIDs = nil }},
 		{name: "invalid intent", mutate: func(proposal *Proposal) { proposal.Intent = "unknown" }},
@@ -90,7 +90,7 @@ func TestProposalValidationRejectsRecomputedMalformedJSONBeforeRouting(t *testin
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			proposal := testProposal(t, testGraphSHA256, "cluster")
+			proposal := testProposal(t, testGraphRevision, "cluster")
 			test.mutate(&proposal)
 			proposal.ID = ""
 			proposal.ID = canonicalID("proposal", proposal)
@@ -414,9 +414,9 @@ func TestExecutorRejectsMeaningfullyStaleTarget(t *testing.T) {
 		view GraphView
 		want string
 	}{
-		{name: "fabricated target", view: GraphView{SHA256: canonicalTestGraphSHA256("graph")}, want: "absent"},
-		{name: "kind mismatch", view: GraphView{SHA256: canonicalTestGraphSHA256("graph"), Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: "kubernetes/service", Identity: proposal.Target.Identity}}}}, want: "changed kind"},
-		{name: "kind conflict", view: GraphView{SHA256: canonicalTestGraphSHA256("graph"), Snapshot: graph.Snapshot{Conflicts: []graph.AssertionConflict{{ResourceID: proposal.Target.EntityID, Kinds: []string{"kubernetes/pod", "kubernetes/service"}}}}}, want: "conflicting kinds"},
+		{name: "fabricated target", view: GraphView{Revision: canonicalTestGraphRevision("graph")}, want: "absent"},
+		{name: "kind mismatch", view: GraphView{Revision: canonicalTestGraphRevision("graph"), Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: "kubernetes/service", Identity: proposal.Target.Identity}}}}, want: "changed kind"},
+		{name: "kind conflict", view: GraphView{Revision: canonicalTestGraphRevision("graph"), Snapshot: graph.Snapshot{Conflicts: []graph.AssertionConflict{{ResourceID: proposal.Target.EntityID, Kinds: []string{"kubernetes/pod", "kubernetes/service"}}}}}, want: "conflicting kinds"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -548,7 +548,7 @@ func TestExecutorWaiterRechecksRemovedTargetAfterFailedExecution(t *testing.T) {
 	}
 	executor, err := NewExecutor(registry, func(context.Context) (GraphView, error) {
 		if !targetPresent.Load() {
-			return GraphView{SHA256: canonicalTestGraphSHA256("changed")}, nil
+			return GraphView{Revision: canonicalTestGraphRevision("changed")}, nil
 		}
 		return testGraphView("graph", "cluster"), nil
 	})
@@ -732,9 +732,9 @@ func (provider *testProvider) source() string {
 	return provider.sourceID
 }
 
-func testProposal(t *testing.T, graphSHA256, authority string) Proposal {
+func testProposal(t *testing.T, graphRevision, authority string) Proposal {
 	t.Helper()
-	proposal, err := NewProposal("finding", "analysis", canonicalTestGraphSHA256(graphSHA256),
+	proposal, err := NewProposal("finding", "analysis", canonicalTestGraphRevision(graphRevision),
 		Suggestion{Intent: IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		Target{EntityID: "target", Identity: graph.IdentityClaim{Scheme: testScheme, AuthorityID: authority, ImmutableKey: "v1/pod/uid"}, Kind: "kubernetes/pod"},
 		[]string{"evidence"})
@@ -752,17 +752,12 @@ func testGraphSource(digest func() string, authority string) GraphSourceFunc {
 
 func testGraphView(digest, authority string) GraphView {
 	identity := graph.IdentityClaim{Scheme: testScheme, AuthorityID: authority, ImmutableKey: "v1/pod/uid"}
-	return GraphView{SHA256: canonicalTestGraphSHA256(digest), Snapshot: graph.Snapshot{Resources: []graph.Resource{{
+	return GraphView{Revision: canonicalTestGraphRevision(digest), Snapshot: graph.Snapshot{Resources: []graph.Resource{{
 		ID: "target", Kind: "kubernetes/pod", Identity: identity,
 	}}}}
 }
 
-func canonicalTestGraphSHA256(value string) string {
-	if len(value) == sha256.Size*2 {
-		if _, err := hex.DecodeString(value); err == nil && strings.ToLower(value) == value {
-			return value
-		}
-	}
+func canonicalTestGraphRevision(value string) uint64 {
 	digest := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(digest[:])
+	return binary.BigEndian.Uint64(digest[:8]) & (1<<63 - 1)
 }

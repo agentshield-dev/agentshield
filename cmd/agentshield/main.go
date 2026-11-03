@@ -450,7 +450,7 @@ func newAPIServer(config options, store *state.Store, manager *discovery.Manager
 	}
 	executor, err := remediation.NewExecutor(manager.Remediations(), func(ctx context.Context) (remediation.GraphView, error) {
 		view, latestErr := store.Latest(ctx)
-		return remediation.GraphView{SHA256: view.SHA256, Snapshot: view.Snapshot}, latestErr
+		return remediation.GraphView{Revision: view.Revision, Snapshot: view.Snapshot}, latestErr
 	})
 	if err != nil {
 		return nil, err

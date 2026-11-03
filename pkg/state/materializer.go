@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/jackc/pgx/v5"
 )
 
 type contributionKey struct {
@@ -97,7 +97,7 @@ func (s *Store) loadMaterializedGraph(ctx context.Context) (materializedGraph, e
 	}
 	state.generatedAt = *generatedAt
 	state.hasGraph = true
-	state.view, err = s.compileGraphView(activeGraph{generatedAt: state.generatedAt, input: input})
+	state.view, err = s.compileGraphView(activeGraph{revision: state.revision, generatedAt: state.generatedAt, input: input})
 	return state, err
 }
 

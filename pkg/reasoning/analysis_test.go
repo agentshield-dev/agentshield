@@ -11,18 +11,18 @@ import (
 
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning/mcpserver"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestAnalyzeCandidateSuppressesWithoutModelCall(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 	defer server.Close()
-	outcome, err := reasoning.AnalyzeCandidate(context.Background(), reasoning.Client{Endpoint: server.URL}, reasoning.Packet{AnalysisID: "a", HydratedGraphSHA256: "g"}, reasoning.AnalysisConfig{Name: "compact", Compact: true})
+	outcome, err := reasoning.AnalyzeCandidate(context.Background(), reasoning.Client{Endpoint: server.URL}, reasoning.Packet{AnalysisID: "a", HydratedGraphRevision: 1}, reasoning.AnalysisConfig{Name: "compact", Compact: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,12 +87,12 @@ func TestAnalyzeCandidateLetsModelTraverseMCPAndPromotes(t *testing.T) {
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph",
+		AnalysisID: "analysis", HydratedGraphRevision: 1,
 		Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}, {ID: "r3"}},
 		Signals:   []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskHigh, AnchorIDs: []string{"r1"}}},
 	}
 	provider, err := reasoning.NewContextProviderWithTelemetry(packet, reasoning.PinnedTelemetryContext{
-		Token: reasoning.AnalysisToken{AnalysisID: "analysis", GraphSHA256: "graph"},
+		Token: reasoning.AnalysisToken{AnalysisID: "analysis", GraphRevision: 1},
 		Telemetry: []reasoning.Telemetry{
 			{ID: "fact-1", SubjectID: "r1", ObjectID: "r2", EvidenceIDs: []string{"evidence-1"}},
 			{ID: "fact-2", SubjectID: "r2", ObjectID: "r3", EvidenceIDs: []string{"evidence-2"}},
@@ -154,7 +154,7 @@ func TestAnalyzeCandidateExecutesParallelToolCallsWithoutRiskBudget(t *testing.T
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskMedium, AnchorIDs: []string{"r1"}}},
 	}
 	session, closeSession := contextSession(t, packet, nil, reasoning.DefaultContextLimits())
@@ -187,7 +187,7 @@ func TestAnalyzeCandidateDeterministicallyRetrievesGovernanceThroughTopology(t *
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", SuggestedContextAnchors: []string{"deployment", "service"},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, SuggestedContextAnchors: []string{"deployment", "service"},
 		Resources: []reasoning.Resource{{ID: "deployment"}, {ID: "service"}, {ID: "pod"}, {ID: "network-policy", Kind: "kubernetes/networkpolicy"}},
 		Relationships: []reasoning.Relationship{
 			{ID: "deploys", SubjectID: "deployment", Predicate: "instantiates", ObjectID: "pod"},
@@ -249,7 +249,7 @@ func TestAnalyzeCandidateResponsesReplaysReasoningAndFunctionItems(t *testing.T)
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal", Risk: detector.RiskMedium, AnchorIDs: []string{"r1"}}},
 	}
 	session, closeSession := contextSession(t, packet, nil, reasoning.DefaultContextLimits())
@@ -287,7 +287,7 @@ func TestAnalyzeCandidateCanRecoverFromToolValidationError(t *testing.T) {
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskLow, AnchorIDs: []string{"r1"}}},
 	}
 	session, closeSession := contextSession(t, packet, nil, reasoning.DefaultContextLimits())
@@ -331,7 +331,7 @@ func TestInvestigationToolLoopIsBounded(t *testing.T) {
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskMedium, AnchorIDs: []string{"r1"}}},
 	}
 	session, closeSession := contextSession(t, packet, nil, reasoning.DefaultContextLimits())
@@ -379,7 +379,7 @@ func TestRepairAllowlistMatchesValidationIncludingInitialPacketFacts(t *testing.
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
 		Relationships: []reasoning.Relationship{{ID: "fact-0", SubjectID: "r1", Predicate: "communicates-with", ObjectID: "r2", EvidenceIDs: []string{"evidence-0"}}},
 		Signals:       []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskMedium, AnchorIDs: []string{"r1"}}},
 	}
@@ -419,7 +419,7 @@ func TestAnalyzeCandidateRejectsFindingFromTruncatedContext(t *testing.T) {
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskLow, AnchorIDs: []string{"r1"}}},
 	}
 	telemetry := []reasoning.Telemetry{{ID: "fact-1", SubjectID: "r1", ObjectID: "r2", EvidenceIDs: []string{"evidence-1"}}}
@@ -460,7 +460,7 @@ func TestAnalyzeCandidateRejectsRepairedFindingFromTruncatedContext(t *testing.T
 	}))
 	defer server.Close()
 	packet := reasoning.Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
+		AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}, {ID: "r2"}},
 		Signals: []detector.InvestigationSignal{{ID: "signal-1", Risk: detector.RiskLow, AnchorIDs: []string{"r1"}}},
 	}
 	telemetry := []reasoning.Telemetry{{ID: "fact-1", SubjectID: "r1", ObjectID: "r2", EvidenceIDs: []string{"evidence-1"}}}
@@ -478,7 +478,7 @@ func TestAnalyzeCandidateRejectsRepairedFindingFromTruncatedContext(t *testing.T
 func contextSession(t *testing.T, packet reasoning.Packet, telemetry []reasoning.Telemetry, limits reasoning.ContextLimits) (*mcp.ClientSession, func()) {
 	t.Helper()
 	provider, err := reasoning.NewContextProviderWithTelemetry(packet, reasoning.PinnedTelemetryContext{
-		Token: reasoning.AnalysisToken{AnalysisID: packet.AnalysisID, GraphSHA256: packet.HydratedGraphSHA256}, Telemetry: telemetry,
+		Token: reasoning.AnalysisToken{AnalysisID: packet.AnalysisID, GraphRevision: packet.HydratedGraphRevision}, Telemetry: telemetry,
 	}, limits)
 	if err != nil {
 		t.Fatal(err)

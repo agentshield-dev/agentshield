@@ -14,7 +14,7 @@ import (
 // implements it.
 type FindingStore interface {
 	PutFinding(context.Context, state.Finding) error
-	InvalidateFindings(context.Context, string, uint64, []string, time.Time) error
+	InvalidateFindings(context.Context, uint64, uint64, []string, time.Time) error
 }
 
 // FindingSink is the production [ResultSink]. It turns each recorded
@@ -40,7 +40,7 @@ func NewFindingSink(store FindingStore, clock func() time.Time) (*FindingSink, e
 //  1. A rebase invalidates every active finding grounded in a different graph
 //     digest, because the missed changes are unknown and any of them could
 //     have affected those findings.
-//  2. Otherwise, active findings from a different digest that name an entity
+//  2. Otherwise, active findings from a different revision that name an entity
 //     touched by the window's changes are invalidated. Unrelated graph churn
 //     leaves findings active.
 //  3. A promoted, accepted outcome is persisted as an active finding with
@@ -51,11 +51,11 @@ func NewFindingSink(store FindingStore, clock func() time.Time) (*FindingSink, e
 // a crash before the cursor advanced is idempotent.
 func (sink *FindingSink) RecordReasoningEvaluation(ctx context.Context, evaluation Evaluation) error {
 	if evaluation.Rebased {
-		return sink.store.InvalidateFindings(ctx, evaluation.Window.Checkpoint.View.SHA256, evaluation.Window.Checkpoint.ThroughSequence, nil, sink.clock().UTC())
+		return sink.store.InvalidateFindings(ctx, evaluation.Window.Checkpoint.View.Revision, evaluation.Window.Checkpoint.ThroughSequence, nil, sink.clock().UTC())
 	}
 	now := sink.clock().UTC()
 	if len(evaluation.Window.Events) > 0 {
-		if err := sink.store.InvalidateFindings(ctx, evaluation.Window.Checkpoint.View.SHA256, evaluation.Window.Checkpoint.ThroughSequence, changedEntityIDs(evaluation.Window.Events), now); err != nil {
+		if err := sink.store.InvalidateFindings(ctx, evaluation.Window.Checkpoint.View.Revision, evaluation.Window.Checkpoint.ThroughSequence, changedEntityIDs(evaluation.Window.Events), now); err != nil {
 			return err
 		}
 	}
@@ -88,8 +88,8 @@ func (sink *FindingSink) RecordInvestigation(ctx context.Context, outcome Analys
 	assessment := outcome.Response.Assessment
 	return promotion.FindingID, sink.store.PutFinding(ctx, state.Finding{
 		ID: promotion.FindingID, Origin: state.FindingOriginAgenticInvestigation, AnalysisID: outcome.EffectivePacket.AnalysisID,
-		GraphSHA256: outcome.EffectivePacket.HydratedGraphSHA256,
-		Category:    assessment.Category, Severity: assessment.Severity,
+		GraphRevision: outcome.EffectivePacket.HydratedGraphRevision,
+		Category:      assessment.Category, Severity: assessment.Severity,
 		ModelUncertainty: assessment.ModelUncertainty, Summary: assessment.Summary,
 		SignalIDs: append([]string(nil), promotion.SignalIDs...), AffectedEntityIDs: append([]string(nil), assessment.AffectedEntityIDs...),
 		Remediations: proposals, Status: state.FindingStatusActive, CreatedAt: now,

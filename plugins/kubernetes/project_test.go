@@ -100,7 +100,7 @@ func TestProjectDeterministicUnderShuffledInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantHash := compiledHash(t, wantInput)
+	wantHash := compiledCanonical(t, wantInput)
 	random := rand.New(rand.NewSource(42))
 	for iteration := 0; iteration < 100; iteration++ {
 		shuffled := slices.Clone(objects)
@@ -112,7 +112,7 @@ func TestProjectDeterministicUnderShuffledInput(t *testing.T) {
 		if !reflect.DeepEqual(gotInput, wantInput) {
 			t.Fatalf("projection changed for shuffle %d", iteration)
 		}
-		if gotHash := compiledHash(t, gotInput); gotHash != wantHash {
+		if gotHash := compiledCanonical(t, gotInput); gotHash != wantHash {
 			t.Fatalf("hash for shuffle %d = %s, want %s", iteration, gotHash, wantHash)
 		}
 	}
@@ -145,7 +145,7 @@ func TestProjectMalformedAndUnsafeReferences(t *testing.T) {
 	}
 }
 
-func compiledHash(t *testing.T, input graph.Input) string {
+func compiledCanonical(t *testing.T, input graph.Input) string {
 	t.Helper()
 	registry := graph.NewRegistry()
 	if err := registry.Register(IdentitySchemeDefinition()); err != nil {
@@ -155,9 +155,9 @@ func compiledHash(t *testing.T, input graph.Input) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := snapshot.Hash()
+	encoded, err := snapshot.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return hash
+	return string(encoded)
 }

@@ -11,7 +11,7 @@
 //     finding. A suggestion names a desired outcome ([Intent]) and one target
 //     entity, never a plugin, payload, or command.
 //  2. The host hydrates each suggestion into a [Proposal] bound to the finding,
-//     analysis, graph digest, canonical target identity, and evidence. Proposal
+//     analysis, graph revision, canonical target identity, and evidence. Proposal
 //     IDs are content digests, so a proposal cannot be altered without changing
 //     its ID.
 //  3. [Registry.Candidates] lists every registered provider action that can
@@ -37,7 +37,7 @@
 //     substitute a different plan, preparation, or result.
 //   - The target is checked against the current graph before planning,
 //     preparation, and execution. A target that is gone, has changed kind, or
-//     has conflicting kinds stops the action. The finding's graph digest is
+//     has conflicting kinds stops the action. The finding's graph revision is
 //     audit context, not an execution lock, so unrelated graph churn does not
 //     block remediation.
 //   - Execution is single-flight per plan: concurrent approvals wait for the

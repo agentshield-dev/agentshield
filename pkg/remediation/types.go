@@ -87,13 +87,13 @@ type Target struct {
 }
 
 // Proposal is a host-hydrated, server-owned suggestion bound to its finding,
-// analysis, graph digest, target, and evidence. The API never accepts a
+// analysis, graph revision, target, and evidence. The API never accepts a
 // proposal from a client.
 type Proposal struct {
 	ID            string   `json:"id"`
 	FindingID     string   `json:"findingId"`
 	AnalysisID    string   `json:"analysisId"`
-	GraphSHA256   string   `json:"graphSha256"`
+	GraphRevision uint64   `json:"graphRevision"`
 	Intent        Intent   `json:"intent"`
 	Target        Target   `json:"target"`
 	SupportingIDs []string `json:"supportingIds"`
@@ -103,7 +103,7 @@ type Proposal struct {
 // NewProposal canonicalizes supporting and evidence IDs and derives the
 // proposal ID from content. evidenceIDs must be a non-empty subset of the
 // suggestion's supporting IDs.
-func NewProposal(findingID, analysisID, graphSHA256 string, suggestion Suggestion, target Target, evidenceIDs []string) (Proposal, error) {
+func NewProposal(findingID, analysisID string, graphRevision uint64, suggestion Suggestion, target Target, evidenceIDs []string) (Proposal, error) {
 	if err := suggestion.Validate(); err != nil {
 		return Proposal{}, err
 	}
@@ -113,7 +113,7 @@ func NewProposal(findingID, analysisID, graphSHA256 string, suggestion Suggestio
 	supportingIDs := canonicalStrings(suggestion.SupportingIDs)
 	evidenceIDs = canonicalStrings(evidenceIDs)
 	proposal := Proposal{
-		FindingID: findingID, AnalysisID: analysisID, GraphSHA256: graphSHA256,
+		FindingID: findingID, AnalysisID: analysisID, GraphRevision: graphRevision,
 		Intent: suggestion.Intent, Target: target, SupportingIDs: supportingIDs, EvidenceIDs: evidenceIDs,
 	}
 	proposal.ID = canonicalID("proposal", proposal)
@@ -129,11 +129,8 @@ func (proposal Proposal) Validate() error {
 	if strings.TrimSpace(proposal.FindingID) == "" || strings.TrimSpace(proposal.AnalysisID) == "" {
 		return errors.New("remediation proposal requires finding and analysis IDs")
 	}
-	if len(proposal.GraphSHA256) != sha256.Size*2 || strings.ToLower(proposal.GraphSHA256) != proposal.GraphSHA256 {
-		return errors.New("remediation proposal requires a canonical graph SHA-256")
-	}
-	if _, err := hex.DecodeString(proposal.GraphSHA256); err != nil {
-		return errors.New("remediation proposal requires a canonical graph SHA-256")
+	if proposal.GraphRevision == 0 || proposal.GraphRevision > 1<<63-1 {
+		return errors.New("remediation proposal requires a positive bounded graph revision")
 	}
 	if !proposal.Intent.Valid() {
 		return fmt.Errorf("unsupported remediation intent %q", proposal.Intent)
@@ -212,7 +209,7 @@ type Plan struct {
 	SourceID      string `json:"sourceId"`
 	ActionID      string `json:"actionId"`
 	Mode          Mode   `json:"mode"`
-	GraphSHA256   string `json:"graphSha256"`
+	GraphRevision uint64 `json:"graphRevision"`
 	DesiredSHA256 string `json:"desiredSha256"`
 	Advisory      string `json:"advisory,omitempty"`
 }
@@ -238,7 +235,7 @@ func newPlan(proposal Proposal, providerID, sourceID, actionID string, mode Mode
 	if providerID == "" || sourceID == "" || actionID == "" || !mode.Valid() || desiredSHA256 == "" {
 		return Plan{}, errors.New("remediation plan requires proposal, provider, source, action, and desired-state IDs")
 	}
-	plan := Plan{ProposalID: proposal.ID, ProviderID: providerID, SourceID: sourceID, ActionID: actionID, Mode: mode, GraphSHA256: proposal.GraphSHA256, DesiredSHA256: desiredSHA256, Advisory: advisory}
+	plan := Plan{ProposalID: proposal.ID, ProviderID: providerID, SourceID: sourceID, ActionID: actionID, Mode: mode, GraphRevision: proposal.GraphRevision, DesiredSHA256: desiredSHA256, Advisory: advisory}
 	plan.ID = canonicalID("plan", plan)
 	return plan, nil
 }
@@ -270,7 +267,7 @@ type Preparation struct {
 	ProviderID    string          `json:"providerId"`
 	SourceID      string          `json:"sourceId"`
 	ActionID      string          `json:"actionId"`
-	GraphSHA256   string          `json:"graphSha256"`
+	GraphRevision uint64          `json:"graphRevision"`
 	Successful    bool            `json:"successful"`
 	ProviderState []ProviderState `json:"providerState,omitempty"`
 }
@@ -286,7 +283,7 @@ func NewPreparation(plan Plan, successful bool, providerState []ProviderState) (
 	}
 	preparation := Preparation{
 		PlanID: plan.ID, ProposalID: plan.ProposalID, ProviderID: plan.ProviderID, SourceID: plan.SourceID, ActionID: plan.ActionID,
-		GraphSHA256: plan.GraphSHA256, Successful: successful,
+		GraphRevision: plan.GraphRevision, Successful: successful,
 		ProviderState: providerState,
 	}
 	preparation.ID = canonicalID("preparation", preparation)

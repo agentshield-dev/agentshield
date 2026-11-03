@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
 // Contribution head statuses, derived from Retired, Ready, and SourceHealth by
@@ -105,7 +105,7 @@ func (s *Store) publishContribution(ctx context.Context, contribution Contributi
 		if err != nil {
 			return contributionPublication{}, fmt.Errorf("build candidate graph: %w", err)
 		}
-		next.view, err = s.compileGraphView(activeGraph{generatedAt: contribution.UpdatedAt, input: input})
+		next.view, err = s.compileGraphView(activeGraph{revision: next.revision, generatedAt: contribution.UpdatedAt, input: input})
 		if err != nil {
 			return contributionPublication{}, fmt.Errorf("compile candidate graph: %w", err)
 		}
@@ -167,11 +167,7 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, current, next ma
 		}
 		return contributionPublication{VersionID: head.versionID}, false, nil
 	}
-	digest, err := hex.DecodeString(next.view.SHA256)
-	if err != nil {
-		return contributionPublication{}, false, fmt.Errorf("decode candidate graph digest: %w", err)
-	}
-	command, err := tx.Exec(ctx, `UPDATE graph_state SET revision=revision+1, digest=$2, generated_at=$3 WHERE singleton=true AND revision=$1`, current.revision, digest, next.view.GeneratedAt)
+	command, err := tx.Exec(ctx, `UPDATE graph_state SET revision=revision+1, generated_at=$2 WHERE singleton=true AND revision=$1`, current.revision, next.view.GeneratedAt)
 	if err != nil {
 		return contributionPublication{}, false, fmt.Errorf("advance graph revision: %w", err)
 	}
@@ -1044,12 +1040,12 @@ func (s *Store) CurrentGraph(ctx context.Context) (GraphView, error) {
 }
 
 // GraphRevision returns the compare-and-swap revision of the materialized graph.
-func (s *Store) GraphRevision(ctx context.Context) (string, error) {
+func (s *Store) GraphRevision(ctx context.Context) (uint64, error) {
 	var revision int64
 	if err := s.pool.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {
-		return "", fmt.Errorf("read graph revision: %w", err)
+		return 0, fmt.Errorf("read graph revision: %w", err)
 	}
-	return strconv.FormatInt(revision, 10), nil
+	return uint64(revision), nil
 }
 
 // ReadGraphCheckpoint returns the latest outbox sequence and the graph
@@ -1084,6 +1080,7 @@ func (s *Store) ReadGraphCheckpoint(ctx context.Context) (GraphCheckpoint, error
 // activeGraph is the active assertion union read from one snapshot, before
 // compilation.
 type activeGraph struct {
+	revision    int64
 	generatedAt time.Time
 	input       graph.Input
 }
@@ -1091,6 +1088,10 @@ type activeGraph struct {
 // readActiveGraph reads the active assertion union inside tx. Compilation is
 // left to compileGraphView so callers can end the transaction first.
 func readActiveGraph(ctx context.Context, tx pgx.Tx) (activeGraph, error) {
+	var revision int64
+	if err := tx.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {
+		return activeGraph{}, fmt.Errorf("read graph revision: %w", err)
+	}
 	var generatedAt *time.Time
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT max(updated_at), count(*) FROM contribution_heads`).Scan(&generatedAt, &count); err != nil {
@@ -1103,7 +1104,7 @@ func readActiveGraph(ctx context.Context, tx pgx.Tx) (activeGraph, error) {
 	if err != nil {
 		return activeGraph{}, fmt.Errorf("collect active assertions: %w", err)
 	}
-	return activeGraph{generatedAt: *generatedAt, input: input}, nil
+	return activeGraph{revision: revision, generatedAt: *generatedAt, input: input}, nil
 }
 
 func (s *Store) compileGraphView(active activeGraph) (GraphView, error) {
@@ -1111,12 +1112,7 @@ func (s *Store) compileGraphView(active activeGraph) (GraphView, error) {
 	if err != nil {
 		return GraphView{}, fmt.Errorf("compile current graph: %w", err)
 	}
-	canonical, err := snapshot.CanonicalJSON()
-	if err != nil {
-		return GraphView{}, err
-	}
-	digest := sha256.Sum256(canonical)
-	return GraphView{GeneratedAt: active.generatedAt, SHA256: hex.EncodeToString(digest[:]), Snapshot: snapshot}, nil
+	return GraphView{Revision: uint64(active.revision), GeneratedAt: active.generatedAt, Snapshot: snapshot}, nil
 }
 
 // Neighborhood returns resolved edges reachable from resourceID within depth
@@ -1166,7 +1162,7 @@ func (s *Store) Neighborhood(ctx context.Context, resourceID string, depth int, 
 		}
 		frontier = next
 	}
-	result := Neighborhood{SHA256: view.SHA256, Resources: []graph.Resource{}, Relationships: []graph.Relationship{}}
+	result := Neighborhood{Revision: view.Revision, Resources: []graph.Resource{}, Relationships: []graph.Relationship{}}
 	for id := range selectedNodes {
 		if resource, ok := resources[id]; ok {
 			result.Resources = append(result.Resources, resource)

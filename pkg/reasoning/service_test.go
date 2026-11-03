@@ -40,7 +40,7 @@ func (store *serviceStore) AdvanceReasoningCursor(_ context.Context, cursor stat
 func TestServiceEvaluateWindowSuppressesChangesWithoutSignals(t *testing.T) {
 	store := &serviceStore{
 		events:     []state.ContributionChangeEvent{{Sequence: 1}},
-		checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "graph-1"}},
+		checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1}},
 	}
 	called := false
 	service, err := NewService(store, AnalyzerFunc(func(context.Context, Packet, *ContextProvider) (AnalysisRun, error) {
@@ -64,8 +64,8 @@ func TestServiceEvaluateWindowSuppressesChangesWithoutSignals(t *testing.T) {
 
 func TestServiceInitializeExplicitlyRebasesLaggingCursor(t *testing.T) {
 	store := &serviceStore{
-		checkpoint: state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{SHA256: "graph-5"}},
-		cursor:     state.ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 3, GraphSHA256: "graph-3"}, found: true,
+		checkpoint: state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{Revision: 1}},
+		cursor:     state.ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 3, GraphRevision: 1}, found: true,
 	}
 	var recorded Evaluation
 	service, err := NewService(store, nil, ResultSinkFunc(func(_ context.Context, evaluation Evaluation) error {
@@ -86,8 +86,8 @@ func TestServiceInitializeExplicitlyRebasesLaggingCursor(t *testing.T) {
 
 func TestServiceInitializeToleratesTelemetryDigestDriftAtSameSequence(t *testing.T) {
 	store := &serviceStore{
-		checkpoint: state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{SHA256: "graph-with-new-telemetry"}},
-		cursor:     state.ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 5, GraphSHA256: "graph-before-telemetry"}, found: true,
+		checkpoint: state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{Revision: 1}},
+		cursor:     state.ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 5, GraphRevision: 1}, found: true,
 	}
 	service, err := NewService(store, nil, nil, ServiceConfig{})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestServiceBuildsLongitudinalIncidentContextForContinuousEvaluation(t *test
 	}
 	current := previous
 	current.Telemetry = append(append([]graph.TelemetryEvent(nil), previous.Telemetry...), graph.TelemetryEvent{ID: "bc", Kind: "active-probe", SubjectID: "b", ObjectID: "c", Count: 1, Properties: map[string]string{"telemetry/first-seen": second.Format(time.RFC3339Nano)}, EvidenceIDs: []string{"bc-evidence"}})
-	store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "graph", Snapshot: current}}}
+	store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1, Snapshot: current}}}
 	queried := false
 	service, err := NewService(store, AnalyzerFunc(func(_ context.Context, _ Packet, provider *ContextProvider) (AnalysisRun, error) {
 		result, queryErr := provider.Query(ContextQuery{Token: provider.Token(), Template: "incident_timeline", AnchorIDs: []string{"b"}})
@@ -165,7 +165,7 @@ func TestServiceInvestigatesOnlyEligibleNonShadowSignals(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "graph-1"}}}
+			store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1}}}
 			var packetSignals []string
 			var analyzer Analyzer
 			if test.analyzer {
@@ -225,7 +225,7 @@ type advancingStore struct {
 func (store *advancingStore) ReadGraphCheckpoint(context.Context) (state.GraphCheckpoint, error) {
 	store.reads++
 	if store.reads == 1 {
-		return state.GraphCheckpoint{View: state.GraphView{SHA256: "graph-0"}}, nil
+		return state.GraphCheckpoint{View: state.GraphView{Revision: 1}}, nil
 	}
 	return store.checkpoint, nil
 }
@@ -242,7 +242,7 @@ func TestServiceRunRecordsAWindowFailureAndContinues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := &advancingStore{serviceStore: serviceStore{
 				events:     []state.ContributionChangeEvent{{Sequence: 1}},
-				checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "graph-1"}},
+				checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1}},
 			}}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -293,7 +293,7 @@ func TestSignalSinkRecordsInvestigationOutcomeAndPrunesHourly(t *testing.T) {
 		t.Fatal(err)
 	}
 	evaluation := Evaluation{
-		Window:        ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{SHA256: "graph-9"}}},
+		Window:        ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{Revision: 1}}},
 		Signals:       []detector.InvestigationSignal{gateSignal("medium", detector.RiskMedium, "")},
 		RuleSignals:   []detector.InvestigationSignal{{ID: "rule", Risk: detector.RiskMedium, Reasons: []string{"test"}, RuleID: "approved", RuleRevision: 1}},
 		ShadowSignals: []detector.InvestigationSignal{gateSignal("shadow", detector.RiskMedium, detector.RuleModeShadow)},
@@ -305,7 +305,7 @@ func TestSignalSinkRecordsInvestigationOutcomeAndPrunesHourly(t *testing.T) {
 		}
 	}
 	if len(store.recorded) != 6 || store.recorded[0].Investigation != state.InvestigationDisabled || store.recorded[1].Investigation != state.InvestigationRuleFinding || store.recorded[2].Investigation != state.InvestigationShadow ||
-		store.recorded[0].ThroughSequence != 9 || store.recorded[0].GraphSHA256 != "graph-9" {
+		store.recorded[0].ThroughSequence != 9 || store.recorded[0].GraphRevision != 1 {
 		t.Fatalf("recorded=%#v", store.recorded)
 	}
 	if len(store.prunes) != 1 || !store.prunes[0].Equal(now.Add(-24*time.Hour)) {

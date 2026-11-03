@@ -28,7 +28,7 @@
 //     classification, and incident context scoped to the signals' anchors.
 //  5. The [ResultSink] values record the [Evaluation]: [FindingSink] stores
 //     [RuleFindings] and invalidates agentic findings grounded in a superseded
-//     graph digest, [SignalSink] records every signal, and [InvestigationQueue]
+//     graph revision, [SignalSink] records every signal, and [InvestigationQueue]
 //     enqueues the request, coalescing it with queued requests that share an
 //     anchor. Only then does the cursor advance.
 //
@@ -80,11 +80,11 @@
 //
 // # Invariants
 //
-//   - Every retrieval is pinned to one analysis ID and graph digest; a query
+//   - Every retrieval is pinned to one analysis ID and graph revision; a query
 //     with another token is rejected.
 //   - A candidate that relied on truncated retrieval is rejected, because
 //     absence cannot be inferred from a partial view.
-//   - Finding identity is a digest of the promoted signal IDs and graph digest,
+//   - Finding identity is a digest of the promoted signal IDs and graph revision,
 //     so replaying an evaluation is idempotent.
 //   - The cursor advances only after the sinks record the evaluation.
 //   - Detection never calls a model; rule findings never depend on one.

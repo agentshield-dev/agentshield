@@ -84,7 +84,7 @@ func TestProjectDeterminismCompilerIntegrationAndRetraction(t *testing.T) {
 		t.Fatal(err)
 	}
 	baselineSnapshot := compileProjection(t, baseline, namespace, service)
-	baselineHash, err := baselineSnapshot.Hash()
+	baselineJSON, err := baselineSnapshot.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,12 +96,12 @@ func TestProjectDeterminismCompilerIntegrationAndRetraction(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := compileProjection(t, result, namespace, service)
-		hash, err := snapshot.Hash()
+		encoded, err := snapshot.CanonicalJSON()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if hash != baselineHash {
-			t.Fatalf("seed %d hash = %s, want %s", seed, hash, baselineHash)
+		if !slices.Equal(encoded, baselineJSON) {
+			t.Fatalf("seed %d produced a different graph", seed)
 		}
 	}
 

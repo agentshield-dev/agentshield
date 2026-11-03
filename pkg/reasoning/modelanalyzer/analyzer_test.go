@@ -42,7 +42,7 @@ func TestAnalyzeDoesNotRetryPermanentModelErrors(t *testing.T) {
 			http.Error(writer, "rejected", test.status)
 		}))
 		packet := reasoning.Packet{
-			AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []reasoning.Resource{{ID: "r1"}},
+			AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []reasoning.Resource{{ID: "r1"}},
 			Signals: []detector.InvestigationSignal{{ID: "signal", Risk: detector.RiskMedium, AnchorIDs: []string{"r1"}}},
 		}
 		provider, err := reasoning.NewContextProvider(packet, reasoning.DefaultContextLimits())

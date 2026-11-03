@@ -197,7 +197,7 @@ func (store *fakeInvestigationStore) PruneInvestigationJobs(context.Context, tim
 	return 0, nil
 }
 
-func (store *fakeInvestigationStore) InvalidateFindings(_ context.Context, _ string, _ uint64, ids []string, _ time.Time) error {
+func (store *fakeInvestigationStore) InvalidateFindings(_ context.Context, _ uint64, _ uint64, ids []string, _ time.Time) error {
 	store.invalidated = append(store.invalidated, ids)
 	return nil
 }
@@ -230,7 +230,7 @@ func promotingAnalyzer(calls *int, packets *[]Packet) Analyzer {
 }
 
 func TestInvestigationWorkerSamplesAdmitsInvestigatesAndReconciles(t *testing.T) {
-	checkpoint := state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{SHA256: strings.Repeat("a", 64), Snapshot: graph.Snapshot{
+	checkpoint := state.GraphCheckpoint{ThroughSequence: 5, View: state.GraphView{Revision: 1, Snapshot: graph.Snapshot{
 		Resources: []graph.Resource{{ID: "checkout", Kind: "kubernetes/deployment"}, {ID: "secrets", Kind: "kubernetes/service"}},
 	}}}
 	events := []state.ContributionChangeEvent{{Sequence: 3}, {Sequence: 4}, {Sequence: 5}, {Sequence: 6, Added: []state.AssertionChange{{Entity: state.EntityLocator{ID: "checkout"}}}}}
@@ -285,7 +285,7 @@ func TestInvestigationWorkerSamplesAdmitsInvestigatesAndReconciles(t *testing.T)
 }
 
 func TestInvestigationWorkerRetriesModelFailures(t *testing.T) {
-	checkpoint := state.GraphCheckpoint{ThroughSequence: 3, View: state.GraphView{SHA256: strings.Repeat("a", 64), Snapshot: graph.Snapshot{
+	checkpoint := state.GraphCheckpoint{ThroughSequence: 3, View: state.GraphView{Revision: 1, Snapshot: graph.Snapshot{
 		Resources: []graph.Resource{{ID: "checkout"}},
 	}}}
 	store := newFakeInvestigationStore(checkpoint, []state.ContributionChangeEvent{{Sequence: 3}})
@@ -321,7 +321,7 @@ func TestInvestigationWorkerRetriesModelFailures(t *testing.T) {
 }
 
 func TestInvestigationWorkerEndsPermanentFailuresPanicsAndSlowRuns(t *testing.T) {
-	checkpoint := state.GraphCheckpoint{ThroughSequence: 3, View: state.GraphView{SHA256: strings.Repeat("a", 64), Snapshot: graph.Snapshot{
+	checkpoint := state.GraphCheckpoint{ThroughSequence: 3, View: state.GraphView{Revision: 1, Snapshot: graph.Snapshot{
 		Resources: []graph.Resource{{ID: "checkout"}},
 	}}}
 	request := InvestigationRequest{SchemaVersion: InvestigationRequestSchemaVersion, FirstSequence: 3, LastSequence: 3,
@@ -449,7 +449,7 @@ func (store *recordingQueueStore) EnqueueInvestigationJob(_ context.Context, rec
 }
 
 func TestServiceRunQueuesInvestigationWithoutCallingModel(t *testing.T) {
-	store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{SHA256: "graph-1"}}}
+	store := &serviceStore{events: []state.ContributionChangeEvent{{Sequence: 1}}, checkpoint: state.GraphCheckpoint{ThroughSequence: 1, View: state.GraphView{Revision: 1}}}
 	called := false
 	service, err := NewService(store, AnalyzerFunc(func(context.Context, Packet, *ContextProvider) (AnalysisRun, error) {
 		called = true

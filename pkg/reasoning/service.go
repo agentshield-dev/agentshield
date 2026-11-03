@@ -461,7 +461,7 @@ func notInvestigated(packet Packet) AnalysisRun {
 // indefinitely, and skipping would silently claim the window was recorded.
 // Because the cursor has not advanced, the next start finds it behind the
 // checkpoint and records an explicit rebase, which invalidates agentic
-// findings from older digests. The production command treats this error as
+// findings from older revisions. The production command treats this error as
 // fatal. A panic is returned as an error with its stack.
 func (service *Service) Run(ctx context.Context) (err error) {
 	defer func() {
@@ -591,6 +591,6 @@ func (service *Service) initialize(ctx context.Context) (graph.Snapshot, uint64,
 func (service *Service) advance(ctx context.Context, checkpoint state.GraphCheckpoint) error {
 	return service.store.AdvanceReasoningCursor(ctx, state.ReasoningCursor{
 		ConsumerID: service.config.ConsumerID, ThroughSequence: checkpoint.ThroughSequence,
-		GraphSHA256: checkpoint.View.SHA256, UpdatedAt: service.config.Clock().UTC(),
+		GraphRevision: checkpoint.View.Revision, UpdatedAt: service.config.Clock().UTC(),
 	})
 }

@@ -75,7 +75,7 @@ func TestPostgreSQLPublicationLockWaitIsBounded(t *testing.T) {
 func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 	store, _ := integrationStore(t)
 	proposal, err := remediation.NewProposal(
-		"finding:test", "analysis:test", strings.Repeat("a", 64),
+		"finding:test", "analysis:test", 1,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 			Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "pod/uid",
@@ -86,7 +86,7 @@ func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	finding := Finding{
-		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphSHA256: proposal.GraphSHA256,
+		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphRevision: proposal.GraphRevision,
 		Category: "new_exposure", Severity: "high",
 		ModelUncertainty: "low", Summary: "Unexpected ingress", SignalIDs: []string{"signal"},
 		AffectedEntityIDs: []string{"target"}, Remediations: []remediation.Proposal{proposal}, CreatedAt: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC),
@@ -131,18 +131,18 @@ func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 		t.Fatalf("filtered finding page = %#v, err = %v", page, err)
 	}
 	invalidatedAt := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	if err := store.InvalidateFindings(context.Background(), strings.Repeat("b", 64), 2, []string{"target"}, invalidatedAt); err != nil {
+	if err := store.InvalidateFindings(context.Background(), 2, 2, []string{"target"}, invalidatedAt); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.GetFinding(context.Background(), finding.ID)
-	if err != nil || got.Status != FindingStatusInvalidated || got.InvalidatedAt == nil || !got.InvalidatedAt.Equal(invalidatedAt) || got.InvalidatedBySequence == nil || *got.InvalidatedBySequence != 2 || got.InvalidatedGraphSHA256 != strings.Repeat("b", 64) {
+	if err != nil || got.Status != FindingStatusInvalidated || got.InvalidatedAt == nil || !got.InvalidatedAt.Equal(invalidatedAt) || got.InvalidatedBySequence == nil || *got.InvalidatedBySequence != 2 || got.InvalidatedGraphRevision != 2 {
 		t.Fatalf("invalidated finding = %#v, err = %v", got, err)
 	}
 	page, err = store.QueryFindings(context.Background(), FindingQuery{Status: FindingStatusActive, Limit: 10})
 	if err != nil || len(page.Findings) != 1 || page.Findings[0].ID != second.ID || page.Total != 1 {
 		t.Fatalf("active findings = %#v, err = %v", page, err)
 	}
-	if err := store.InvalidateFindings(context.Background(), strings.Repeat("c", 64), 3, nil, invalidatedAt.Add(time.Hour)); err != nil {
+	if err := store.InvalidateFindings(context.Background(), 3, 3, nil, invalidatedAt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.GetFinding(context.Background(), second.ID)
@@ -155,7 +155,7 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	finding := Finding{
-		ID: "finding:rule", Origin: FindingOriginDetectionRule, AnalysisID: "detection-window:test", GraphSHA256: strings.Repeat("a", 64),
+		ID: "finding:rule", Origin: FindingOriginDetectionRule, AnalysisID: "detection-window:test", GraphRevision: 1,
 		Category: "detection_rule_match", Severity: "critical", Summary: "Detection rule matched",
 		DetectionRuleID: "deployment/checkout/rule-1", DetectionRuleRevision: 3,
 		SignalIDs: []string{"signal"}, AffectedEntityIDs: []string{"checkout"}, CreatedAt: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC),
@@ -191,7 +191,7 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 		}
 	}
 	for _, entityIDs := range [][]string{{"checkout"}, nil} {
-		if err := store.InvalidateFindings(ctx, strings.Repeat("b", 64), 5, entityIDs, time.Now()); err != nil {
+		if err := store.InvalidateFindings(ctx, 2, 5, entityIDs, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -202,8 +202,8 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 		t.Fatalf("agentic finding after graph change = %#v err = %v", got, err)
 	}
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO findings (finding_id, analysis_id, graph_sha256, category, severity, model_uncertainty, summary, signal_ids, remediations, created_at, origin)
-		VALUES ('finding:raw', 'analysis', $1, 'category', 'high', '', 'summary', '[]', '[]', now(), 'agentic_investigation')`, strings.Repeat("a", 64)); err == nil {
+		INSERT INTO findings (finding_id, analysis_id, graph_revision, category, severity, model_uncertainty, summary, signal_ids, remediations, created_at, origin)
+		VALUES ('finding:raw', 'analysis', $1, 'category', 'high', '', 'summary', '[]', '[]', now(), 'agentic_investigation')`, 1); err == nil {
 		t.Fatal("schema accepted an agentic finding without model uncertainty")
 	}
 }
@@ -253,7 +253,7 @@ func TestPostgreSQLLatestBeforeFirstContributionIsNotMaterialized(t *testing.T) 
 func TestPostgreSQLGraphRevisionChangesOnlyWithPublication(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
-	revision := func() string {
+	revision := func() uint64 {
 		t.Helper()
 		value, err := store.GraphRevision(ctx)
 		if err != nil {
@@ -267,13 +267,13 @@ func TestPostgreSQLGraphRevisionChangesOnlyWithPublication(t *testing.T) {
 	}
 	first := revision()
 	if first == empty {
-		t.Fatalf("revision %q did not change after the first publication", first)
+		t.Fatalf("revision %d did not change after the first publication", first)
 	}
 	if _, err := store.ReplaceContribution(ctx, testContribution("first", 1, "a")); err != nil {
 		t.Fatal(err)
 	}
 	if got := revision(); got != first {
-		t.Fatalf("idempotent retry changed revision from %q to %q", first, got)
+		t.Fatalf("idempotent retry changed revision from %d to %d", first, got)
 	}
 	if _, err := store.ReplaceContribution(ctx, testContribution("second", 1, "b")); err != nil {
 		t.Fatal(err)
@@ -298,20 +298,20 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 	if _, found, err := store.ReadReasoningCursor(ctx, "reasoning/default"); err != nil || found {
 		t.Fatalf("initial cursor found=%t err=%v, want false nil", found, err)
 	}
-	first := ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 2, GraphSHA256: "graph-2", UpdatedAt: time.Now().UTC()}
+	first := ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 2, GraphRevision: 1, UpdatedAt: time.Now().UTC()}
 	if err := store.AdvanceReasoningCursor(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AdvanceReasoningCursor(ctx, first); err != nil {
 		t.Fatalf("idempotent cursor advance: %v", err)
 	}
-	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 1, GraphSHA256: "graph-1"}); err == nil {
+	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 1, GraphRevision: 1}); err == nil {
 		t.Fatal("reasoning cursor regression was accepted")
 	}
-	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 2, GraphSHA256: "different"}); err == nil {
-		t.Fatal("same-sequence graph digest change was accepted")
+	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 2, GraphRevision: 2}); err == nil {
+		t.Fatal("same-sequence graph revision change was accepted")
 	}
-	second := ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 3, GraphSHA256: "graph-3"}
+	second := ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 3, GraphRevision: 2}
 	if err := store.AdvanceReasoningCursor(ctx, second); err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || got.ThroughSequence != second.ThroughSequence || got.GraphSHA256 != second.GraphSHA256 {
+	if !found || got.ThroughSequence != second.ThroughSequence || got.GraphRevision != second.GraphRevision {
 		t.Fatalf("cursor = %#v found=%t, want sequence 3 graph-3", got, found)
 	}
 }
@@ -327,8 +327,8 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 func TestPostgreSQLReasoningCursorConcurrentInitialization(t *testing.T) {
 	store, _ := integrationStore(t)
 	cursors := []ReasoningCursor{
-		{ConsumerID: "reasoning/concurrent", ThroughSequence: 1, GraphSHA256: "graph-1"},
-		{ConsumerID: "reasoning/concurrent", ThroughSequence: 2, GraphSHA256: "graph-2"},
+		{ConsumerID: "reasoning/concurrent", ThroughSequence: 1, GraphRevision: 1},
+		{ConsumerID: "reasoning/concurrent", ThroughSequence: 2, GraphRevision: 1},
 	}
 	var wait sync.WaitGroup
 	errorsChannel := make(chan error, len(cursors))
@@ -388,13 +388,13 @@ func TestPostgreSQLReplaceContributionConcurrencyAndStaleGeneration(t *testing.T
 	for err := range errorsChannel {
 		t.Fatal(err)
 	}
-	var hashes []string
+	var revisions []uint64
 	for record := range records {
-		hashes = append(hashes, record.SHA256)
+		revisions = append(revisions, record.Revision)
 	}
-	slices.Sort(hashes)
-	if len(hashes) != 2 || hashes[0] == "" || hashes[1] == "" {
-		t.Fatalf("concurrent graph hashes = %v", hashes)
+	slices.Sort(revisions)
+	if len(revisions) != 2 || revisions[0] == 0 || revisions[1] == 0 {
+		t.Fatalf("concurrent graph revisions = %v", revisions)
 	}
 	var contributionVersions int
 	if err := store.pool.QueryRow(context.Background(), `SELECT count(*) FROM contribution_versions`).Scan(&contributionVersions); err != nil {
@@ -429,7 +429,7 @@ func TestPostgreSQLReplaceContributionSameGenerationIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry.SHA256 != first.SHA256 {
+	if retry.Revision != first.Revision {
 		t.Fatalf("same-generation retry changed the graph: first=%+v retry=%+v", first, retry)
 	}
 	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "b")); err == nil {
@@ -446,8 +446,8 @@ func TestPostgreSQLReplaceContributionSameGenerationIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.SHA256 != first.SHA256 {
-		t.Fatalf("new generation with unchanged content changed hash: %+v, want %s", second, first.SHA256)
+	if second.Revision == first.Revision {
+		t.Fatalf("new generation did not advance revision: first=%+v second=%+v", first, second)
 	}
 	events, err := store.ReadContributionChanges(context.Background(), 0, 10)
 	if err != nil {
@@ -575,8 +575,8 @@ func TestPostgreSQLContributionChangesPreservePublicationBoundaries(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.ThroughSequence != events[len(events)-1].Sequence || checkpoint.View.SHA256 != latest.SHA256 {
-		t.Fatalf("graph checkpoint = %+v, latest hash = %s", checkpoint, latest.SHA256)
+	if checkpoint.ThroughSequence != events[len(events)-1].Sequence || checkpoint.View.Revision != latest.Revision {
+		t.Fatalf("graph checkpoint = %+v, latest revision = %d", checkpoint, latest.Revision)
 	}
 }
 
@@ -953,7 +953,7 @@ func TestPostgreSQLAtomicRollbackAndRestartPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.SHA256 != second.SHA256 || generation != 2 {
+	if latest.Revision != second.Revision || generation != 2 {
 		t.Fatalf("state did not survive restart: latest=%+v generation=%d", latest, generation)
 	}
 }

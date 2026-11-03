@@ -3,9 +3,7 @@ package graph
 import (
 	"cmp"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -764,19 +762,9 @@ func (s Snapshot) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(s)
 }
 
-// MarshalIndent encodes the snapshot for human inspection. Do not hash it.
+// MarshalIndent encodes the snapshot for human inspection.
 func (s Snapshot) MarshalIndent() ([]byte, error) {
 	return json.MarshalIndent(s, "", "  ")
-}
-
-// Hash returns the hex SHA-256 of CanonicalJSON.
-func (s Snapshot) Hash() (string, error) {
-	data, err := s.CanonicalJSON()
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
 }
 
 func validateResourceAssertion(assertion ResourceAssertion) error {

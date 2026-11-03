@@ -291,7 +291,7 @@ func (worker *InvestigationWorker) reconcile(ctx context.Context, hydratedAt uin
 	if err != nil {
 		return err
 	}
-	return worker.store.InvalidateFindings(ctx, checkpoint.View.SHA256, checkpoint.ThroughSequence, changed, worker.config.Clock().UTC())
+	return worker.store.InvalidateFindings(ctx, checkpoint.View.Revision, checkpoint.ThroughSequence, changed, worker.config.Clock().UTC())
 }
 
 func (worker *InvestigationWorker) fail(ctx context.Context, job state.InvestigationJob, cause error, terminal bool) error {

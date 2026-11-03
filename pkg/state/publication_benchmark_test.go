@@ -10,7 +10,7 @@ import (
 )
 
 func BenchmarkPostgreSQLPublication(b *testing.B) {
-	for _, size := range []int{100, 1_000, 10_000} {
+	for _, size := range []int{10_000, 50_000, 100_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
 			store := benchmarkStore(b)
 			inputs := [2]graph.Input{benchmarkInput(size, "a"), benchmarkInput(size, "b")}
@@ -28,7 +28,7 @@ func BenchmarkPostgreSQLPublication(b *testing.B) {
 }
 
 func BenchmarkPostgreSQLLatest(b *testing.B) {
-	for _, size := range []int{100, 1_000, 10_000} {
+	for _, size := range []int{10_000, 50_000, 100_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
 			store := benchmarkStore(b)
 			if _, err := store.ReplaceContribution(context.Background(), benchmarkContribution(1, benchmarkInput(size, "a"))); err != nil {

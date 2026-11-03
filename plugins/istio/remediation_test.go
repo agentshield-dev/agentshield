@@ -19,7 +19,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
-const remediationTestGraphSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const remediationTestGraphRevision uint64 = 1
 
 func TestIstioRemediationLifecycleDeclaresStrictMTLS(t *testing.T) {
 	base := istioFake(istioTestPod("target-uid", map[string]string{"app": "target"}), istioPeerAuthentication("namespace-default", nil, "PERMISSIVE"))
@@ -328,7 +328,7 @@ func istioPeerAuthentication(name string, selector map[string]string, mode strin
 }
 func istioProposal(t *testing.T, uid string) remediation.Proposal {
 	t.Helper()
-	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphSHA256, remediation.Suggestion{Intent: remediation.IntentTransportRequireMutualTLS, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}}, remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: kubernetesplugin.ClaimForUID("cluster", "v1", "Pod", uid)}, []string{"evidence"})
+	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphRevision, remediation.Suggestion{Intent: remediation.IntentTransportRequireMutualTLS, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}}, remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: kubernetesplugin.ClaimForUID("cluster", "v1", "Pod", uid)}, []string{"evidence"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +336,6 @@ func istioProposal(t *testing.T, uid string) remediation.Proposal {
 }
 func istioGraphSource(proposal remediation.Proposal) remediation.GraphSourceFunc {
 	return func(context.Context) (remediation.GraphView, error) {
-		return remediation.GraphView{SHA256: proposal.GraphSHA256, Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: proposal.Target.Kind, Identity: proposal.Target.Identity}}}}, nil
+		return remediation.GraphView{Revision: proposal.GraphRevision, Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: proposal.Target.Kind, Identity: proposal.Target.Identity}}}}, nil
 	}
 }
