@@ -1,8 +1,8 @@
-// Command agentshield-deployment-author runs one Deployment rule authoring
-// model call outside the service. It reads a normalized Deployment authoring
+// Command agentshield-resource-author runs one resource rule authoring
+// model call outside the service. It reads a normalized resource authoring
 // context and prints the proposed detector rules. With --dry-run it prints the
 // exact first request body that would be sent to the selected provider, without
-// sending any request. It uses the same author as the service's Deployment
+// sending any request. It uses the same author as the service's resource
 // authoring worker and never writes to the database.
 package main
 
@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/agentshield-dev/agentshield/internal/version"
-	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
+	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/spf13/pflag"
 )
@@ -33,9 +33,9 @@ func main() {
 }
 
 func run(args []string, output io.Writer) error {
-	flags := pflag.NewFlagSet("agentshield-deployment-author", pflag.ContinueOnError)
+	flags := pflag.NewFlagSet("agentshield-resource-author", pflag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	flags.String("input", "", "JSON file containing normalized Deployment authoring context")
+	flags.String("input", "", "JSON file containing normalized resource authoring context")
 	flags.String("model-endpoint", os.Getenv("AGENTSHIELD_MODEL_ENDPOINT"), "model API base endpoint; defaults to AGENTSHIELD_MODEL_ENDPOINT")
 	flags.String("model-api-key", "", "model API key; defaults to AGENTSHIELD_MODEL_API_KEY or the selected provider's API key")
 	flags.Duration("timeout", 5*time.Minute, "maximum model request duration")
@@ -48,7 +48,7 @@ func run(args []string, output io.Writer) error {
 		return err
 	}
 	if showVersion, _ := flags.GetBool("version"); showVersion {
-		_, err := fmt.Fprintln(output, "agentshield-deployment-author "+version.String())
+		_, err := fmt.Fprintln(output, "agentshield-resource-author "+version.String())
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -99,14 +99,14 @@ func run(args []string, output io.Writer) error {
 	}
 	input, err := os.Open(inputPath)
 	if err != nil {
-		return fmt.Errorf("open Deployment context: %w", err)
+		return fmt.Errorf("open resource context: %w", err)
 	}
 	defer func() { _ = input.Close() }()
-	deploymentContext, err := decodeContext(input)
+	resourceContext, err := decodeContext(input)
 	if err != nil {
 		return err
 	}
-	author := deploymentauthoring.ModelAuthor{Client: reasoning.Client{
+	author := resourceauthoring.ModelAuthor{Client: reasoning.Client{
 		Endpoint: endpoint, APIKey: apiKey, HTTPClient: &http.Client{Timeout: timeout},
 		Model: model, Provider: provider, DryRun: dryRun,
 	}}
@@ -114,7 +114,7 @@ func run(args []string, output io.Writer) error {
 		// Logs go to stderr so the proposal on stdout stays machine-readable.
 		author.Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
-	proposal, err := author.Author(context.Background(), deploymentContext)
+	proposal, err := author.Author(context.Background(), resourceContext)
 	if err != nil {
 		var preview *reasoning.RequestPreviewError
 		if dryRun && errors.As(err, &preview) {
@@ -126,25 +126,25 @@ func run(args []string, output io.Writer) error {
 			}
 			return nil
 		}
-		return fmt.Errorf("author Deployment rules: %w", err)
+		return fmt.Errorf("author resource rules: %w", err)
 	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(proposal)
 }
 
-func decodeContext(input io.Reader) (state.DeploymentAuthoringContext, error) {
+func decodeContext(input io.Reader) (state.ResourceAuthoringContext, error) {
 	decoder := json.NewDecoder(input)
 	decoder.DisallowUnknownFields()
-	var deploymentContext state.DeploymentAuthoringContext
-	if err := decoder.Decode(&deploymentContext); err != nil {
-		return state.DeploymentAuthoringContext{}, fmt.Errorf("decode Deployment context: %w", err)
+	var resourceContext state.ResourceAuthoringContext
+	if err := decoder.Decode(&resourceContext); err != nil {
+		return state.ResourceAuthoringContext{}, fmt.Errorf("decode resource context: %w", err)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return state.DeploymentAuthoringContext{}, errors.New("Deployment context must contain exactly one JSON document")
+		return state.ResourceAuthoringContext{}, errors.New("resource context must contain exactly one JSON document")
 	}
-	if err := deploymentauthoring.ValidateContext(deploymentContext); err != nil {
-		return state.DeploymentAuthoringContext{}, err
+	if err := resourceauthoring.ValidateContext(resourceContext); err != nil {
+		return state.ResourceAuthoringContext{}, err
 	}
-	return deploymentContext, nil
+	return resourceContext, nil
 }

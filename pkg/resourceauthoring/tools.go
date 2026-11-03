@@ -1,4 +1,4 @@
-package deploymentauthoring
+package resourceauthoring
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 // ruleCollector records the rules one authoring run accepts. The structured tool
 // loop executes calls sequentially, so it needs no locking.
 type ruleCollector struct {
-	workload  state.DeploymentAuthoringContext
+	resource  state.ResourceAuthoringContext
 	selectors []string
 	logger    *slog.Logger
 	rules     []modelRule
@@ -67,7 +67,7 @@ func (collector *ruleCollector) addRuleTool() reasoning.StructuredTool {
 				return nil, fmt.Errorf("decode tool arguments: %w", err)
 			}
 			candidate := append(slices.Clone(collector.rules), rule)
-			if _, err := buildProposal(collector.workload, modelDraft{Rules: candidate}, collector.selectors); err != nil {
+			if _, err := buildProposal(collector.resource, modelDraft{Rules: candidate}, collector.selectors); err != nil {
 				collector.log().DebugContext(ctx, "add_rule rejected rule", "selector", rule.Selector, "expression", rule.Expression, "error", err)
 				return json.Marshal(map[string]any{"added": false, "error": err.Error()})
 			}

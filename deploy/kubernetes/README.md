@@ -91,7 +91,7 @@ One process can discover one Kubernetes cluster and one AWS region.
 Multiple replicas would duplicate provider rollups and share the default
 reasoning consumer ID. Prepared remediations, the collection hub, and
 telemetry rollups are held in process memory, not shared between replicas.
-Only migrations and Deployment rule-author queue leases coordinate across
+Only migrations and Resource rule-author queue leases coordinate across
 processes.
 
 The chart checks `/healthz` for liveness and `/readyz` for database

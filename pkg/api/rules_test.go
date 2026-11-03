@@ -16,10 +16,11 @@ import (
 type fakeRuleStore struct {
 	activation detector.Activation
 	active     bool
-	workload   []detector.WorkloadRule
-	jobs       map[int64]state.DeploymentRuleJobSummary
+	workload   []detector.ResourceRule
+	jobs       map[int64]state.ResourceRuleJobSummary
 	proposals  map[int64]json.RawMessage
 	reviews    []string
+	selections [][]string
 	requested  []string
 }
 
@@ -30,54 +31,58 @@ func (store *fakeRuleStore) ReadActiveDetectorRuleset(context.Context) (detector
 	return store.activation, nil
 }
 
-func (store *fakeRuleStore) ReadWorkloadRules(context.Context) ([]detector.WorkloadRule, error) {
+func (store *fakeRuleStore) ReadResourceRules(context.Context) ([]detector.ResourceRule, error) {
 	return store.workload, nil
 }
 
-func (store *fakeRuleStore) ListDeploymentRuleJobs(context.Context, int) ([]state.DeploymentRuleJobSummary, error) {
-	var jobs []state.DeploymentRuleJobSummary
+func (store *fakeRuleStore) ListResourceRuleJobs(context.Context, int) ([]state.ResourceRuleJobSummary, error) {
+	var jobs []state.ResourceRuleJobSummary
 	for _, job := range store.jobs {
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
 }
 
-func (store *fakeRuleStore) DeploymentRuleJobStatus(_ context.Context, id int64) (state.DeploymentRuleJobSummary, bool, error) {
+func (store *fakeRuleStore) ResourceRuleJobStatus(_ context.Context, id int64) (state.ResourceRuleJobSummary, bool, error) {
 	job, found := store.jobs[id]
 	return job, found, nil
 }
 
-func (store *fakeRuleStore) DeploymentRuleProposal(_ context.Context, id int64) (json.RawMessage, bool, error) {
+func (store *fakeRuleStore) ResourceRuleProposal(_ context.Context, id int64) (json.RawMessage, bool, error) {
 	proposal, found := store.proposals[id]
 	return proposal, found, nil
 }
 
-func (store *fakeRuleStore) ReviewDeploymentRuleJob(_ context.Context, id int64, decision, actor string) error {
+func (store *fakeRuleStore) ReviewResourceRuleJobRules(_ context.Context, id int64, decision, actor string, selectedRuleIDs []string) error {
 	job := store.jobs[id]
 	if job.Status != "completed" {
-		return state.ErrDeploymentRuleJobNotReviewable
+		return state.ErrResourceRuleJobNotReviewable
+	}
+	if decision == state.ResourceRuleReviewApproved && len(selectedRuleIDs) == 0 {
+		return state.ErrResourceRuleSelectionInvalid
 	}
 	job.ReviewStatus, job.ReviewedBy = decision, actor
 	store.jobs[id] = job
 	store.reviews = append(store.reviews, decision)
+	store.selections = append(store.selections, selectedRuleIDs)
 	return nil
 }
 
-func (store *fakeRuleStore) RequestDeploymentRuleJob(_ context.Context, resourceID, actor string) (state.DeploymentRuleJobSummary, error) {
+func (store *fakeRuleStore) RequestResourceRuleJob(_ context.Context, resourceID, actor string) (state.ResourceRuleJobSummary, error) {
 	for id, job := range store.jobs {
 		if job.ResourceID != resourceID || !job.CurrentRevision {
 			continue
 		}
 		if job.Status == "running" {
-			return job, state.ErrDeploymentRuleJobInProgress
+			return job, state.ErrResourceRuleJobInProgress
 		}
 		now := time.Now()
-		job.Status, job.ReviewStatus, job.RuleCount, job.RequestedBy, job.RequestedAt = "queued", state.DeploymentRuleReviewPending, 0, actor, &now
+		job.Status, job.ReviewStatus, job.RuleCount, job.RequestedBy, job.RequestedAt = "queued", state.ResourceRuleReviewPending, 0, actor, &now
 		store.jobs[id] = job
 		store.requested = append(store.requested, resourceID)
 		return job, nil
 	}
-	return state.DeploymentRuleJobSummary{}, state.ErrDeploymentRuleJobNotFound
+	return state.ResourceRuleJobSummary{}, state.ErrResourceRuleJobNotFound
 }
 
 func ruleTestServer(t *testing.T, store *fakeRuleStore, writable bool) http.Handler {
@@ -91,9 +96,9 @@ func ruleTestServer(t *testing.T, store *fakeRuleStore, writable bool) http.Hand
 
 func newRuleStore() *fakeRuleStore {
 	return &fakeRuleStore{
-		jobs: map[int64]state.DeploymentRuleJobSummary{
-			1: {ID: 1, ResourceID: "deployment-a", Status: "completed", ReviewStatus: state.DeploymentRuleReviewPending, RuleCount: 1, CurrentRevision: true},
-			2: {ID: 2, ResourceID: "deployment-b", Status: "running", ReviewStatus: state.DeploymentRuleReviewPending, CurrentRevision: true},
+		jobs: map[int64]state.ResourceRuleJobSummary{
+			1: {ID: 1, ResourceID: "deployment-a", Status: "completed", ReviewStatus: state.ResourceRuleReviewPending, RuleCount: 1, CurrentRevision: true},
+			2: {ID: 2, ResourceID: "deployment-b", Status: "running", ReviewStatus: state.ResourceRuleReviewPending, CurrentRevision: true},
 		},
 		proposals: map[int64]json.RawMessage{1: json.RawMessage(`{"rationale":"r","rules":[{"rule":{"id":"deployment/deployment-a/rule-1"},"rationale":"x"}]}`)},
 	}
@@ -109,15 +114,15 @@ func serveRuleRequest(handler http.Handler, method, path, body string) *httptest
 	return response
 }
 
-func TestRulesRouteReportsMissingActivationAndWorkloadRules(t *testing.T) {
+func TestRulesRouteReportsMissingActivationAndResourceRules(t *testing.T) {
 	store := newRuleStore()
-	store.workload = []detector.WorkloadRule{{Rule: detector.Rule{ID: "deployment/deployment-a/rule-1", WorkloadResourceID: "deployment-a"}, Mode: detector.RuleModeShadow}}
+	store.workload = []detector.ResourceRule{{Rule: detector.Rule{ID: "deployment/deployment-a/rule-1", ScopeResourceID: "deployment-a"}, Mode: detector.RuleModeShadow}}
 	response := serveRuleRequest(ruleTestServer(t, store, false), http.MethodGet, "/api/v1/rules", "")
 	var body rulesResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s err=%v", response.Code, response.Body, err)
 	}
-	if body.Activation != nil || len(body.Rules) != 0 || len(body.WorkloadRules) != 1 || body.WorkloadRules[0].Mode != detector.RuleModeShadow {
+	if body.Activation != nil || len(body.Rules) != 0 || len(body.ResourceRules) != 1 || body.ResourceRules[0].Mode != detector.RuleModeShadow {
 		t.Fatalf("rules response = %#v", body)
 	}
 	store.active, store.activation = true, detector.Activation{Revision: 3, Ruleset: detector.Ruleset{ID: "security/v2", Rules: []detector.Rule{{ID: "global"}}}}
@@ -152,7 +157,7 @@ func TestRuleDraftRoutesReturnSummariesAndProposals(t *testing.T) {
 func TestRuleWriteRoutesRequireWritesAndMapStateErrors(t *testing.T) {
 	store := newRuleStore()
 	readOnly := ruleTestServer(t, store, false)
-	for _, path := range []string{"/api/v1/rule-drafts/1/review", "/api/v1/workloads/deployment-a/rule-drafts"} {
+	for _, path := range []string{"/api/v1/rule-drafts/1/review", "/api/v1/resources/deployment-a/rule-drafts"} {
 		if response := serveRuleRequest(readOnly, http.MethodPost, path, `{"decision":"approved"}`); response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "--rule-review-api") {
 			t.Fatalf("read-only %s = %d %s", path, response.Code, response.Body)
 		}
@@ -165,27 +170,34 @@ func TestRuleWriteRoutesRequireWritesAndMapStateErrors(t *testing.T) {
 	if response := serveRuleRequest(handler, http.MethodPost, "/api/v1/rule-drafts/1/review", `{"decision":"pending"}`); response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid decision = %d", response.Code)
 	}
+	if response := serveRuleRequest(handler, http.MethodPost, "/api/v1/rule-drafts/1/review", `{"decision":"approved","ruleIds":[]}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("empty rule selection = %d", response.Code)
+	}
 	response := serveRuleRequest(handler, http.MethodPost, "/api/v1/rule-drafts/1/review", `{"decision":"approved"}`)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"reviewStatus":"approved"`) || store.jobs[1].ReviewedBy != ruleActor {
-		t.Fatalf("approve = %d %s", response.Code, response.Body)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("omitted rule selection = %d %s", response.Code, response.Body)
+	}
+	response = serveRuleRequest(handler, http.MethodPost, "/api/v1/rule-drafts/1/review", `{"decision":"approved","ruleIds":["deployment/deployment-a/rule-1"]}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"reviewStatus":"approved"`) || store.jobs[1].ReviewedBy != ruleActor || len(store.selections) != 1 || len(store.selections[0]) != 1 || store.selections[0][0] != "deployment/deployment-a/rule-1" {
+		t.Fatalf("selective approve = %d selections=%v", response.Code, store.selections)
 	}
 	if response := serveRuleRequest(handler, http.MethodPost, "/api/v1/rule-drafts/2/review", `{"decision":"approved"}`); response.Code != http.StatusConflict {
 		t.Fatalf("review of a running draft = %d", response.Code)
 	}
 
-	response = serveRuleRequest(handler, http.MethodPost, "/api/v1/workloads/deployment-a/rule-drafts", "{}")
+	response = serveRuleRequest(handler, http.MethodPost, "/api/v1/resources/deployment-a/rule-drafts", "{}")
 	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"queued"`) {
 		t.Fatalf("regenerate = %d %s", response.Code, response.Body)
 	}
-	response = serveRuleRequest(handler, http.MethodPost, "/api/v1/workloads/deployment-b/rule-drafts", "{}")
+	response = serveRuleRequest(handler, http.MethodPost, "/api/v1/resources/deployment-b/rule-drafts", "{}")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"draft":{"id":2`) {
 		t.Fatalf("regenerate in progress = %d %s", response.Code, response.Body)
 	}
-	if response := serveRuleRequest(handler, http.MethodPost, "/api/v1/workloads/unknown/rule-drafts", "{}"); response.Code != http.StatusNotFound {
+	if response := serveRuleRequest(handler, http.MethodPost, "/api/v1/resources/unknown/rule-drafts", "{}"); response.Code != http.StatusNotFound {
 		t.Fatalf("regenerate unknown = %d", response.Code)
 	}
 	// A form post from another origin is not JSON, so it never reaches the store.
-	formPost := httptest.NewRequest(http.MethodPost, "/api/v1/workloads/deployment-a/rule-drafts", strings.NewReader("x=1"))
+	formPost := httptest.NewRequest(http.MethodPost, "/api/v1/resources/deployment-a/rule-drafts", strings.NewReader("x=1"))
 	formPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, formPost)

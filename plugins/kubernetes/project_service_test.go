@@ -1,14 +1,31 @@
 package kubernetes
 
 import (
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/agentshield-dev/agentshield/pkg/state"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func projectedWorkloadContext(t *testing.T, assertion graph.ResourceAssertion) resourceAuthoringContext {
+	t.Helper()
+	projection, err := graph.DecodeResourceAuthoringProjection(assertion.Attributes[graph.ResourceAuthoringContextAttribute])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context struct {
+		Workload resourceAuthoringContext `json:"workload"`
+	}
+	if err := json.Unmarshal(projection.Context, &context); err != nil {
+		t.Fatal(err)
+	}
+	return context.Workload
+}
 
 func TestProjectServiceVariants(t *testing.T) {
 	tests := []struct {
@@ -65,30 +82,147 @@ func TestProjectServiceVariants(t *testing.T) {
 	}
 }
 
-func TestProjectDeploymentAuthoringContextIsMinimal(t *testing.T) {
+func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
+	automount := false
 	deployment := testObject("apps/v1", "Deployment", "prod", "payments", "deployment-uid", map[string]any{"spec": map[string]any{
 		"template": map[string]any{"spec": map[string]any{
-			"serviceAccountName": "payments-runtime",
+			"serviceAccountName":           "payments-runtime",
+			"automountServiceAccountToken": automount,
+			"hostNetwork":                  true,
+			"securityContext":              map[string]any{"runAsNonRoot": true, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
 			"containers": []any{map[string]any{
 				"name": "api", "image": "registry.example/payments:v4",
-				"env": []any{map[string]any{"name": "API_TOKEN", "value": "literal-secret-must-not-leak"}},
+				"securityContext": map[string]any{
+					"allowPrivilegeEscalation": false,
+					"readOnlyRootFilesystem":   true,
+					"capabilities":             map[string]any{"add": []any{"NET_ADMIN"}, "drop": []any{"ALL"}},
+				},
+				"ports": []any{map[string]any{"name": "https", "containerPort": int64(8443), "protocol": "TCP"}},
+				"env": []any{
+					map[string]any{"name": "API_TOKEN", "value": "literal-secret-must-not-leak"},
+					map[string]any{"name": "DB_PASSWORD", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "payments-db", "key": "password-key-must-not-leak"}}},
+				},
+				"envFrom": []any{map[string]any{"configMapRef": map[string]any{"name": "payments-settings"}}},
 			}},
+			"volumes": []any{
+				map[string]any{"name": "credentials", "secret": map[string]any{"secretName": "payments-tls", "items": []any{map[string]any{"key": "private-key-must-not-leak", "path": "tls.key"}}}},
+				map[string]any{"name": "host", "hostPath": map[string]any{"path": "/var/run/containerd.sock", "type": "Socket"}},
+			},
 		}}}})
 	input, err := Project("cluster", "source", []*unstructured.Unstructured{deployment})
 	if err != nil {
 		t.Fatal(err)
 	}
 	resource := resourceOfKind(t, input, "kubernetes/deployment")
-	if resource.RuleID != "kubernetes.deployment.authoring-context" {
-		t.Fatalf("deployment provenance=%s", resource.RuleID)
+	if resource.RuleID != "kubernetes.resource.authoring-context" {
+		t.Fatalf("workload provenance=%s", resource.RuleID)
 	}
-	if resource.Attributes["kubernetes/service-account-name"] != "payments-runtime" {
-		t.Fatalf("attributes=%#v", resource.Attributes)
+	encoded := resource.Attributes[graph.ResourceAuthoringContextAttribute]
+	context := projectedWorkloadContext(t, resource)
+	if context.SchemaVersion != "v1" || context.ServiceAccountName != "payments-runtime" || context.AutomountServiceAccountToken == nil || *context.AutomountServiceAccountToken {
+		t.Fatalf("identity context=%#v", context)
 	}
-	for key, value := range resource.Attributes {
-		if strings.Contains(value, "literal-secret-must-not-leak") || strings.Contains(value, "registry.example") {
-			t.Fatalf("attribute %s leaked container spec: %s", key, value)
+	if !context.HostNetwork || context.PodSecurityContext == nil || context.PodSecurityContext.RunAsNonRoot == nil || !*context.PodSecurityContext.RunAsNonRoot {
+		t.Fatalf("pod security context=%#v", context)
+	}
+	if len(context.Containers) != 1 || context.Containers[0].Image != "registry.example/payments:v4" || len(context.Containers[0].Ports) != 1 || len(context.Containers[0].CapabilitiesAdded) != 1 {
+		t.Fatalf("container context=%#v", context.Containers)
+	}
+	if context.HostPathCount != 1 || !slices.Equal(context.HostPathTypes, []string{"Socket"}) {
+		t.Fatalf("host path posture=count:%d types:%#v", context.HostPathCount, context.HostPathTypes)
+	}
+	wantReferences := []workloadResourceReference{
+		{Kind: "ConfigMap", Usage: "envFrom", Count: 1},
+		{Kind: "Secret", Usage: "env", Count: 1},
+		{Kind: "Secret", Usage: "volume", Count: 1},
+	}
+	if !slices.Equal(context.References, wantReferences) {
+		t.Fatalf("references=%#v, want %#v", context.References, wantReferences)
+	}
+	for _, forbidden := range []string{"literal-secret-must-not-leak", "password-key-must-not-leak", "private-key-must-not-leak", "payments-db", "payments-settings", "payments-tls", "/var/run/containerd.sock"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("authoring context leaked %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestProjectResourceAuthoringContextSupportsAppsControllers(t *testing.T) {
+	for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
+		t.Run(kind, func(t *testing.T) {
+			workload := testObject("apps/v1", kind, "demo", "worker", strings.ToLower(kind)+"-uid", map[string]any{
+				"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "worker", "image": "example/worker:v1"}},
+				}}},
+			})
+			input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := resourceOfKind(t, input, "kubernetes/"+strings.ToLower(kind))
+			if resource.Attributes[graph.ResourceAuthoringContextAttribute] == "" {
+				t.Fatalf("resource=%#v", resource)
+			}
+		})
+	}
+}
+
+func TestProjectResourceAuthoringContextReportsTruncation(t *testing.T) {
+	ports := make([]any, maxWorkloadContainerItems+1)
+	for index := range ports {
+		ports[index] = map[string]any{"containerPort": int64(index + 1)}
+	}
+	containers := make([]any, maxWorkloadContainers+1)
+	for index := range containers {
+		containerPorts := []any(nil)
+		if index == 0 {
+			containerPorts = ports
+		}
+		containers[index] = map[string]any{"name": "container-" + strconv.Itoa(index), "image": "example/image:v1", "ports": containerPorts}
+	}
+	workload := testObject("apps/v1", "Deployment", "demo", "bounded", "bounded-uid", map[string]any{
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": containers}}},
+	})
+	input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := resourceOfKind(t, input, "kubernetes/deployment")
+	context := projectedWorkloadContext(t, resource)
+	if !context.Truncated || len(context.Containers) != maxWorkloadContainers || len(context.Containers[0].Ports) != maxWorkloadContainerItems {
+		t.Fatalf("bounded context=%#v", context)
+	}
+}
+
+func TestProjectLargestResourceAuthoringContextRoundTripsThroughState(t *testing.T) {
+	ports := make([]any, maxWorkloadContainerItems)
+	capabilities := make([]any, maxWorkloadContainerItems)
+	for index := range ports {
+		ports[index] = map[string]any{"name": "port-" + strconv.Itoa(index), "containerPort": int64(index + 1), "protocol": "TCP"}
+		capabilities[index] = "CAP_" + strconv.Itoa(index)
+	}
+	containers := make([]any, maxWorkloadContainers)
+	for index := range containers {
+		containers[index] = map[string]any{
+			"name": "container-" + strconv.Itoa(index), "image": strings.Repeat("i", maxWorkloadStringLength), "ports": ports,
+			"securityContext": map[string]any{"capabilities": map[string]any{"add": capabilities, "drop": capabilities}},
+		}
+	}
+	workload := testObject("apps/v1", "Deployment", "demo", "largest", "largest-uid", map[string]any{
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"serviceAccountName": "largest", "containers": containers}}},
+	})
+	input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := resourceOfKind(t, input, "kubernetes/deployment")
+	encoded := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
+	if len(encoded) > graph.ResourceAuthoringProjectionMaxBytes {
+		t.Fatalf("encoded authoring context=%d bytes, limit=%d", len(encoded), graph.ResourceAuthoringProjectionMaxBytes)
+	}
+	projected := projectedWorkloadContext(t, assertion)
+	context := state.ResourceAuthoringContextFor(graph.Resource{ID: "largest", Kind: assertion.Kind, Assertions: []graph.ResourceAssertion{assertion}})
+	if !projected.Truncated || context.RevisionSHA256 == "" || !strings.Contains(string(context.Projection), `"truncated":true`) {
+		t.Fatalf("projected=%#v state context=%#v", projected, context)
 	}
 }
 

@@ -88,7 +88,7 @@ func (policy RulePolicy) Rule(workloadResourceID string) (detector.Rule, error) 
 	}
 	return detector.Rule{
 		ID: "evals/policy/" + policy.ID, Revision: 1, InputVersion: detector.InputVersion, PluginID: "*",
-		WorkloadResourceID: workloadResourceID, Type: inputType, Kind: kind, Expression: policy.Expression,
+		ScopeResourceID: workloadResourceID, Type: inputType, Kind: kind, Expression: policy.Expression,
 		Risk: detector.RiskHigh, Reasons: []string{"workload_policy_violation"},
 	}, nil
 }

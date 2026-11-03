@@ -42,9 +42,9 @@ builds:
     flags: *flags
     ldflags: *ldflags
     mod_timestamp: *mod_timestamp
-  - id: agentshield-deployment-author
-    main: ./cmd/agentshield-deployment-author
-    binary: agentshield-deployment-author
+  - id: agentshield-resource-author
+    main: ./cmd/agentshield-resource-author
+    binary: agentshield-resource-author
     env: *env
     goos: *goos
     goarch: *goarch

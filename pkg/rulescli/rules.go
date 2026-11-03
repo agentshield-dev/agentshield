@@ -25,7 +25,7 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	if len(args) == 0 {
-		return errors.New("usage: agentshield rules <validate|save|activate|show|jobs|job|review|workload-rules|signals|investigations> [flags] | --version")
+		return errors.New("usage: agentshield rules <validate|save|activate|show|jobs|job|review|resource-rules|signals|investigations> [flags] | --version")
 	}
 	action := args[0]
 	if action == "--version" || action == "-version" {
@@ -33,7 +33,7 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	switch action {
-	case "validate", "save", "activate", "show", "jobs", "job", "review", "workload-rules", "signals", "investigations":
+	case "validate", "save", "activate", "show", "jobs", "job", "review", "resource-rules", "signals", "investigations":
 	default:
 		return fmt.Errorf("unknown action %q", action)
 	}
@@ -43,8 +43,9 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 	id := flags.String("id", "", "ruleset ID (activate, or show a saved ruleset)")
 	actor := flags.String("actor", "", "audit actor (save/activate)")
 	expected := flags.Uint64("expected-revision", 0, "expected current activation revision; zero means no active ruleset")
-	jobID := flags.Int64("job-id", 0, "Deployment rule authoring job ID (job, review)")
+	jobID := flags.Int64("job-id", 0, "resource rule authoring job ID (job, review)")
 	decision := flags.String("decision", "", "review decision: approved runs the rule in active mode; rejected stops loading it (review)")
+	approveRuleIDs := flags.StringSlice("approve-rule-id", nil, "rule ID to activate; repeat for each selected rule (approved review)")
 	ruleID := flags.String("rule-id", "", "only signals from this rule (signals)")
 	investigation := flags.String("investigation", "", "only signals with this investigation state: investigated, below_threshold, disabled, or shadow (signals)")
 	limit := flags.Int("limit", 100, "maximum signals or investigation jobs to list (signals, investigations)")
@@ -91,7 +92,7 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 	if action == "activate" && *id == "" {
 		return errors.New("--id is required")
 	}
-	if action == "review" && (*jobID < 1 || (*decision != state.DeploymentRuleReviewApproved && *decision != state.DeploymentRuleReviewRejected)) {
+	if action == "review" && (*jobID < 1 || (*decision != state.ResourceRuleReviewApproved && *decision != state.ResourceRuleReviewRejected)) {
 		return errors.New("review requires a positive --job-id and --decision approved or rejected")
 	}
 	store, err := state.Open(ctx, state.Config{DatabaseURL: dbURL}, graph.NewCompiler(graph.NewRegistry()))
@@ -114,18 +115,18 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 		_, err = fmt.Fprintf(output, "activated ruleset=%s revision=%d\n", *id, revision)
 		return err
 	case "review":
-		if err := store.ReviewDeploymentRuleJob(ctx, *jobID, *decision, *actor); err != nil {
+		if err := store.ReviewResourceRuleJobRules(ctx, *jobID, *decision, *actor, *approveRuleIDs); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(output, "reviewed job=%d decision=%s; the runtime loads the change within its detector reload interval\n", *jobID, *decision)
 		return err
-	case "workload-rules":
-		rules, err := store.ReadWorkloadRules(ctx)
+	case "resource-rules":
+		rules, err := store.ReadResourceRules(ctx)
 		if err != nil {
 			return err
 		}
 		if rules == nil {
-			rules = []detector.WorkloadRule{}
+			rules = []detector.ResourceRule{}
 		}
 		return encodeJSON(output, rules)
 	case "signals":
@@ -147,7 +148,7 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 		}
 		return encodeJSON(output, jobs)
 	case "jobs":
-		jobs, err := store.ListDeploymentRuleJobs(ctx, 100)
+		jobs, err := store.ListResourceRuleJobs(ctx, 100)
 		if err != nil {
 			return err
 		}
@@ -158,18 +159,18 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 		if *jobID < 1 {
 			return errors.New("--job-id must be positive")
 		}
-		status, found, err := store.DeploymentRuleJobStatus(ctx, *jobID)
+		status, found, err := store.ResourceRuleJobStatus(ctx, *jobID)
 		if err != nil {
 			return err
 		}
 		if !found {
-			return fmt.Errorf("Deployment authoring job %d not found", *jobID)
+			return fmt.Errorf("resource authoring job %d not found", *jobID)
 		}
 		result := struct {
-			Job      state.DeploymentRuleJobSummary `json:"job"`
-			Proposal json.RawMessage                `json:"proposal,omitempty"`
+			Job      state.ResourceRuleJobSummary `json:"job"`
+			Proposal json.RawMessage              `json:"proposal,omitempty"`
 		}{Job: status}
-		if proposal, found, err := store.DeploymentRuleProposal(ctx, *jobID); err != nil {
+		if proposal, found, err := store.ResourceRuleProposal(ctx, *jobID); err != nil {
 			return err
 		} else if found {
 			result.Proposal = proposal

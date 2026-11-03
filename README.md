@@ -57,7 +57,7 @@ It is for platform and security engineers running Kubernetes with Istio ambient,
 - **Records where every fact came from.** Each resource has a stable identity (for example, cluster ID plus Kubernetes UID), and each fact records the plugin, rule, and observation that produced it. The graph is stored in PostgreSQL as versioned, atomically replaced contributions with an ordered change feed.
 - **Ingests traffic telemetry**: Istio waypoint access logs over OTLP/HTTP and AWS VPC Flow Logs through Firehose. Raw events go to JSONL or ClickHouse; per-minute summaries and `communicates-with` edges go into the graph.
   Istio logs need a custom `envoyOtelAls` extension provider that emits `agentshield.*` attributes; the example labels every caller as a Deployment, so traffic from other workload kinds is rejected. See [Istio telemetry](https://agent-shield.dev/docs/plugins/istio/#telemetry).
-- **Detects risky changes.** Built-in detectors look for new exposure, lost governance, changed policy, new RBAC bindings, and workloads reaching destinations they never reached before, while ignoring rollouts and scaling. You can add versioned CEL rules with audited activation and hot reload, and have a model draft a rule for each new Deployment (shadow mode until you approve it). Active rule matches become findings without a model call.
+- **Detects risky changes.** Built-in detectors look for new exposure, lost governance, changed policy, new RBAC bindings, and workloads reaching destinations they never reached before, while ignoring rollouts and scaling. You can add versioned CEL rules with audited activation and hot reload, and have a model draft a rule for each new Deployment, StatefulSet, or DaemonSet (shadow mode until you approve it). Active rule matches become findings without a model call.
 - **Investigates with a model.** A model looks into each signal through six read-only MCP graph tools. Agentshield accepts a finding only if it cites facts and evidence the graph actually returned, and invalidates it when those resources change.
 - **Proposes fixes behind an approval gate.** Findings can suggest a Kubernetes NetworkPolicy, CiliumNetworkPolicy, or Istio `STRICT` PeerAuthentication. A person prepares (plans and dry-runs) and approves each one, and agentshield verifies the result.
 - **Serves a web UI and HTTP API** from the same binary.
@@ -69,9 +69,9 @@ Detection itself never calls a model. It runs whenever one of the two model-call
 | Flag | Default | Calls a model | What it adds |
 | --- | --- | --- | --- |
 | `--agentic-investigation` | off | at most once per admitted investigation | A model agent investigates built-in novelty signals (new communication paths, exposure, lost governance) and may promote findings. Runs in its own sampled queue. Requires an OpenAI Responses-compatible endpoint. |
-| `--deployment-rule-authoring` | off | once per Kubernetes Deployment Pod template revision | A model agent drafts a detection rule for each Deployment from its observed behavior, after `--deployment-rule-baseline-window` (default 6h). Drafts run in shadow mode until an operator approves them. |
+| `--resource-rule-authoring` | off | once per bounded resource projection revision | A model agent drafts detection rules for resources opted in by their source plugin, after `--resource-rule-stabilization-window` (default 6h). Kubernetes currently projects workloads, Services, ServiceAccounts, RBAC bindings, Ingresses, NetworkPolicies, Gateways, and HTTPRoutes. Drafts run in shadow mode until an operator approves individual rules. |
 
-When detection runs, a match of an active rule (an operator-activated CEL rule or an approved Deployment rule) becomes a finding directly, with no model call. Built-in novelty signals become findings only through agentic investigation, which records a finding only when the model's answer passes validation: it must cite facts and evidence the graph returned, including at least one medium-or-higher-risk signal. Agentic investigation drains its own durable queue, so a slow or failing model never delays detection. Batching, sampling, deduplication, and an hourly budget bound its spend; see [Change feed and reasoning](https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/#the-investigation-queue).
+When detection runs, a match of an active rule (an operator-activated CEL rule or an approved Resource rule) becomes a finding directly, with no model call. Built-in novelty signals become findings only through agentic investigation, which records a finding only when the model's answer passes validation: it must cite facts and evidence the graph returned, including at least one medium-or-higher-risk signal. Agentic investigation drains its own durable queue, so a slow or failing model never delays detection. Batching, sampling, deduplication, and an hourly budget bound its spend; see [Change feed and reasoning](https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/#the-investigation-queue).
 
 Without either feature you still get discovery, the graph and its change history, telemetry ingestion and rollups, and the HTTP API and UI for browsing resources, relationships, and sources. You get no findings, and so no remediation proposals, because proposals are attached to findings.
 
@@ -108,7 +108,7 @@ Each campaign generates real traffic in the cluster and waits until the plugin-p
 
 To reproduce, run `make eval-up`, `make eval-check`, and `make eval-run`. The run makes real, billed model calls; the [evaluation guide](https://agent-shield.dev/docs/operations/evals/) has the requirements and the output format.
 
-A separate rule suite (`make eval-rules`) scores detection rules on nine campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Deployment rule author drafts. See [rule evals](https://agent-shield.dev/docs/operations/evals/#rule-evals).
+A separate rule suite (`make eval-rules`) scores detection rules on nine campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Resource rule author drafts. See [rule evals](https://agent-shield.dev/docs/operations/evals/#rule-evals).
 
 ## Quickstart
 
@@ -129,7 +129,7 @@ export AGENTSHIELD_DATABASE_URL="postgres://agentshield:${POSTGRES_PASSWORD}@127
 make run    # discovers the current kubectl context
 ```
 
-Open `http://127.0.0.1:8088` to browse the cluster graph. To get findings, also set `AGENTSHIELD_MODEL_ENDPOINT=https://api.openai.com`, `OPENAI_API_KEY`, and `AGENTSHIELD_AGENTIC_INVESTIGATION=true` (and optionally `AGENTSHIELD_DEPLOYMENT_RULE_AUTHORING=true`) before `make run` (see [What needs a model](#what-needs-a-model)).
+Open `http://127.0.0.1:8088` to browse the cluster graph. To get findings, also set `AGENTSHIELD_MODEL_ENDPOINT=https://api.openai.com`, `OPENAI_API_KEY`, and `AGENTSHIELD_AGENTIC_INVESTIGATION=true` (and optionally `AGENTSHIELD_RESOURCE_RULE_AUTHORING=true`) before `make run` (see [What needs a model](#what-needs-a-model)).
 
 Discovery only reads, but `make run` enables live remediation with your kubectl credentials, so a fix you approve in the UI is applied to the cluster. Use a read-only context if you only want to look.
 
@@ -140,8 +140,8 @@ Discovery only reads, but `make run` enables live remediation with your kubectl 
 | Command | Purpose | Docs |
 | --- | --- | --- |
 | `cmd/agentshield` | The service: discovery, telemetry, graph API, UI, detection, agentic investigation, and remediation | [Configuration](https://agent-shield.dev/docs/operations/configuration/#agentshield) |
-| `cmd/agentshield-detector-rules` | Validate, save, activate, and show CEL rulesets; review Deployment rules; inspect authoring jobs, detection signals, and the investigation queue | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#managing-rulesets) |
-| `cmd/agentshield-deployment-author` | Run the Deployment rule author once against a local JSON file, or print its request with `--dry-run` | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#trying-the-author-without-a-cluster) |
+| `cmd/agentshield-detector-rules` | Validate, save, activate, and show CEL rulesets; review Resource rules; inspect authoring jobs, detection signals, and the investigation queue | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#managing-rulesets) |
+| `cmd/agentshield-resource-author` | Run the Resource rule author once against a local JSON file, or print its request with `--dry-run` | [Detection rules](https://agent-shield.dev/docs/architecture/detection-rules/#trying-the-author-without-a-cluster) |
 | `cmd/agentshield-reasoning-mcp` | Serve the reasoning MCP graph tools over streamable HTTP for a saved packet | [Change feed and reasoning](https://agent-shield.dev/docs/architecture/change-feed-and-reasoning/#investigation-tools) |
 
 ## Documentation

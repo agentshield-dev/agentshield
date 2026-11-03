@@ -1,4 +1,4 @@
-package deploymentauthoring
+package resourceauthoring
 
 import (
 	"context"
@@ -20,13 +20,13 @@ import (
 // complete, or retry a job.
 type JobStore interface {
 	BaselineSource
-	// ClaimDeploymentRuleJob claims a job at least minAge old.
-	ClaimDeploymentRuleJob(ctx context.Context, workerID string, lease, minAge time.Duration) (state.DeploymentRuleJob, bool, error)
-	RenewDeploymentRuleJob(context.Context, int64, string, time.Duration) (bool, error)
-	CompleteDeploymentRuleJob(context.Context, int64, string, json.RawMessage) error
-	RetryDeploymentRuleJob(context.Context, int64, string, string, time.Duration, bool) (state.DeploymentRuleRetry, error)
-	// DeploymentRuleQueueStats feeds the worker's periodic status line.
-	DeploymentRuleQueueStats(context.Context, time.Duration) (state.DeploymentRuleQueueStats, error)
+	// ClaimResourceRuleJob claims a job at least minAge old.
+	ClaimResourceRuleJob(ctx context.Context, workerID string, lease, minAge time.Duration) (state.ResourceRuleJob, bool, error)
+	RenewResourceRuleJob(context.Context, int64, string, time.Duration) (bool, error)
+	CompleteResourceRuleJob(context.Context, int64, string, json.RawMessage) error
+	RetryResourceRuleJob(context.Context, int64, string, string, time.Duration, bool) (state.ResourceRuleRetry, error)
+	// ResourceRuleQueueStats feeds the worker's periodic status line.
+	ResourceRuleQueueStats(context.Context, time.Duration) (state.ResourceRuleQueueStats, error)
 }
 
 // WorkerConfig configures a [Worker]. The lease is renewed every third of
@@ -35,9 +35,9 @@ type WorkerConfig struct {
 	ID            string
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
-	// BaselineWindow is how long a job waits after its Deployment revision
+	// StabilizationWindow is how long a job waits after its resource revision
 	// appears, so the graph can collect the telemetry the draft is based on.
-	BaselineWindow time.Duration
+	StabilizationWindow time.Duration
 	// MaxAttempts bounds authoring attempts, retried with exponential backoff;
 	// zero uses 8. After the last one, or after a request the model endpoint
 	// rejected as invalid, the job fails until an operator requests it again.
@@ -46,11 +46,11 @@ type WorkerConfig struct {
 	ReportError func(error)
 }
 
-// MaxBaselineWindow bounds [WorkerConfig.BaselineWindow] by the telemetry
+// MaxStabilizationWindow bounds [WorkerConfig.StabilizationWindow] by the telemetry
 // rollup retention: older telemetry has already left the graph.
-const MaxBaselineWindow = 24 * time.Hour
+const MaxStabilizationWindow = 24 * time.Hour
 
-// Worker processes Deployment rule authoring jobs one at a time. It logs each
+// Worker processes resource rule authoring jobs one at a time. It logs each
 // claimed and finished job and a bounded status line with the queue.
 type Worker struct {
 	store    JobStore
@@ -62,30 +62,30 @@ type Worker struct {
 // between 3 seconds and 24 hours.
 func NewWorker(store JobStore, config WorkerConfig) (*Worker, error) {
 	if store == nil {
-		return nil, errors.New("Deployment authoring job store is required")
+		return nil, errors.New("resource authoring job store is required")
 	}
 	if config.ID == "" || len(config.ID) > 128 {
-		return nil, errors.New("Deployment authoring worker ID must contain 1-128 bytes")
+		return nil, errors.New("resource authoring worker ID must contain 1-128 bytes")
 	}
 	if config.PollInterval <= 0 {
 		config.PollInterval = time.Second
 	}
 	if config.LeaseDuration < 3*time.Second || config.LeaseDuration > 24*time.Hour {
-		return nil, errors.New("Deployment authoring lease must be between 3 seconds and 24 hours")
+		return nil, errors.New("resource authoring lease must be between 3 seconds and 24 hours")
 	}
 	if config.Author == nil {
-		return nil, errors.New("Deployment rule author is required")
+		return nil, errors.New("resource rule author is required")
 	}
-	if config.BaselineWindow < 0 || config.BaselineWindow > MaxBaselineWindow {
-		return nil, fmt.Errorf("Deployment rule baseline window must be between 0 and %s", MaxBaselineWindow)
+	if config.StabilizationWindow < 0 || config.StabilizationWindow > MaxStabilizationWindow {
+		return nil, fmt.Errorf("resource rule stabilization window must be between 0 and %s", MaxStabilizationWindow)
 	}
 	if config.MaxAttempts == 0 {
 		config.MaxAttempts = 8
 	}
 	if config.MaxAttempts < 1 {
-		return nil, errors.New("Deployment authoring max attempts must be positive")
+		return nil, errors.New("resource authoring max attempts must be positive")
 	}
-	return &Worker{store: store, config: config, progress: progress.New("Deployment rule authoring worker", "worker", config.ID)}, nil
+	return &Worker{store: store, config: config, progress: progress.New("Resource rule authoring worker", "worker", config.ID)}, nil
 }
 
 // Run polls until ctx is cancelled; claim and job failures are reported and retried.
@@ -93,12 +93,12 @@ func (worker *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(worker.config.PollInterval)
 	defer ticker.Stop()
 	for {
-		job, found, err := worker.store.ClaimDeploymentRuleJob(ctx, worker.config.ID, worker.config.LeaseDuration, worker.config.BaselineWindow)
+		job, found, err := worker.store.ClaimResourceRuleJob(ctx, worker.config.ID, worker.config.LeaseDuration, worker.config.StabilizationWindow)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			worker.report(fmt.Errorf("claim Deployment rule authoring job: %w", err))
+			worker.report(fmt.Errorf("claim resource rule authoring job: %w", err))
 		} else if found {
 			if err := worker.process(ctx, job); ctx.Err() == nil {
 				if err != nil {
@@ -125,14 +125,14 @@ func (worker *Worker) report(err error) {
 
 // queueStatus describes what the queue waits for, for the status line.
 func (worker *Worker) queueStatus(ctx context.Context) []any {
-	stats, err := worker.store.DeploymentRuleQueueStats(ctx, worker.config.BaselineWindow)
+	stats, err := worker.store.ResourceRuleQueueStats(ctx, worker.config.StabilizationWindow)
 	if err != nil {
 		return []any{"queue_error", err.Error()}
 	}
 	attrs := []any{"ready", stats.Ready, "running", stats.Running, "retrying", stats.Retrying, "failed", stats.Failed,
-		"waiting_for_baseline", stats.WaitingForBaseline, "baseline_window", worker.config.BaselineWindow.String()}
+		"waiting_for_stabilization", stats.WaitingForStabilization, "stabilization_window", worker.config.StabilizationWindow.String()}
 	if stats.NextEligibleAt != nil {
-		attrs = append(attrs, "next_baseline_ends_in", time.Until(*stats.NextEligibleAt).Round(time.Second).String())
+		attrs = append(attrs, "next_stabilization_ends_in", time.Until(*stats.NextEligibleAt).Round(time.Second).String())
 	}
 	return attrs
 }
@@ -140,16 +140,16 @@ func (worker *Worker) queueStatus(ctx context.Context) []any {
 // process authors one claimed job. If the lease is lost, or cannot be renewed
 // before it expires, the author call is cancelled and nothing is written,
 // because another worker may now own the job.
-func (worker *Worker) process(ctx context.Context, job state.DeploymentRuleJob) error {
+func (worker *Worker) process(ctx context.Context, job state.ResourceRuleJob) error {
 	started := time.Now()
-	slog.InfoContext(ctx, "authoring Deployment rules", "worker", worker.config.ID, "job", job.ID,
-		"deployment", job.Context.Namespace+"/"+job.Context.Name, "attempt", job.AttemptCount)
+	slog.InfoContext(ctx, "authoring resource rules", "worker", worker.config.ID, "job", job.ID,
+		"resource", job.Context.Namespace+"/"+job.Context.Name, "kind", job.Context.Kind, "attempt", job.AttemptCount)
 	authorContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	leaseResult := make(chan error, 1)
 	go func() {
 		err := reasoning.KeepLease(authorContext, worker.config.LeaseDuration, func(ctx context.Context) (bool, error) {
-			return worker.store.RenewDeploymentRuleJob(ctx, job.ID, worker.config.ID, worker.config.LeaseDuration)
+			return worker.store.RenewResourceRuleJob(ctx, job.ID, worker.config.ID, worker.config.LeaseDuration)
 		})
 		if err != nil {
 			cancel()
@@ -159,7 +159,7 @@ func (worker *Worker) process(ctx context.Context, job state.DeploymentRuleJob) 
 	proposal, authorErr := worker.author(authorContext, job)
 	cancel()
 	if err := <-leaseResult; err != nil {
-		return fmt.Errorf("renew Deployment authoring lease: %w", err)
+		return fmt.Errorf("renew resource authoring lease: %w", err)
 	}
 	if authorErr != nil {
 		if err := ctx.Err(); err != nil {
@@ -167,51 +167,51 @@ func (worker *Worker) process(ctx context.Context, job state.DeploymentRuleJob) 
 		}
 		retryAfter := retryDelay(job.AttemptCount)
 		terminal := job.AttemptCount >= worker.config.MaxAttempts || reasoning.IsPermanentModelError(authorErr)
-		outcome, err := worker.store.RetryDeploymentRuleJob(ctx, job.ID, worker.config.ID, authorErr.Error(), retryAfter, terminal)
+		outcome, err := worker.store.RetryResourceRuleJob(ctx, job.ID, worker.config.ID, authorErr.Error(), retryAfter, terminal)
 		if err != nil {
-			return fmt.Errorf("record Deployment authoring retry after %w: %w", authorErr, err)
+			return fmt.Errorf("record resource authoring retry after %w: %w", authorErr, err)
 		}
 		switch outcome {
-		case state.DeploymentRuleRetrySuperseded:
-			// A newer revision, or the Deployment's removal, made this draft
+		case state.ResourceRuleRetrySuperseded:
+			// A newer revision, or the resource's removal, made this draft
 			// moot; the newer revision has its own job.
 			worker.progress.Add("superseded", 1)
-			slog.InfoContext(ctx, "dropped stale Deployment authoring job", "worker", worker.config.ID, "job", job.ID,
-				"deployment", job.Context.Namespace+"/"+job.Context.Name)
+			slog.InfoContext(ctx, "dropped stale resource authoring job", "worker", worker.config.ID, "job", job.ID,
+				"resource", job.Context.Namespace+"/"+job.Context.Name, "kind", job.Context.Kind)
 			return nil
-		case state.DeploymentRuleRetryFailed:
+		case state.ResourceRuleRetryFailed:
 			worker.progress.Add("failed", 1)
-			return fmt.Errorf("Deployment authoring job %d failed after %d attempt(s); request it again to retry: %w", job.ID, job.AttemptCount, authorErr)
+			return fmt.Errorf("resource authoring job %d failed after %d attempt(s); request it again to retry: %w", job.ID, job.AttemptCount, authorErr)
 		}
-		return fmt.Errorf("Deployment authoring job %d failed (retry in %s): %w", job.ID, retryAfter, authorErr)
+		return fmt.Errorf("resource authoring job %d failed (retry in %s): %w", job.ID, retryAfter, authorErr)
 	}
 	encoded, err := json.Marshal(proposal)
 	if err != nil {
-		return fmt.Errorf("encode Deployment rule proposal %d: %w", job.ID, err)
+		return fmt.Errorf("encode resource rule proposal %d: %w", job.ID, err)
 	}
-	if err := worker.store.CompleteDeploymentRuleJob(ctx, job.ID, worker.config.ID, encoded); err != nil {
-		return fmt.Errorf("persist Deployment rule proposal %d: %w", job.ID, err)
+	if err := worker.store.CompleteResourceRuleJob(ctx, job.ID, worker.config.ID, encoded); err != nil {
+		return fmt.Errorf("persist resource rule proposal %d: %w", job.ID, err)
 	}
 	worker.progress.Add("completed", 1)
-	slog.InfoContext(ctx, "drafted Deployment rules", "worker", worker.config.ID, "job", job.ID,
-		"deployment", job.Context.Namespace+"/"+job.Context.Name, "rules", len(proposal.Rules),
+	slog.InfoContext(ctx, "drafted resource rules", "worker", worker.config.ID, "job", job.ID,
+		"resource", job.Context.Namespace+"/"+job.Context.Name, "kind", job.Context.Kind, "rules", len(proposal.Rules),
 		"duration", time.Since(started).Round(100*time.Millisecond).String())
 	return nil
 }
 
 // author reads the baseline and drafts the proposal. A panic is returned as
 // an error with its stack, so one bad job cannot crash the process.
-func (worker *Worker) author(ctx context.Context, job state.DeploymentRuleJob) (proposal Proposal, err error) {
+func (worker *Worker) author(ctx context.Context, job state.ResourceRuleJob) (proposal Proposal, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("Deployment authoring panic: %v\n%s", recovered, debug.Stack())
+			err = fmt.Errorf("resource authoring panic: %v\n%s", recovered, debug.Stack())
 		}
 	}()
-	workload, err := WithBaseline(ctx, worker.store, job.Context)
+	resource, err := WithObservedBehavior(ctx, worker.store, job.Context)
 	if err != nil {
-		return Proposal{}, fmt.Errorf("read Deployment baseline: %w", err)
+		return Proposal{}, fmt.Errorf("read resource baseline: %w", err)
 	}
-	return worker.config.Author.Author(ctx, workload)
+	return worker.config.Author.Author(ctx, resource)
 }
 
 func retryDelay(attempt int) time.Duration {

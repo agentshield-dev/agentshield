@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
 	"github.com/agentshield-dev/agentshield/pkg/state"
+	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 )
 
@@ -56,7 +56,7 @@ type RuleSuiteSummary struct {
 }
 
 // runRuleSuite scores operator policies and, unless detector-only, rules drafted
-// by the production Deployment rule author, against live rule campaigns.
+// by the production Workload rule author, against live rule campaigns.
 func runRuleSuite(ctx context.Context, config RunConfig) error {
 	adapter, err := observationAdapter(config.ObservationAdapter)
 	if err != nil {
@@ -96,9 +96,9 @@ func runRuleSuite(ctx context.Context, config RunConfig) error {
 		return err
 	}
 	defer store.Close()
-	var author deploymentauthoring.Author
+	var author resourceauthoring.Author
 	if !config.DetectorOnly {
-		author = deploymentauthoring.ModelAuthor{Client: reasoning.Client{
+		author = resourceauthoring.ModelAuthor{Client: reasoning.Client{
 			Endpoint: config.ModelEndpoint, Model: config.Model, ReasoningEffort: config.ReasoningEffort,
 			HTTPClient: &http.Client{Timeout: 5 * time.Minute},
 		}, Selectors: config.AuthorSelectors}
@@ -121,7 +121,7 @@ func runRuleSuite(ctx context.Context, config RunConfig) error {
 	return writeRuleSummary(config, campaigns)
 }
 
-func runRuleCampaign(ctx context.Context, store *state.Store, author deploymentauthoring.Author, config RunConfig, adapter ObservationAdapter, campaign RuleCampaign) (runErr error) {
+func runRuleCampaign(ctx context.Context, store *state.Store, author resourceauthoring.Author, config RunConfig, adapter ObservationAdapter, campaign RuleCampaign) (runErr error) {
 	report := RuleCampaignReport{SchemaVersion: "agentshield.rule-eval-report/v1alpha1", Campaign: campaign, StartedAt: time.Now().UTC(), Model: config.Model, DetectorOnly: config.DetectorOnly}
 	workload := RenderRuleCampaign(campaign)
 	defer func() {
@@ -165,7 +165,7 @@ func runRuleCampaign(ctx context.Context, store *state.Store, author deploymenta
 		return err
 	}
 	// Draft at the end of the baseline phase, as the authoring worker would once
-	// the baseline window has passed, from the same graph-backed context.
+	// the stabilization window has passed, from the same graph-backed context.
 	var drafted authoredDraft
 	if author != nil {
 		deployment, found := findDeployment(baseline.View.Snapshot, workload.Namespace, campaign.Source)
@@ -215,16 +215,16 @@ func runRuleCampaign(ctx context.Context, store *state.Store, author deploymenta
 type authoredDraft struct {
 	rules     []detector.Rule
 	rationale string
-	behavior  *state.DeploymentBehavior
+	behavior  *state.WorkloadBehavior
 	err       error
 }
 
 // draftRules authors rules for the source Deployment from the authoring
 // worker's context: identity plus the current graph's observed behavior.
-func draftRules(ctx context.Context, store *state.Store, author deploymentauthoring.Author, deployment graph.Resource) authoredDraft {
-	workload, err := deploymentauthoring.WithBaseline(ctx, store, state.DeploymentAuthoringContextFor(deployment))
+func draftRules(ctx context.Context, store *state.Store, author resourceauthoring.Author, deployment graph.Resource) authoredDraft {
+	workload, err := resourceauthoring.WithObservedBehavior(ctx, store, state.ResourceAuthoringContextFor(deployment))
 	if err != nil {
-		return authoredDraft{err: fmt.Errorf("read Deployment baseline: %w", err)}
+		return authoredDraft{err: fmt.Errorf("read workload baseline: %w", err)}
 	}
 	rules, rationale, err := authorRules(ctx, author, workload)
 	return authoredDraft{rules: rules, rationale: rationale, behavior: workload.ObservedBehavior, err: err}

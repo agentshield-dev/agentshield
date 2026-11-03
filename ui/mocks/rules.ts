@@ -2,7 +2,7 @@ import type { DetectorRule, RuleDraft, RuleProposal } from '@/api/types';
 import { list } from '@/lib/model';
 import { dataset, digest256, minutesAgo } from './dataset';
 
-// Deployment rule authoring jobs for the demo environment, shaped like pkg/api rules.go.
+// Workload rule authoring jobs for the demo environment, shaped like pkg/api rules.go.
 
 export interface RuleJob {
 	draft: RuleDraft;
@@ -68,12 +68,12 @@ export function authoredProposal(resourceId: string, seed: number, count: number
 			revision: 1,
 			inputVersion: 'v1',
 			pluginId: '*',
-			workloadResourceId: resourceId,
+			scopeResourceId: resourceId,
 			type: template.type,
 			kind: template.kind,
 			expression: template.expression,
 			risk: 'medium',
-			reasons: ['workload_rule_match'],
+			reasons: ['resource_rule_match'],
 			windowSeconds: 300
 		};
 		return { rule, rationale: template.rationale };
@@ -82,6 +82,24 @@ export function authoredProposal(resourceId: string, seed: number, count: number
 		rationale:
 			'The workload’s baseline shows a narrow runtime profile; each rule targets one deviation from it.',
 		rules,
+		projection: {
+			automountServiceAccountToken: false,
+			podSecurityContext: { runAsNonRoot: true, seccompProfile: 'RuntimeDefault' },
+			containers: [
+				{
+					type: 'container',
+					name: 'api',
+					image: 'registry.example/payments:v4',
+					allowPrivilegeEscalation: false,
+					readOnlyRootFilesystem: true,
+					capabilitiesDropped: ['ALL'],
+					ports: [{ name: 'https', containerPort: 8443, protocol: 'TCP' }]
+				}
+			],
+			hostPathCount: 1,
+			hostPathTypes: ['Socket'],
+			references: [{ kind: 'Secret', usage: 'volume', count: 1 }]
+		},
 		toolCalls: [
 			...rules.map(item => ({
 				name: 'add_rule',
@@ -106,7 +124,7 @@ function job(
 	return {
 		id,
 		resourceId,
-		templateSha256: templateFor(resourceId),
+		revisionSha256: templateFor(resourceId),
 		status: 'queued',
 		attemptCount: 0,
 		reviewStatus: 'pending',

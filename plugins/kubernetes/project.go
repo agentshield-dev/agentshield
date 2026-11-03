@@ -70,15 +70,22 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 		if err != nil {
 			return graph.Input{}, err
 		}
+		if isAuthorableResource(item) {
+			if err := addResourceAuthoringProjection(itemAttributes); err != nil {
+				return graph.Input{}, fmt.Errorf("project %s %s/%s for rule authoring: %w", item.GetKind(), item.GetNamespace(), item.GetName(), err)
+			}
+		}
 		ruleID := "kubernetes.resource.base"
-		if item.GetAPIVersion() == "apps/v1" && item.GetKind() == "Deployment" {
-			ruleID = "kubernetes.deployment.authoring-context"
+		if isAuthorableWorkload(item) {
+			ruleID = "kubernetes.resource.authoring-context"
 		} else if item.GetAPIVersion() == "v1" && item.GetKind() == "Service" {
 			ruleID = "kubernetes.service.resource"
 		} else if item.GetAPIVersion() == "networking.k8s.io/v1" && item.GetKind() == "Ingress" {
 			ruleID = "kubernetes.ingress.resource"
 		} else if item.GetAPIVersion() == "networking.k8s.io/v1" && item.GetKind() == "NetworkPolicy" {
 			ruleID = "kubernetes.networkpolicy.resource"
+		} else if item.GetAPIVersion() == "rbac.authorization.k8s.io/v1" && (item.GetKind() == "RoleBinding" || item.GetKind() == "ClusterRoleBinding") {
+			ruleID = "kubernetes.rbac-binding.resource"
 		} else if item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "Gateway" {
 			ruleID = "kubernetes.gateway.resource"
 		} else if item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "HTTPRoute" {

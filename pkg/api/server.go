@@ -152,7 +152,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/rule-drafts", server.handleRuleDrafts)
 	mux.HandleFunc("GET /api/v1/rule-drafts/{jobID}", server.handleRuleDraft)
 	mux.HandleFunc("POST /api/v1/rule-drafts/{jobID}/review", server.handleRuleDraftReview)
-	mux.HandleFunc("POST /api/v1/workloads/{resourceID}/rule-drafts", server.handleRuleDraftRequest)
+	mux.HandleFunc("POST /api/v1/resources/{resourceID}/rule-drafts", server.handleRuleDraftRequest)
 	mux.HandleFunc("GET /api/v1/findings/{findingID}/remediations/{proposalID}/candidates", server.handleRemediationCandidates)
 	mux.HandleFunc("POST /api/v1/findings/{findingID}/remediations/{proposalID}/prepare", server.handleRemediationPrepare)
 	mux.HandleFunc("POST /api/v1/findings/{findingID}/remediations/{proposalID}/approve", server.handleRemediationApprove)

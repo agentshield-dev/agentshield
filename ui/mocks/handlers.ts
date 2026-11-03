@@ -70,7 +70,7 @@ export const handlers: HttpHandler[] = [
 		const body: unknown = await request.json().catch(() => undefined);
 		return respond(() => backend.reviewRuleDraft(text(params.jobID), body));
 	}),
-	http.post('/api/v1/workloads/:resourceID/rule-drafts', ({ params }) =>
+	http.post('/api/v1/resources/:resourceID/rule-drafts', ({ params }) =>
 		respond(() => backend.requestRuleDraft(text(params.resourceID)), 202)
 	),
 	// Like the service, the stream announces the current graph on connect and every change after.

@@ -77,14 +77,14 @@ type Evaluation struct {
 	Window ChangeWindow
 	// Signals are built-in novelty signals, the only input to agentic investigation.
 	// RuleSignals come from active detection rules and become findings directly.
-	// ShadowSignals come from unreviewed workload rules and are recorded only.
+	// ShadowSignals come from unreviewed resource rules and are recorded only.
 	Signals             []detector.InvestigationSignal
 	RuleSignals         []detector.InvestigationSignal
 	ShadowSignals       []detector.InvestigationSignal
 	RulesetID           string
 	RulesetDigest       string
 	RulesetRevision     uint64
-	WorkloadRulesDigest string
+	ResourceRulesDigest string
 	// Investigation describes agentic investigation of Signals; it is empty for windows
 	// without detection (no events, rebase, baseline, or a detection failure).
 	Investigation string
@@ -346,12 +346,12 @@ func (service *Service) detectWindow(ctx context.Context, previous *graph.Snapsh
 		}
 	}
 	evaluation.RulesetID, evaluation.RulesetDigest, evaluation.RulesetRevision = result.RulesetID, result.RulesetDigest, result.ActivationRevision
-	evaluation.WorkloadRulesDigest, evaluation.DetectionOmitted = result.WorkloadRulesDigest, result.Omitted
+	evaluation.ResourceRulesDigest, evaluation.DetectionOmitted = result.ResourceRulesDigest, result.Omitted
 	return nil
 }
 
 // investigationFor decides what happens to a window's novelty signals in mode.
-// It returns empty for a baseline window, which is never investigated.
+// It returns empty for a stabilization window, which is never investigated.
 func (service *Service) investigationFor(mode evaluationMode, baseline, eligible bool) string {
 	switch {
 	case baseline:
@@ -416,7 +416,7 @@ func (service *Service) investigateWindow(ctx context.Context, previous *graph.S
 	return evaluation, nil
 }
 
-// windowPacket builds the packet of an eligible, non-baseline window. A
+// windowPacket builds the packet of an eligible, non-stabilization window. A
 // failure is confined to the window.
 func (service *Service) windowPacket(previous *graph.Snapshot, now time.Time, evaluation Evaluation) (Packet, error) {
 	window := evaluation.Window

@@ -22,8 +22,8 @@ type serviceClusterAddress struct {
 func projectionAttributes(item *unstructured.Unstructured, index objectIndex) (map[string]string, error) {
 	result := attributes(item)
 	switch {
-	case item.GetAPIVersion() == "apps/v1" && item.GetKind() == "Deployment":
-		if err := addDeploymentAttributes(result, item); err != nil {
+	case isAuthorableWorkload(item):
+		if err := addWorkloadAttributes(result, item); err != nil {
 			return nil, err
 		}
 	case item.GetAPIVersion() == "v1" && item.GetKind() == "Service":
@@ -36,12 +36,67 @@ func projectionAttributes(item *unstructured.Unstructured, index objectIndex) (m
 		return ingressAttributes(item, index)
 	case item.GetAPIVersion() == "networking.k8s.io/v1" && item.GetKind() == "NetworkPolicy":
 		return networkPolicyAttributes(item)
+	case item.GetAPIVersion() == "rbac.authorization.k8s.io/v1" && (item.GetKind() == "RoleBinding" || item.GetKind() == "ClusterRoleBinding"):
+		return rbacBindingAttributes(item)
 	case item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "Gateway":
 		return gatewayAttributes(item)
 	case item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "HTTPRoute":
 		return httpRouteAttributes(item, index)
 	}
 	return result, nil
+}
+
+func isAuthorableResource(item *unstructured.Unstructured) bool {
+	if item == nil {
+		return false
+	}
+	if isAuthorableWorkload(item) || item.GetAPIVersion() == "v1" && (item.GetKind() == "ServiceAccount" || item.GetKind() == "Service") {
+		return true
+	}
+	if item.GetAPIVersion() == "rbac.authorization.k8s.io/v1" && (item.GetKind() == "RoleBinding" || item.GetKind() == "ClusterRoleBinding") {
+		return true
+	}
+	return item.GetAPIVersion() == "networking.k8s.io/v1" && (item.GetKind() == "Ingress" || item.GetKind() == "NetworkPolicy") ||
+		item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && (item.GetKind() == "Gateway" || item.GetKind() == "HTTPRoute")
+}
+
+func addResourceAuthoringProjection(attributes map[string]string) error {
+	safe := make(map[string]string)
+	for key, value := range attributes {
+		if resourceAuthoringAttribute(key) {
+			safe[key] = value
+		}
+	}
+	context := map[string]any{}
+	if encoded := attributes[workloadProjectionAttribute]; encoded != "" {
+		var workload map[string]any
+		if err := json.Unmarshal([]byte(encoded), &workload); err != nil {
+			return err
+		}
+		context["workload"] = workload
+		delete(attributes, workloadProjectionAttribute)
+	}
+	projection, err := graph.NewResourceAuthoringProjection(context, safe)
+	if err != nil {
+		return err
+	}
+	attributes[graph.ResourceAuthoringContextAttribute] = projectkit.MustCanonicalJSON(projection)
+	return nil
+}
+
+func resourceAuthoringAttribute(key string) bool {
+	switch key {
+	case "kubernetes/api-version", "kubernetes/name", "kubernetes/namespace",
+		"kubernetes/service-type", "kubernetes/load-balancer-class", "kubernetes/external-traffic-policy",
+		"kubernetes/internal-traffic-policy", "kubernetes/traffic-distribution", "kubernetes/ip-family-policy":
+		return true
+	}
+	for _, prefix := range []string{"kubernetes/label/", "kubernetes/rbac-", "kubernetes/ingress-", "kubernetes/networkpolicy-", "kubernetes/gateway-", "kubernetes/httproute-"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func addServiceAttributes(result map[string]string, service *corev1.Service) {

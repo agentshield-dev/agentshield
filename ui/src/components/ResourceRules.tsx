@@ -12,18 +12,17 @@ import {
 	ruleSelector
 } from '@/lib/rules';
 
-// Inspector section for a Deployment: its loaded rules, current draft, and a regenerate action.
-export function WorkloadRules({ workloadId }: { workloadId: string }) {
+export function ResourceRules({ resourceId }: { resourceId: string }) {
 	const [changes, setChanges] = useState(0);
 	const [status, setStatus] = useState('');
 	const [busy, setBusy] = useState(false);
 	const loaded = useApi<RulesResponse>('/api/v1/rules', changes);
 	const drafts = useApi<RuleDraftsResponse>('/api/v1/rule-drafts', changes);
-	const rules = list(loaded.data?.workloadRules).filter(
-		item => item.rule.workloadResourceId === workloadId
+	const rules = list(loaded.data?.resourceRules).filter(
+		item => item.rule.scopeResourceId === resourceId
 	);
-	const workloadDrafts = list(drafts.data?.drafts).filter(draft => draft.resourceId === workloadId);
-	const draft = workloadDrafts.find(item => item.currentRevision) ?? workloadDrafts[0];
+	const resourceDrafts = list(drafts.data?.drafts).filter(draft => draft.resourceId === resourceId);
+	const draft = resourceDrafts.find(item => item.currentRevision) ?? resourceDrafts[0];
 	const authoring = draft ? isAuthoring(draft) : false;
 	// A failed draft offers Author now too: the worker will not retry it on its own.
 	const offerAuthor = authoring || draft?.status === 'failed';
@@ -39,7 +38,7 @@ export function WorkloadRules({ workloadId }: { workloadId: string }) {
 		setBusy(true);
 		setStatus('');
 		try {
-			const response = await requestRegeneration(workloadId);
+			const response = await requestRegeneration(resourceId);
 			setStatus(`${offerAuthor ? 'Authoring' : 'Regenerating'} draft #${response.draft.id}.`);
 		} catch (failure) {
 			setStatus(errorMessage(failure));
@@ -70,7 +69,7 @@ export function WorkloadRules({ workloadId }: { workloadId: string }) {
 					))}
 				</ul>
 			) : (
-				<p className="muted">No loaded rules for this workload.</p>
+				<p className="muted">No loaded rules for this resource.</p>
 			)}
 			<dl className="detail-grid">
 				<dt>Current draft</dt>

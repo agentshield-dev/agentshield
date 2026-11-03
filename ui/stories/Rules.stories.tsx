@@ -64,13 +64,23 @@ export const ApproveDraft: Story = {
 			await within(document.body).findByRole('dialog', { name: 'Approve rules' })
 		);
 		await expect(dialog.getByRole('heading', { name: 'Activate 3 rules' })).toBeVisible();
-		await userEvent.click(dialog.getByRole('button', { name: 'Approve and activate' }));
-		await canvas.findByText('Approved; the rules now run in active mode.', {}, wait);
+		const selections = dialog.getAllByRole('checkbox');
+		await userEvent.click(selections[1]);
+		await userEvent.click(selections[2]);
+		await expect(dialog.getByRole('heading', { name: 'Activate one rule' })).toBeVisible();
+		await userEvent.click(dialog.getByRole('button', { name: 'Approve selected' }));
+		await canvas.findByText('Approved 1 rule; the selection now runs in active mode.', {}, wait);
 		await canvas.findByText('approved', { selector: '.finding-title .badge' }, wait);
+		await expect(
+			canvas.getByText('active', { selector: '.remediation-item .badge' })
+		).toBeVisible();
+		await expect(
+			canvas.getAllByText('not approved', { selector: '.remediation-item .badge' })
+		).toHaveLength(2);
 
 		await userEvent.click(canvas.getByRole('tab', { name: 'Loaded rules' }));
 		const rules = within(await canvas.findByRole('region', { name: 'Loaded rule list' }, wait));
-		await waitFor(() => expect(rules.getAllByText('active')).toHaveLength(5), wait);
+		await waitFor(() => expect(rules.getAllByText('active')).toHaveLength(3), wait);
 	}
 };
 
@@ -111,7 +121,7 @@ export const RuleReviewDisabled: Story = {
 		const dialog = within(
 			await within(document.body).findByRole('dialog', { name: 'Approve rules' })
 		);
-		await userEvent.click(dialog.getByRole('button', { name: 'Approve and activate' }));
+		await userEvent.click(dialog.getByRole('button', { name: 'Approve selected' }));
 		await dialog.findByText(/rule review is disabled on a non-loopback listener/, {}, wait);
 	}
 };
@@ -145,7 +155,7 @@ export const AuthorQueuedDraftNow: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[4]), level: 2 }, wait);
-		await canvas.findByText(/Waiting for the baseline window/, {}, wait);
+		await canvas.findByText(/Waiting for the stabilization window/, {}, wait);
 		await userEvent.click(canvas.getByRole('button', { name: 'Author now' }));
 		await canvas.findByText('Authoring requested.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);

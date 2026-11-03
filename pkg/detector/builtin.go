@@ -268,12 +268,18 @@ func detectSensitiveResources(previous, current graph.Snapshot, observedAt time.
 	}
 	existing := resourcesByID(previous)
 	added := make(map[string][]string)
+	var clusterAdminBindings []string
 	for _, resource := range current.Resources {
 		reason := config.SensitiveResourceKinds[resource.Kind]
 		if reason == "" {
 			continue
 		}
-		if _, existed := existing[resource.ID]; !existed {
+		if _, existed := existing[resource.ID]; existed {
+			continue
+		}
+		if reason == "rbac_binding" && clusterAdminBinding(resource) {
+			clusterAdminBindings = append(clusterAdminBindings, resource.ID)
+		} else {
 			added[reason] = append(added[reason], resource.ID)
 		}
 	}
@@ -281,7 +287,25 @@ func detectSensitiveResources(previous, current graph.Snapshot, observedAt time.
 	for reason, anchors := range added {
 		signals = appendScoredSignal(signals, 3, []string{"sensitive_resource_added", reason}, boundedAnchors(anchors), observedAt, config)
 	}
+	if len(clusterAdminBindings) > 0 {
+		signals = appendScoredSignal(signals, 4, []string{"sensitive_resource_added", "rbac_binding", "cluster_admin_binding"}, boundedAnchors(clusterAdminBindings), observedAt, config)
+	}
 	return signals
+}
+
+func clusterAdminBinding(resource graph.Resource) bool {
+	if resource.Kind != "kubernetes/clusterrolebinding" {
+		return false
+	}
+	for _, assertion := range resource.Assertions {
+		if assertion.PluginID == "kubernetes" && assertion.RuleID == "kubernetes.rbac-binding.resource" &&
+			assertion.Attributes["kubernetes/rbac-role-ref-api-group"] == "rbac.authorization.k8s.io" &&
+			assertion.Attributes["kubernetes/rbac-role-ref-kind"] == "ClusterRole" && assertion.Attributes["kubernetes/rbac-role-ref-name"] == "cluster-admin" &&
+			(assertion.Attributes["kubernetes/rbac-subjects"] != "" || assertion.Attributes["kubernetes/rbac-subjects-omitted"] != "") {
+			return true
+		}
+	}
+	return false
 }
 
 // detectWorkloadIdentityChanges signals an existing workload whose instances

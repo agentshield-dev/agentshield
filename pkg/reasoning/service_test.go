@@ -137,7 +137,7 @@ type fixedDetector struct {
 }
 
 func (fixed fixedDetector) Detect(context.Context, graph.Snapshot, graph.Snapshot, time.Time) (detector.Result, error) {
-	return detector.Result{Signals: fixed.signals, WorkloadRulesDigest: "workload-digest"}, nil
+	return detector.Result{Signals: fixed.signals, ResourceRulesDigest: "workload-digest"}, nil
 }
 
 func gateSignal(id string, risk detector.Risk, mode detector.RuleMode) detector.InvestigationSignal {
@@ -184,7 +184,7 @@ func TestServiceInvestigatesOnlyEligibleNonShadowSignals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if evaluation.Investigation != test.investigation || evaluation.WorkloadRulesDigest != "workload-digest" {
+			if evaluation.Investigation != test.investigation || evaluation.ResourceRulesDigest != "workload-digest" {
 				t.Fatalf("evaluation=%#v", evaluation)
 			}
 			if (test.investigation == InvestigationInvestigated) != (packetSignals != nil) || slices.Contains(packetSignals, "shadow") || slices.Contains(packetSignals, "rule") {

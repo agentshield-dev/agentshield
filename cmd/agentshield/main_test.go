@@ -68,7 +68,7 @@ func TestValidateDetectionFeatures(t *testing.T) {
 	valid := options{
 		detectionInterval: time.Second, detectorReloadInterval: time.Second, detectionSignalRetention: 24 * time.Hour,
 		modelEndpoint: "http://model.invalid", investigationRetrieval: reasoning.RetrievalModelSelected,
-		deploymentRulePollInterval: time.Second, deploymentRuleAuthorTimeout: time.Minute, deploymentRuleBaseline: 6 * time.Hour,
+		resourceRulePollInterval: time.Second, resourceRuleAuthorTimeout: time.Minute, resourceRuleStabilization: 6 * time.Hour,
 		investigationBatchWindow: 30 * time.Second, investigationSampleRate: 1, investigationDedupWindow: time.Hour,
 		investigationMaxAttempts: 5, investigationPollInterval: time.Second,
 	}
@@ -79,10 +79,10 @@ func TestValidateDetectionFeatures(t *testing.T) {
 	}{
 		{name: "everything disabled", modify: func(config *options) { config.modelEndpoint = "" }, valid: true},
 		{name: "agentic investigation", modify: func(config *options) { config.agenticInvestigation = true }, valid: true},
-		{name: "authoring only", modify: func(config *options) { config.deploymentRuleAuthoring = true }, valid: true},
-		{name: "both model features", modify: func(config *options) { config.agenticInvestigation, config.deploymentRuleAuthoring = true, true }, valid: true},
+		{name: "authoring only", modify: func(config *options) { config.resourceRuleAuthoring = true }, valid: true},
+		{name: "both model features", modify: func(config *options) { config.agenticInvestigation, config.resourceRuleAuthoring = true, true }, valid: true},
 		{name: "authoring with Anthropic", modify: func(config *options) {
-			config.deploymentRuleAuthoring, config.modelProvider = true, reasoning.ProviderAnthropic
+			config.resourceRuleAuthoring, config.modelProvider = true, reasoning.ProviderAnthropic
 		}, valid: true},
 		{name: "investigation without endpoint", modify: func(config *options) { config.agenticInvestigation, config.modelEndpoint = true, "" }},
 		{name: "investigation with Anthropic", modify: func(config *options) {
@@ -91,16 +91,16 @@ func TestValidateDetectionFeatures(t *testing.T) {
 		{name: "investigation retrieval", modify: func(config *options) {
 			config.agenticInvestigation, config.investigationRetrieval = true, "everything"
 		}},
-		{name: "authoring without endpoint", modify: func(config *options) { config.deploymentRuleAuthoring, config.modelEndpoint = true, "" }},
+		{name: "authoring without endpoint", modify: func(config *options) { config.resourceRuleAuthoring, config.modelEndpoint = true, "" }},
 		{name: "authoring timeout", modify: func(config *options) {
-			config.deploymentRuleAuthoring, config.deploymentRuleAuthorTimeout = true, time.Second
+			config.resourceRuleAuthoring, config.resourceRuleAuthorTimeout = true, time.Second
 		}},
-		{name: "authoring without a baseline", modify: func(config *options) { config.deploymentRuleAuthoring, config.deploymentRuleBaseline = true, 0 }, valid: true},
-		{name: "baseline window longer than telemetry retention", modify: func(config *options) {
-			config.deploymentRuleAuthoring, config.deploymentRuleBaseline = true, 25*time.Hour
+		{name: "authoring without a baseline", modify: func(config *options) { config.resourceRuleAuthoring, config.resourceRuleStabilization = true, 0 }, valid: true},
+		{name: "stabilization window longer than telemetry retention", modify: func(config *options) {
+			config.resourceRuleAuthoring, config.resourceRuleStabilization = true, 25*time.Hour
 		}},
-		{name: "negative baseline window", modify: func(config *options) {
-			config.deploymentRuleAuthoring, config.deploymentRuleBaseline = true, -time.Minute
+		{name: "negative stabilization window", modify: func(config *options) {
+			config.resourceRuleAuthoring, config.resourceRuleStabilization = true, -time.Minute
 		}},
 		{name: "signal retention", modify: func(config *options) { config.detectionSignalRetention = time.Minute }},
 		{name: "sampled investigation", modify: func(config *options) {
@@ -130,8 +130,8 @@ func TestDetectionRunsOnlyForModelFeatures(t *testing.T) {
 	}{
 		{config: options{}, want: false},
 		{config: options{agenticInvestigation: true}, want: true},
-		{config: options{deploymentRuleAuthoring: true}, want: true},
-		{config: options{agenticInvestigation: true, deploymentRuleAuthoring: true}, want: true},
+		{config: options{resourceRuleAuthoring: true}, want: true},
+		{config: options{agenticInvestigation: true, resourceRuleAuthoring: true}, want: true},
 	} {
 		if got := test.config.detectionEnabled(); got != test.want {
 			t.Fatalf("detectionEnabled(%+v) = %t, want %t", test.config, got, test.want)

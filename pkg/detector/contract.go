@@ -6,9 +6,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/cel-go/cel"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/telemetry"
+	"github.com/google/cel-go/cel"
 )
 
 // CELVariable describes one [Input] field as a CEL variable.
@@ -71,6 +71,17 @@ func CELSelectors() []CELSelector {
 	return selectors
 }
 
+func resourceCELSelector(kind string) (CELSelector, bool) {
+	if len(kind) == 0 || len(kind) > 128 || !strings.Contains(kind, "/") || strings.ContainsAny(kind, " \t\r\n") {
+		return CELSelector{}, false
+	}
+	return CELSelector{
+		Type: "resource", Kind: kind, Description: "A bounded normalized resource projection changed.",
+		Trigger: "when the resource first appears or its projected rule attributes change",
+		Fields:  map[string]string{"attributes": "bounded normalized attributes selected by the source plugin"},
+	}, true
+}
+
 // CELSelectorNames returns the "type:kind" name of every selector.
 func CELSelectorNames() []string {
 	selectors := CELSelectors()
@@ -82,6 +93,9 @@ func CELSelectorNames() []string {
 }
 
 func lookupCELSelector(inputType, kind string) (CELSelector, bool) {
+	if inputType == "resource" {
+		return resourceCELSelector(kind)
+	}
 	for _, selector := range CELSelectors() {
 		if selector.Type == inputType && selector.Kind == kind {
 			return selector, true
@@ -123,7 +137,11 @@ func CELContractVariables() []CELVariable {
 		if name == "" || name == "-" {
 			continue
 		}
-		variables = append(variables, CELVariable{Name: name, Description: field.Tag.Get("cel_description"), celType: cel.StringType})
+		celType := cel.StringType
+		if field.Type.Kind() == reflect.Map {
+			celType = cel.MapType(cel.StringType, cel.StringType)
+		}
+		variables = append(variables, CELVariable{Name: name, Description: field.Tag.Get("cel_description"), celType: celType})
 	}
 	return variables
 }
@@ -167,9 +185,18 @@ func CELSelectorDescription() string {
 // CELSelectorDescriptionFor documents the named selectors; nil documents every selector.
 func CELSelectorDescriptionFor(names []string) string {
 	var contract strings.Builder
-	contract.WriteString("The graph input the rule evaluates. The host scopes every rule to inputs connected to the target workload. Selectors:\n")
+	contract.WriteString("The graph input the rule evaluates. The host scopes every rule to inputs whose subject is the target resource. Selectors:\n")
 	variables := CELContractVariables()
-	for _, selector := range CELSelectors() {
+	selectors := CELSelectors()
+	for _, name := range names {
+		inputType, kind, found := strings.Cut(name, ":")
+		if found {
+			if selector, ok := resourceCELSelector(kind); ok && inputType == "resource" {
+				selectors = append(selectors, selector)
+			}
+		}
+	}
+	for _, selector := range selectors {
 		if names != nil && !slices.Contains(names, selector.Name()) {
 			continue
 		}

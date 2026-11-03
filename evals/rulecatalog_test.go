@@ -66,7 +66,7 @@ func TestRulePoliciesMatchTheirCampaignIntent(t *testing.T) {
 						seenTelemetry[key] = true
 						events = append(events, detector.Event{
 							ID: "telemetry/" + key, PluginID: "istio", SourceID: "cluster", Type: "telemetry", Kind: "active-probe",
-							AnchorIDs: anchors, ObservedAt: time.Unix(int64(index), 0).UTC(),
+							AnchorIDs: anchors, SubjectIDs: []string{"source"}, ObservedAt: time.Unix(int64(index), 0).UTC(),
 							Input: detector.Input{Operation: operation, Outcome: outcome, DestinationRole: "service"},
 						})
 					}
@@ -74,7 +74,7 @@ func TestRulePoliciesMatchTheirCampaignIntent(t *testing.T) {
 						seenTargets[action.Target] = true
 						events = append(events, detector.Event{
 							ID: "edge/" + action.Target, PluginID: "telemetry", SourceID: "runtime", Type: "relationship", Kind: "communicates-with",
-							AnchorIDs: anchors, ObservedAt: time.Unix(int64(index), 0).UTC(),
+							AnchorIDs: anchors, SubjectIDs: []string{"source"}, ObservedAt: time.Unix(int64(index), 0).UTC(),
 							Input: detector.Input{DestinationIPClass: "unknown", DestinationRole: "service"},
 						})
 					}

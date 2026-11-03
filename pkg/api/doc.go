@@ -39,10 +39,10 @@
 //	GET  /api/v1/findings/{id}/remediations/{proposal}/candidates
 //	POST /api/v1/findings/{id}/remediations/{proposal}/prepare
 //	POST /api/v1/findings/{id}/remediations/{proposal}/approve
-//	GET  /api/v1/rules                    active ruleset and loaded workload rules (active or shadow)
-//	GET  /api/v1/rule-drafts[/{id}]       Deployment rule drafts; one draft includes its proposal
-//	POST /api/v1/rule-drafts/{id}/review  approve or reject a completed draft
-//	POST /api/v1/workloads/{id}/rule-drafts  re-author a Deployment's current revision
+//	GET  /api/v1/rules                    active ruleset and loaded resource rules (active or shadow)
+//	GET  /api/v1/rule-drafts[/{id}]       resource rule drafts; one draft includes its proposal
+//	POST /api/v1/rule-drafts/{id}/review  approve selected rules or reject a completed draft
+//	POST /api/v1/resources/{id}/rule-drafts  re-author a resource's current revision
 //	POST /v1/logs                         OTLP logs, when a receiver is configured
 //	GET  /, /assets/                      embedded web UI
 //	POST /v1/aws/firehose/vpc-flow-logs   AWS VPC flow logs; see below

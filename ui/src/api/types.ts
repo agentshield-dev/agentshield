@@ -290,14 +290,14 @@ export interface ExposuresResponse {
 	nextCursor?: string;
 }
 
-// Detection rules and Deployment rule drafts (pkg/api rules.go).
+// Detection rules and resource rule drafts (pkg/api rules.go).
 
 export interface DetectorRule {
 	id: string;
 	revision: number;
 	inputVersion: string;
 	pluginId: string;
-	workloadResourceId?: string;
+	scopeResourceId?: string;
 	type: string;
 	kind: string;
 	expression: string;
@@ -309,7 +309,7 @@ export interface DetectorRule {
 // Approved drafts run active; unreviewed drafts run in shadow mode, where matches are only recorded.
 export type RuleMode = 'active' | 'shadow';
 
-export interface WorkloadRule {
+export interface ResourceRule {
 	rule: DetectorRule;
 	mode: RuleMode;
 }
@@ -317,17 +317,17 @@ export interface WorkloadRule {
 export interface RulesResponse {
 	activation: { revision: number; rulesetId: string } | null;
 	rules: List<DetectorRule>;
-	workloadRules: List<WorkloadRule>;
+	resourceRules: List<ResourceRule>;
 }
 
 export type RuleDraftStatus = 'queued' | 'running' | 'retryable' | 'completed' | 'failed';
 export type RuleReviewStatus = 'pending' | 'approved' | 'rejected';
 
-// One Deployment rule authoring job, for one Pod template revision.
+// One resource rule authoring job for one projection revision.
 export interface RuleDraft {
 	id: number;
 	resourceId: string;
-	templateSha256?: string;
+	revisionSha256?: string;
 	status: RuleDraftStatus;
 	attemptCount: number;
 	lastError?: string;
@@ -352,7 +352,10 @@ export interface RuleDraftToolCall {
 export interface RuleProposal {
 	rationale: string;
 	rules: List<{ rule: DetectorRule; rationale: string }>;
+	approvedRuleIds?: List<string>;
 	toolCalls?: List<RuleDraftToolCall>;
+	projection?: Record<string, unknown>;
+	attributes?: Record<string, string>;
 }
 
 export interface RuleDraftsResponse {

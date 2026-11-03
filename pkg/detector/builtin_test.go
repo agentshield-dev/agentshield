@@ -162,6 +162,40 @@ func TestDetectNovelChangesSignalsSensitiveResourceAddition(t *testing.T) {
 	}
 }
 
+func TestDetectNovelChangesDistinguishesClusterAdminBinding(t *testing.T) {
+	binding := func(id, kind, role, subjects string) graph.Resource {
+		attributes := map[string]string{
+			"kubernetes/rbac-role-ref-api-group": "rbac.authorization.k8s.io", "kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": role,
+		}
+		if subjects != "" {
+			attributes["kubernetes/rbac-subjects"] = subjects
+		}
+		return graph.Resource{ID: id, Kind: kind, Assertions: []graph.ResourceAssertion{{PluginID: "kubernetes", RuleID: "kubernetes.rbac-binding.resource", Attributes: attributes}}}
+	}
+	current := graph.Snapshot{Resources: []graph.Resource{
+		binding("ordinary", "kubernetes/clusterrolebinding", "view", `[{"kind":"User","name":"reader"}]`),
+		binding("namespaced", "kubernetes/rolebinding", "cluster-admin", `[{"kind":"ServiceAccount","name":"app","namespace":"demo"}]`),
+		binding("empty", "kubernetes/clusterrolebinding", "cluster-admin", ""),
+		binding("privileged", "kubernetes/clusterrolebinding", "cluster-admin", `[{"kind":"User","name":"admin"}]`),
+	}}
+	signals := DetectNovelChanges(graph.Snapshot{}, current, time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC), DefaultConfig())
+	if len(signals) != 2 {
+		t.Fatalf("binding signals = %#v", signals)
+	}
+	for _, signal := range signals {
+		switch {
+		case slices.Contains(signal.Reasons, "cluster_admin_binding"):
+			if signal.Risk != RiskHigh || !reflect.DeepEqual(signal.AnchorIDs, []string{"privileged"}) {
+				t.Fatalf("cluster-admin signal = %#v", signal)
+			}
+		default:
+			if signal.Risk != RiskMedium || !slices.Contains(signal.Reasons, "rbac_binding") || !reflect.DeepEqual(signal.AnchorIDs, []string{"empty", "namespaced", "ordinary"}) {
+				t.Fatalf("ordinary binding signal = %#v", signal)
+			}
+		}
+	}
+}
+
 func TestDetectNovelChangesScoresWorkloadCommunicationPaths(t *testing.T) {
 	observedAt := time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

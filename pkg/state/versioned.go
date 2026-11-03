@@ -391,7 +391,7 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 		}
 	}
 	timings.projection = time.Since(phaseStarted)
-	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
+	if err := enqueueChangedResourceRuleJobs(ctx, tx, changedResources); err != nil {
 		return contributionPublication{}, err
 	}
 	metadataChanged := hasHead && (head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status)

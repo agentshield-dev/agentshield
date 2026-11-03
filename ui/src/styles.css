@@ -398,6 +398,13 @@ code, pre, kbd, samp, .mono { font-variant-ligatures: none; font-feature-setting
 .approval-preview { margin-top: 24px; }
 .approval-preview h3 { margin: 0 0 10px; color: var(--purple); font-size: 13px; }
 .approval-preview pre { max-height: 280px; padding: 16px; overflow: auto; border-radius: 6px; background: var(--surface-2); font: 12px/1.5 var(--mono); white-space: pre-wrap; }
+.rule-selection { max-height: 320px; display: grid; gap: 10px; overflow: auto; }
+.rule-selection label { padding: 12px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.rule-selection label:has(input:checked) { border-color: var(--purple); background: var(--purple-soft); }
+.rule-selection input { margin-top: 3px; accent-color: var(--purple); }
+.rule-selection span, .rule-selection code { min-width: 0; display: block; }
+.rule-selection strong { font-size: 12px; }
+.rule-selection code { margin-top: 5px; color: var(--muted); font: 12px/1.45 var(--mono); overflow-wrap: anywhere; }
 .approval-sheet footer { margin-top: 30px; display: flex; justify-content: flex-end; gap: 12px; }
 .mobile-only { display: none; }
 

@@ -184,12 +184,12 @@ spec:
             - --falco-source-id=evals/__CLUSTER_IDENTITY__
             - --telemetry-jsonl=/var/lib/agentshield/telemetry.jsonl
             # authoring:begin (removed in detector-only mode)
-            # Draft Deployment rules with OpenAI after a short baseline, and serve rule
+            # Draft Workload rules with OpenAI after a short baseline, and serve rule
             # review on this non-loopback listener. The eval cluster is disposable;
             # the review API is unauthenticated.
-            - --deployment-rule-authoring
+            - --resource-rule-authoring
             - --model-endpoint=https://api.openai.com
-            - --deployment-rule-baseline-window=10m
+            - --resource-rule-stabilization-window=10m
             - --rule-review-api
             # authoring:end
           env:

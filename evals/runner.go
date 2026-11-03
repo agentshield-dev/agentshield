@@ -40,7 +40,7 @@ type RunConfig struct {
 	ValidateOnly       bool
 	DetectorOnly       bool
 	// AuthorSelectors, when set, restricts the selectors the rule suite's
-	// Deployment rule author may use; empty offers every selector.
+	// Workload rule author may use; empty offers every selector.
 	AuthorSelectors []string
 	Timeout         time.Duration
 }

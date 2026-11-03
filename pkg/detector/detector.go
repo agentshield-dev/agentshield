@@ -53,7 +53,7 @@ type InvestigationSignal struct {
 	RuleID        string     `json:"ruleId,omitempty"`
 	RuleRevision  uint64     `json:"ruleRevision,omitempty"`
 	RulesetDigest string     `json:"rulesetDigest,omitempty"`
-	// RuleMode is RuleModeShadow for signals from unreviewed workload rules, which are recorded but never investigated.
+	// RuleMode is RuleModeShadow for signals from unreviewed resource rules, which are recorded but never investigated.
 	RuleMode RuleMode `json:"ruleMode,omitempty"`
 }
 

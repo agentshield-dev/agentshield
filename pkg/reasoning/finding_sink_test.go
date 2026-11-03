@@ -133,7 +133,7 @@ func TestFindingSinkPersistsActiveRuleMatchesWithoutAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	rule := func(id, ruleID string, risk detector.Risk, anchors ...string) detector.InvestigationSignal {
-		return detector.InvestigationSignal{ID: id, Risk: risk, Reasons: []string{"workload_rule_match"}, AnchorIDs: anchors, RuleID: ruleID, RuleRevision: 2}
+		return detector.InvestigationSignal{ID: id, Risk: risk, Reasons: []string{"resource_rule_match"}, AnchorIDs: anchors, RuleID: ruleID, RuleRevision: 2}
 	}
 	evaluation := Evaluation{
 		Window: ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{Revision: remediationTestGraphRevision}}},

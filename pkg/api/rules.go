@@ -16,12 +16,12 @@ import (
 // implements it.
 type RuleStore interface {
 	ReadActiveDetectorRuleset(context.Context) (detector.Activation, error)
-	ReadWorkloadRules(context.Context) ([]detector.WorkloadRule, error)
-	ListDeploymentRuleJobs(context.Context, int) ([]state.DeploymentRuleJobSummary, error)
-	DeploymentRuleJobStatus(context.Context, int64) (state.DeploymentRuleJobSummary, bool, error)
-	DeploymentRuleProposal(context.Context, int64) (json.RawMessage, bool, error)
-	ReviewDeploymentRuleJob(context.Context, int64, string, string) error
-	RequestDeploymentRuleJob(context.Context, string, string) (state.DeploymentRuleJobSummary, error)
+	ReadResourceRules(context.Context) ([]detector.ResourceRule, error)
+	ListResourceRuleJobs(context.Context, int) ([]state.ResourceRuleJobSummary, error)
+	ResourceRuleJobStatus(context.Context, int64) (state.ResourceRuleJobSummary, bool, error)
+	ResourceRuleProposal(context.Context, int64) (json.RawMessage, bool, error)
+	ReviewResourceRuleJobRules(context.Context, int64, string, string, []string) error
+	RequestResourceRuleJob(context.Context, string, string) (state.ResourceRuleJobSummary, error)
 }
 
 // WithRules serves the detection rule routes from store. writable enables the
@@ -38,7 +38,7 @@ func WithRules(store RuleStore, writable bool) Option {
 // the API. It is audit metadata, not an identity.
 const ruleActor = "api/web-ui"
 
-// draftListLimit bounds the draft list; the UI filters by workload client-side.
+// draftListLimit bounds the draft list; the UI filters by resource client-side.
 const draftListLimit = 500
 
 var (
@@ -50,7 +50,7 @@ type rulesResponse struct {
 	// Activation is null when no ruleset has been activated.
 	Activation    *rulesActivation        `json:"activation"`
 	Rules         []detector.Rule         `json:"rules"`
-	WorkloadRules []detector.WorkloadRule `json:"workloadRules"`
+	ResourceRules []detector.ResourceRule `json:"resourceRules"`
 }
 
 type rulesActivation struct {
@@ -59,17 +59,18 @@ type rulesActivation struct {
 }
 
 type ruleDraftsResponse struct {
-	Drafts []state.DeploymentRuleJobSummary `json:"drafts"`
+	Drafts []state.ResourceRuleJobSummary `json:"drafts"`
 }
 
 type ruleDraftResponse struct {
-	Draft state.DeploymentRuleJobSummary `json:"draft"`
+	Draft state.ResourceRuleJobSummary `json:"draft"`
 	// Proposal is the stored proposal of a completed job, otherwise null.
 	Proposal json.RawMessage `json:"proposal"`
 }
 
 type ruleReviewRequest struct {
-	Decision string `json:"decision"`
+	Decision string   `json:"decision"`
+	RuleIDs  []string `json:"ruleIds,omitempty"`
 }
 
 func (server *Server) handleRules(writer http.ResponseWriter, request *http.Request) {
@@ -77,7 +78,7 @@ func (server *Server) handleRules(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusServiceUnavailable, "read rules", errRulesUnavailable)
 		return
 	}
-	response := rulesResponse{Rules: []detector.Rule{}, WorkloadRules: []detector.WorkloadRule{}}
+	response := rulesResponse{Rules: []detector.Rule{}, ResourceRules: []detector.ResourceRule{}}
 	activation, err := server.rules.ReadActiveDetectorRuleset(request.Context())
 	switch {
 	case errors.Is(err, detector.ErrNoActiveRuleset):
@@ -90,13 +91,13 @@ func (server *Server) handleRules(writer http.ResponseWriter, request *http.Requ
 			response.Rules = activation.Ruleset.Rules
 		}
 	}
-	workloadRules, err := server.rules.ReadWorkloadRules(request.Context())
+	resourceRules, err := server.rules.ReadResourceRules(request.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "read workload rules", err)
+		writeError(writer, http.StatusInternalServerError, "read resource rules", err)
 		return
 	}
-	if workloadRules != nil {
-		response.WorkloadRules = workloadRules
+	if resourceRules != nil {
+		response.ResourceRules = resourceRules
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, response)
@@ -107,13 +108,13 @@ func (server *Server) handleRuleDrafts(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusServiceUnavailable, "list rule drafts", errRulesUnavailable)
 		return
 	}
-	drafts, err := server.rules.ListDeploymentRuleJobs(request.Context(), draftListLimit)
+	drafts, err := server.rules.ListResourceRuleJobs(request.Context(), draftListLimit)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "list rule drafts", err)
 		return
 	}
 	if drafts == nil {
-		drafts = []state.DeploymentRuleJobSummary{}
+		drafts = []state.ResourceRuleJobSummary{}
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, ruleDraftsResponse{Drafts: drafts})
@@ -141,13 +142,15 @@ func (server *Server) handleRuleDraftReview(writer http.ResponseWriter, request 
 		writeError(writer, http.StatusBadRequest, "decode rule review", err)
 		return
 	}
-	if review.Decision != state.DeploymentRuleReviewApproved && review.Decision != state.DeploymentRuleReviewRejected {
+	if review.Decision != state.ResourceRuleReviewApproved && review.Decision != state.ResourceRuleReviewRejected {
 		writeError(writer, http.StatusBadRequest, "review rule draft", errors.New("decision must be approved or rejected"))
 		return
 	}
-	if err := server.rules.ReviewDeploymentRuleJob(request.Context(), jobID, review.Decision, ruleActor); err != nil {
+	if err := server.rules.ReviewResourceRuleJobRules(request.Context(), jobID, review.Decision, ruleActor, review.RuleIDs); err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, state.ErrDeploymentRuleJobNotReviewable) {
+		if errors.Is(err, state.ErrResourceRuleSelectionInvalid) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, state.ErrResourceRuleJobNotReviewable) {
 			status = http.StatusConflict
 		}
 		writeError(writer, status, "review rule draft", err)
@@ -176,11 +179,11 @@ func (server *Server) handleRuleDraftRequest(writer http.ResponseWriter, request
 		writeError(writer, http.StatusBadRequest, "regenerate rules", errors.New("resource ID must contain 1-128 bytes"))
 		return
 	}
-	job, err := server.rules.RequestDeploymentRuleJob(request.Context(), resourceID, ruleActor)
+	job, err := server.rules.RequestResourceRuleJob(request.Context(), resourceID, ruleActor)
 	switch {
-	case errors.Is(err, state.ErrDeploymentRuleJobInProgress):
+	case errors.Is(err, state.ErrResourceRuleJobInProgress):
 		writeJSON(writer, http.StatusConflict, map[string]any{"error": "regenerate rules: " + err.Error(), "draft": job})
-	case errors.Is(err, state.ErrDeploymentRuleJobNotFound):
+	case errors.Is(err, state.ErrResourceRuleJobNotFound):
 		writeError(writer, http.StatusNotFound, "regenerate rules", err)
 	case err != nil:
 		writeError(writer, http.StatusInternalServerError, "regenerate rules", err)
@@ -203,18 +206,18 @@ func (server *Server) ruleDraftID(writer http.ResponseWriter, request *http.Requ
 }
 
 func (server *Server) writeRuleDraft(writer http.ResponseWriter, ctx context.Context, jobID int64, status int) {
-	job, found, err := server.rules.DeploymentRuleJobStatus(ctx, jobID)
+	job, found, err := server.rules.ResourceRuleJobStatus(ctx, jobID)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "load rule draft", err)
 		return
 	}
 	if !found {
-		writeError(writer, http.StatusNotFound, "load rule draft", state.ErrDeploymentRuleJobNotFound)
+		writeError(writer, http.StatusNotFound, "load rule draft", state.ErrResourceRuleJobNotFound)
 		return
 	}
 	response := ruleDraftResponse{Draft: job, Proposal: json.RawMessage("null")}
 	if job.Status == "completed" {
-		proposal, found, err := server.rules.DeploymentRuleProposal(ctx, jobID)
+		proposal, found, err := server.rules.ResourceRuleProposal(ctx, jobID)
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, "load rule draft proposal", err)
 			return

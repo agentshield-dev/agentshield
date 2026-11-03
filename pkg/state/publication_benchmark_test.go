@@ -121,7 +121,7 @@ func openBenchmarkStore(b *testing.B) *Store {
 
 func resetBenchmarkStore(b *testing.B, store *Store) {
 	b.Helper()
-	if _, err := store.pool.Exec(context.Background(), `TRUNCATE deployment_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := store.pool.Exec(context.Background(), `TRUNCATE resource_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
 		store.Close()
 		b.Fatal(err)
 	}

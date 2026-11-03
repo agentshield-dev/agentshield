@@ -15,8 +15,8 @@
 // investigation jobs, and advances a [ReasoningCursor]. The investigation
 // worker claims and admits jobs ([Store.ClaimInvestigationJob],
 // [Store.AdmitInvestigationJob]) and records agentic findings. Detector
-// rulesets, Deployment rule-authoring jobs, and their review status
-// ([Store.ReadWorkloadRules]) are stored here as well.
+// rulesets, Workload rule-authoring jobs, and their review status
+// ([Store.ReadResourceRules]) are stored here as well.
 //
 // # Contributions and generations
 //

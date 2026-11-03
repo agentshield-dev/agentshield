@@ -23,7 +23,7 @@ const (
 	InvestigationBelowThreshold = "below_threshold"
 	// InvestigationDisabled means the window had an eligible signal but agentic investigation is disabled.
 	InvestigationDisabled = "disabled"
-	// InvestigationShadow means the signal came from an unreviewed workload rule and is never investigated.
+	// InvestigationShadow means the signal came from an unreviewed resource rule and is never investigated.
 	InvestigationShadow = "shadow"
 	// InvestigationRuleFinding means the signal came from an active detection rule and became a finding directly.
 	InvestigationRuleFinding = "rule_finding"

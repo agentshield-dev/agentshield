@@ -33,7 +33,7 @@ const draftFilters: readonly { value: string; title: string; states: readonly Dr
 	{ value: 'rejected', title: 'Rejected', states: ['rejected'] }
 ];
 
-// A loaded rule: a Deployment rule in active or shadow mode, or an operator ruleset rule.
+// A loaded rule: a resource rule in active or shadow mode, or an operator ruleset rule.
 interface LoadedRule {
 	key: string;
 	rule: DetectorRule;
@@ -52,13 +52,13 @@ function LoadedRuleDetail({
 	onViewGraph(id: string): void;
 }) {
 	const graph = useGraph();
-	const workload = item.rule.workloadResourceId;
+	const resource = item.rule.scopeResourceId;
 	return (
 		<>
 			<header className="finding-title">
 				<div>
 					<span className="eyebrow">{ruleSelector(item.rule)}</span>
-					<h2>{workload ? graph.name(workload) : 'All workloads'}</h2>
+					<h2>{resource ? graph.name(resource) : 'All resources'}</h2>
 				</div>
 				<span className={modeBadge(item.mode)}>{item.mode}</span>
 			</header>
@@ -66,7 +66,7 @@ function LoadedRuleDetail({
 				{item.mode === 'shadow'
 					? 'An unreviewed draft: matches are recorded as signals but do not become findings until the draft is approved.'
 					: item.mode === 'active'
-						? 'An approved Deployment rule: matches become findings.'
+						? 'An approved resource rule: matches become findings.'
 						: 'A rule from the active operator ruleset.'}
 			</p>
 			<dl className="finding-meta">
@@ -93,10 +93,10 @@ function LoadedRuleDetail({
 				<h3>Expression</h3>
 				<pre>{item.rule.expression}</pre>
 			</section>
-			{workload ? (
+			{resource ? (
 				<div className="remediation-actions">
-					<button className="button secondary" type="button" onClick={() => onViewGraph(workload)}>
-						View workload
+					<button className="button secondary" type="button" onClick={() => onViewGraph(resource)}>
+						View resource
 					</button>
 				</div>
 			) : null}
@@ -140,12 +140,12 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 	// Like the other views, an inactive view renders no records.
 	if (!active) return <section className="page-view" aria-label="Detection rules" hidden />;
 
-	const workloadName = (id: string | undefined) => (id ? graph.name(id) : 'All workloads');
+	const resourceName = (id: string | undefined) => (id ? graph.name(id) : 'All resources');
 	const matches = (id: string | undefined) =>
-		!search.trim() || workloadName(id).toLowerCase().includes(search.trim().toLowerCase());
+		!search.trim() || resourceName(id).toLowerCase().includes(search.trim().toLowerCase());
 	const states = draftFilters.find(item => item.value === draftFilter)?.states ?? [];
 	const loadedRules: LoadedRule[] = [
-		...list(loaded.data?.workloadRules).map(item => ({
+		...list(loaded.data?.resourceRules).map(item => ({
 			key: `${item.mode}/${item.rule.id}`,
 			rule: item.rule,
 			mode: item.mode
@@ -155,7 +155,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 			rule,
 			mode: 'ruleset' as const
 		}))
-	].filter(item => matches(item.rule.workloadResourceId));
+	].filter(item => matches(item.rule.scopeResourceId));
 	const shownDrafts = allDrafts.filter(
 		draft => matches(draft.resourceId) && (!states.length || states.includes(draftState(draft)))
 	);
@@ -168,10 +168,10 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 		tab === 'drafts'
 			? (allDrafts.find(draft => String(draft.id) === selectedID) ?? shownDrafts[0])
 			: undefined;
-	const workloadRules = list(loaded.data?.workloadRules);
+	const resourceRules = list(loaded.data?.resourceRules);
 	const metrics = [
-		['Active rules', workloadRules.filter(item => item.mode === 'active').length],
-		['Shadow rules', workloadRules.filter(item => item.mode === 'shadow').length],
+		['Active rules', resourceRules.filter(item => item.mode === 'active').length],
+		['Shadow rules', resourceRules.filter(item => item.mode === 'shadow').length],
 		['Drafts awaiting review', awaiting],
 		['Authoring in progress', allDrafts.filter(isAuthoring).length]
 	] as const;
@@ -202,8 +202,8 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 		detailPane = (
 			<EmptyState title={tab === 'active' ? 'No rule selected' : 'No draft selected'}>
 				{tab === 'active'
-					? 'Deployment drafts run in shadow mode until approved.'
-					: 'Drafts appear when the AI author processes a Deployment.'}
+					? 'Resource drafts run in shadow mode until approved.'
+					: 'Drafts appear when the AI author processes a projected resource.'}
 			</EmptyState>
 		);
 	}
@@ -229,7 +229,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					<i className={`severity-marker ${item.rule.risk}`} />
 					<span>
 						<span className="finding-row-top">
-							<strong>{workloadName(item.rule.workloadResourceId)}</strong>
+							<strong>{resourceName(item.rule.scopeResourceId)}</strong>
 							<span className={modeBadge(item.mode)}>{item.mode}</span>
 						</span>
 						<p className="mono">{item.rule.expression}</p>
@@ -241,7 +241,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 			))
 		) : (
 			<EmptyState title="No loaded rules">
-				Deployment drafts appear here in shadow mode once authored.
+				Resource drafts appear here in shadow mode once authored.
 			</EmptyState>
 		);
 	} else {
@@ -269,7 +269,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 								{draft.currentRevision ? '' : ' · previous revision'}
 							</p>
 							<small>
-								{draft.requestedBy ? 'manual' : 'new Pod template'} ·{' '}
+								{draft.requestedBy ? 'manual' : 'new projection'} ·{' '}
 								{formatTime(draft.requestedAt ?? draft.createdAt)}
 							</small>
 						</span>
@@ -277,7 +277,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 				);
 			})
 		) : (
-			<EmptyState title="No matching drafts">Adjust the workload or status filter.</EmptyState>
+			<EmptyState title="No matching drafts">Adjust the resource or status filter.</EmptyState>
 		);
 	}
 
@@ -289,7 +289,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					<span className="eyebrow">Detection</span>
 					<h1>Rules</h1>
 					<p>
-						Deployment rules drafted by the AI author. Drafts run in shadow mode, recording matches
+						Resource rules drafted by the AI author. Drafts run in shadow mode, recording matches
 						only, until an operator approves them.
 					</p>
 				</div>
@@ -314,9 +314,9 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					<span aria-hidden="true">⌕</span>
 					<input
 						type="search"
-						placeholder="Workload"
+						placeholder="Resource"
 						autoComplete="off"
-						aria-label="Filter by workload"
+						aria-label="Filter by resource"
 						value={search}
 						onChange={event => setSearch(event.target.value)}
 					/>
