@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -165,6 +164,11 @@ type GraphView struct {
 	GeneratedAt time.Time      `json:"generatedAt"`
 	Revision    uint64         `json:"revision"`
 	Snapshot    graph.Snapshot `json:"snapshot"`
+}
+
+type Publication struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+	Revision    uint64    `json:"revision"`
 }
 
 // NativeEvent is one provider observation delivered through the discovery hub.
@@ -351,16 +355,12 @@ func (s *Store) Ping(ctx context.Context) error {
 // Validation and compilation happen before the transaction so malformed input
 // never enters the commit path. Assertion provenance must match the
 // contribution owner; it is rejected, not rewritten.
-//
-// The returned view is the graph compiled and committed by this publication.
-// An idempotent retry reads the latest committed view because it performs no
-// compilation of its own.
-func (s *Store) ReplaceContribution(ctx context.Context, contribution Contribution) (GraphView, error) {
+func (s *Store) ReplaceContribution(ctx context.Context, contribution Contribution) (Publication, error) {
 	if err := validateContribution(contribution); err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
 	if contribution.Generation > math.MaxInt64 {
-		return GraphView{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
+		return Publication{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
 	}
 	contribution.UpdatedAt = time.Now().UTC()
 	if contribution.SourceObservedAt.IsZero() {
@@ -373,27 +373,17 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 	}
 	inputDigest, err := contributionInputDigest(contribution.Input)
 	if err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
 	compiled, err := s.compiler.CompileContribution(contribution.Input)
 	if err != nil {
-		return GraphView{}, fmt.Errorf("compile contribution: %w", err)
+		return Publication{}, fmt.Errorf("compile contribution: %w", err)
 	}
 	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled)
 	if err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
-	if publication.HasView {
-		return publication.View, nil
-	}
-	view, err := s.Latest(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "read graph after committed contribution publication",
-			"plugin", contribution.PluginID, "source", contribution.SourceID, "contribution", contribution.Name,
-			"generation", contribution.Generation, "error", err)
-		return GraphView{}, nil
-	}
-	return view, nil
+	return publication, nil
 }
 
 // contributionInputDigest identifies the submitted input for same-generation
@@ -423,7 +413,7 @@ func contributionInputDigest(input graph.Input) ([32]byte, error) {
 // RetireContribution publishes an empty terminal generation, retracting every
 // active assertion of the tuple and marking its head retired. generation must
 // be newer than the current one.
-func (s *Store) RetireContribution(ctx context.Context, pluginID, sourceID, name string, generation uint64, observedAt time.Time) (GraphView, error) {
+func (s *Store) RetireContribution(ctx context.Context, pluginID, sourceID, name string, generation uint64, observedAt time.Time) (Publication, error) {
 	return s.ReplaceContribution(ctx, Contribution{
 		PluginID: pluginID, SourceID: sourceID, Name: name, Generation: generation,
 		SourceObservedAt: observedAt, SourceHealth: SourceHealthUnknown, Retired: true,

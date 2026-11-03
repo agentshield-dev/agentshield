@@ -121,7 +121,7 @@ func TestManagerAttestsOverlappingRemediationProvidersFromPluginRegistration(t *
 	if err != nil {
 		t.Fatalf("manager rejected overlapping remediation providers: %v", err)
 	}
-	proposal, err := remediation.NewProposal("finding", "analysis", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	proposal, err := remediation.NewProposal("finding", "analysis", 1,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{Scheme: scheme, AuthorityID: "authority", ImmutableKey: "object/uid"}}, []string{"evidence"})
 	if err != nil {

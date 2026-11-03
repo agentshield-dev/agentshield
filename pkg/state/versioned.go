@@ -43,9 +43,9 @@ type assertionRef struct {
 }
 
 type contributionPublication struct {
-	VersionID int64
-	View      GraphView
-	HasView   bool
+	VersionID   int64
+	Revision    uint64
+	GeneratedAt time.Time
 }
 
 // ManifestContribution is one contribution version pinned by a manifest.
@@ -87,50 +87,25 @@ type AnalysisViewToken struct {
 	EvaluationTime time.Time `json:"evaluationTime"`
 }
 
-// publishContribution compiles a candidate graph before opening its write
-// transaction. A revision compare-and-swap rejects candidates based on stale
-// state, including candidates built by another process.
-func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, error) {
+func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (Publication, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
 	defer cancel()
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
-	key := contributionKey{pluginID: contribution.PluginID, sourceID: contribution.SourceID, name: contribution.Name}
-	for {
-		current, err := s.currentMaterializedGraph(ctx)
-		if err != nil {
-			return contributionPublication{}, err
-		}
-		next, input, err := current.candidate(key, compiled, contribution.Input, contribution.UpdatedAt)
-		if err != nil {
-			return contributionPublication{}, fmt.Errorf("build candidate graph: %w", err)
-		}
-		next.view, err = s.compileGraphView(activeGraph{revision: next.revision, generatedAt: contribution.UpdatedAt, input: input})
-		if err != nil {
-			return contributionPublication{}, fmt.Errorf("compile candidate graph: %w", err)
-		}
-		tx, err := s.beginPublication(ctx)
-		if err != nil {
-			return contributionPublication{}, err
-		}
-		publication, stale, err := s.commitCandidate(ctx, tx, current, next, contribution, inputDigest, compiled)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return contributionPublication{}, err
-		}
-		if stale {
-			_ = tx.Rollback(ctx)
-			s.materialized = nil
-			continue
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return contributionPublication{}, fmt.Errorf("commit contribution publication: %w", err)
-		}
-		if publication.HasView {
-			s.materialized = &next
-		}
-		return publication, nil
+	tx, err := s.beginPublication(ctx)
+	if err != nil {
+		return Publication{}, err
 	}
+	publication, err := s.commitCandidate(ctx, tx, contribution, inputDigest, compiled)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return Publication{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Publication{}, fmt.Errorf("commit contribution publication: %w", err)
+	}
+	s.materialized = nil
+	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
 }
 
 func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph, error) {
@@ -149,58 +124,77 @@ func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph
 	return loaded, nil
 }
 
-func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, current, next materializedGraph, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, bool, error) {
+func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, error) {
+	var revision int64
+	var generatedAt *time.Time
+	var graphExists bool
+	if err := tx.QueryRow(ctx, `SELECT revision, generated_at, EXISTS(SELECT 1 FROM contribution_heads) FROM graph_state WHERE singleton=true FOR UPDATE`).Scan(&revision, &generatedAt, &graphExists); err != nil {
+		return contributionPublication{}, fmt.Errorf("lock graph revision: %w", err)
+	}
 	contributionID, err := resolveContribution(ctx, tx, contribution)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	head, hasHead, err := readContributionHead(ctx, tx, contributionID)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	if hasHead && int64(contribution.Generation) < head.generation {
-		return contributionPublication{}, false, fmt.Errorf("contribution generation %d is older than current generation %d", contribution.Generation, head.generation)
+		return contributionPublication{}, fmt.Errorf("contribution generation %d is older than current generation %d", contribution.Generation, head.generation)
 	}
 	if hasHead && int64(contribution.Generation) == head.generation {
 		if !equalBytes(head.inputDigest, inputDigest[:]) {
-			return contributionPublication{}, false, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
+			return contributionPublication{}, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
 		}
-		return contributionPublication{VersionID: head.versionID}, false, nil
-	}
-	command, err := tx.Exec(ctx, `UPDATE graph_state SET revision=revision+1, generated_at=$2 WHERE singleton=true AND revision=$1`, current.revision, next.view.GeneratedAt)
-	if err != nil {
-		return contributionPublication{}, false, fmt.Errorf("advance graph revision: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return contributionPublication{}, true, nil
+		publicationTime := contribution.UpdatedAt
+		if generatedAt != nil {
+			publicationTime = *generatedAt
+		}
+		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
 	}
 	newRefs, err := persistCompiledAssertions(ctx, tx, compiled)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	status := contributionStatus(contribution)
 	versionID, err := recordContributionVersion(ctx, tx, contributionID, contribution, inputDigest, status)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	delta, err := replaceMembership(ctx, tx, contributionID, newRefs)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
-	changedResources, _ := projectionChanges(current.view.Snapshot.Resources, next.view.Snapshot.Resources, func(item graph.Resource) string { return item.ID })
+	var changedResources []graph.Resource
+	if !graphExists {
+		initial, err := s.compiler.Compile(contribution.Input)
+		if err != nil {
+			return contributionPublication{}, fmt.Errorf("compile initial graph: %w", err)
+		}
+		if err := replaceCurrentProjection(ctx, tx, graph.Snapshot{}, initial, contribution.UpdatedAt, s.unresolvedRetention); err != nil {
+			return contributionPublication{}, err
+		}
+		changedResources = initial.Resources
+	} else {
+		changedResources, err = reconcileProjectionDelta(ctx, tx, s.compiler, delta, contribution.UpdatedAt, s.unresolvedRetention)
+		if err != nil {
+			return contributionPublication{}, err
+		}
+	}
 	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
-		return contributionPublication{}, false, err
-	}
-	if err := replaceCurrentProjection(ctx, tx, current.view.Snapshot, next.view.Snapshot, contribution.UpdatedAt, s.unresolvedRetention); err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	metadataChanged := hasHead && (head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status)
 	if !telemetryOnlyChanges(delta.added, delta.retracted) || metadataChanged {
 		if err := appendChangeEvent(ctx, tx, versionID, contribution, status, delta); err != nil {
-			return contributionPublication{}, false, err
+			return contributionPublication{}, err
 		}
 	}
-	return contributionPublication{VersionID: versionID, View: next.view, HasView: true}, false, nil
+	revision++
+	if _, err := tx.Exec(ctx, `UPDATE graph_state SET revision=$1, generated_at=$2 WHERE singleton=true`, revision, contribution.UpdatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("advance graph revision: %w", err)
+	}
+	return contributionPublication{VersionID: versionID, Revision: uint64(revision), GeneratedAt: contribution.UpdatedAt}, nil
 }
 
 // beginPublication opens a publication transaction with bounded lock and statement waits.
@@ -752,13 +746,9 @@ func loadAssertionChanges(ctx context.Context, tx pgx.Tx, refs []assertionRef) (
 
 // collectActiveInput rebuilds a graph.Input from the active membership of all
 // contributions. DISTINCT collapses assertions shared by contributions, and
-// ORDER BY keeps the input order stable. Provenance is verified first so a
-// tampered or legacy membership row cannot enter compilation.
+// ORDER BY keeps the input order stable.
 func collectActiveInput(ctx context.Context, tx pgx.Tx) (graph.Input, error) {
 	var input graph.Input
-	if err := verifyActiveAssertionProvenance(ctx, tx); err != nil {
-		return input, err
-	}
 	var err error
 	if input.Resources, err = resourceAssertions.collect(ctx, tx); err != nil {
 		return input, err
@@ -773,42 +763,6 @@ func collectActiveInput(ctx context.Context, tx pgx.Tx) (graph.Input, error) {
 		return input, err
 	}
 	return input, nil
-}
-
-// verifyActiveAssertionProvenance fails if any active assertion's plugin or
-// source differs from its owning contribution. It re-checks at read time what
-// ReplaceContribution enforces at write time.
-type rowQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func verifyActiveAssertionProvenance(ctx context.Context, tx rowQuerier) error {
-	var assertionType, assertionID, ownerPlugin, ownerSource, assertionPlugin, assertionSource string
-	err := tx.QueryRow(ctx, `
-		SELECT assertion_type, assertion_id, owner_plugin, owner_source, assertion_plugin, assertion_source
-		FROM (
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id owner_plugin, c.source_id owner_source, a.plugin_id assertion_plugin, a.source_id assertion_source
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN resource_assertions a ON m.assertion_type='resource' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN facet_assertions a ON m.assertion_type='facet' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN relationship_assertions a ON m.assertion_type='relationship' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN telemetry_assertions a ON m.assertion_type='telemetry' AND a.assertion_id=m.assertion_id
-		) active_assertions
-		WHERE assertion_plugin IS DISTINCT FROM owner_plugin OR assertion_source IS DISTINCT FROM owner_source
-		ORDER BY assertion_type, assertion_id
-		LIMIT 1`).Scan(&assertionType, &assertionID, &ownerPlugin, &ownerSource, &assertionPlugin, &assertionSource)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("verify active assertion provenance: %w", err)
-	}
-	return fmt.Errorf("stored %s assertion %s provenance %q/%q does not match active contribution owner %q/%q", assertionType, assertionID, assertionPlugin, assertionSource, ownerPlugin, ownerSource)
 }
 
 func decodeJSONColumns(first []byte, firstValue any, second []byte, secondValue any) error {
@@ -853,13 +807,13 @@ func replaceCurrentProjection(ctx context.Context, tx pgx.Tx, before, after grap
 		if err != nil {
 			return fmt.Errorf("encode conflict kinds: %w", err)
 		}
-		conflictRows = append(conflictRows, []any{conflict.ResourceID, encoded, now})
+		conflictRows = append(conflictRows, []any{conflict.ResourceID, encoded, jsonValue(conflict.Assertions), now})
 	}
 	if len(conflictRows) > 0 {
 		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE incoming_assertion_conflicts (LIKE assertion_conflicts INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
 			return fmt.Errorf("create assertion conflict staging table: %w", err)
 		}
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_assertion_conflicts"}, []string{"resource_id", "kinds", "updated_at"}, pgx.CopyFromRows(conflictRows)); err != nil {
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_assertion_conflicts"}, []string{"resource_id", "kinds", "assertions", "updated_at"}, pgx.CopyFromRows(conflictRows)); err != nil {
 			return fmt.Errorf("stage assertion conflicts: %w", err)
 		}
 	}
@@ -914,8 +868,8 @@ func replaceCurrentProjection(ctx context.Context, tx pgx.Tx, before, after grap
 	}
 	if len(conflictRows) > 0 {
 		batch.Queue(`INSERT INTO assertion_conflicts SELECT * FROM incoming_assertion_conflicts
-		ON CONFLICT (resource_id) DO UPDATE SET kinds=EXCLUDED.kinds, updated_at=EXCLUDED.updated_at
-		WHERE assertion_conflicts.kinds IS DISTINCT FROM EXCLUDED.kinds`)
+		ON CONFLICT (resource_id) DO UPDATE SET kinds=EXCLUDED.kinds, assertions=EXCLUDED.assertions, updated_at=EXCLUDED.updated_at
+		WHERE (assertion_conflicts.kinds, assertion_conflicts.assertions) IS DISTINCT FROM (EXCLUDED.kinds, EXCLUDED.assertions)`)
 	}
 	if len(facetRows) > 0 {
 		batch.Queue(`INSERT INTO current_facets SELECT * FROM incoming_current_facets
@@ -1018,9 +972,6 @@ func resolutionText(status graph.ResolutionStatus) string {
 
 // Latest returns the compiled graph cached for the current database revision.
 func (s *Store) Latest(ctx context.Context) (GraphView, error) {
-	if err := verifyActiveAssertionProvenance(ctx, s.pool); err != nil {
-		return GraphView{}, err
-	}
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
 	current, err := s.currentMaterializedGraph(ctx)

@@ -32,15 +32,15 @@ func (s *fakeStore) RecordNative(_ context.Context, event state.NativeEvent) err
 	return nil
 }
 
-func (s *fakeStore) ReplaceContribution(_ context.Context, contribution state.Contribution) (state.GraphView, error) {
+func (s *fakeStore) ReplaceContribution(_ context.Context, contribution state.Contribution) (state.Publication, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if contribution.Generation <= s.generation {
-		return state.GraphView{}, errors.New("stale generation")
+		return state.Publication{}, errors.New("stale generation")
 	}
 	s.generation = contribution.Generation
 	s.contributions = append(s.contributions, contribution)
-	return state.GraphView{}, nil
+	return state.Publication{}, nil
 }
 
 func (s *fakeStore) ContributionGeneration(context.Context, string, string) (uint64, error) {

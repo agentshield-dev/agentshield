@@ -30,7 +30,7 @@ type RuntimeService struct {
 // runtimeStore is the part of [state.Store] the runtime uses.
 type runtimeStore interface {
 	RecordNative(context.Context, state.NativeEvent) error
-	ReplaceContribution(context.Context, state.Contribution) (state.GraphView, error)
+	ReplaceContribution(context.Context, state.Contribution) (state.Publication, error)
 	ContributionGeneration(context.Context, string, string) (uint64, error)
 }
 

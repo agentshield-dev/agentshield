@@ -171,6 +171,7 @@ CREATE TABLE unresolved_relationships (
 CREATE TABLE assertion_conflicts (
     resource_id uuid PRIMARY KEY REFERENCES resource_identities(resource_id),
     kinds jsonb NOT NULL,
+	assertions jsonb NOT NULL,
     updated_at timestamptz NOT NULL
 );
 

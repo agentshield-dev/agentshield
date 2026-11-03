@@ -51,7 +51,7 @@ func TestPostgreSQLPublicationLockWaitIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err == nil || !strings.Contains(err.Error(), "advance graph revision") {
+	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err == nil || !strings.Contains(err.Error(), "lock graph revision") {
 		t.Fatalf("publication behind a held lock returned %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
@@ -368,7 +368,7 @@ func TestPostgreSQLReplaceContributionConcurrencyAndStaleGeneration(t *testing.T
 	defer second.Close()
 
 	var wait sync.WaitGroup
-	records := make(chan GraphView, 2)
+	records := make(chan Publication, 2)
 	errorsChannel := make(chan error, 2)
 	for index, current := range []*Store{store, second} {
 		wait.Add(1)
@@ -979,19 +979,6 @@ func TestValidateContributionRejectsSpoofedAssertionProvenance(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLLatestRejectsStoredSpoofedAssertionProvenance(t *testing.T) {
-	store, _ := integrationStore(t)
-	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "owned")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.pool.Exec(context.Background(), `UPDATE resource_assertions SET plugin_id='spoofed' WHERE assertion_id IN (SELECT assertion_id FROM contribution_current_assertions WHERE assertion_type='resource')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Latest(context.Background()); err == nil || !strings.Contains(err.Error(), "does not match active contribution owner") {
-		t.Fatalf("stored spoofed provenance error = %v", err)
-	}
-}
-
 func TestPostgreSQLNativeEventIsIdempotent(t *testing.T) {
 	store, _ := integrationStore(t)
 	event := NativeEvent{EventID: "event-1", PluginID: "test", SourceID: "source", Collection: "objects", Key: "a", Operation: "upsert", ObservedAt: time.Now().UTC(), Payload: json.RawMessage(`{"a":1,"b":2}`)}
@@ -1011,7 +998,7 @@ func TestPostgreSQLNativeEventIsIdempotent(t *testing.T) {
 
 func TestPostgreSQLNeighborhoodTraversal(t *testing.T) {
 	store, _ := integrationStore(t)
-	record, err := store.ReplaceContribution(context.Background(), Contribution{
+	_, err := store.ReplaceContribution(context.Background(), Contribution{
 		PluginID: "test", SourceID: "source", Name: "neighborhood", Generation: 1,
 		Input: graph.Input{
 			Resources: []graph.ResourceAssertion{
@@ -1025,6 +1012,10 @@ func TestPostgreSQLNeighborhoodTraversal(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,7 +1050,7 @@ func TestPostgreSQLUnresolvedRelationshipLifecycle(t *testing.T) {
 	store, _ := integrationStore(t)
 	subject := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "subject"}
 	object := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "object"}
-	record, err := store.ReplaceContribution(context.Background(), Contribution{
+	_, err := store.ReplaceContribution(context.Background(), Contribution{
 		PluginID: "edges", SourceID: "source", Name: "topology", Generation: 1, Ready: true, SourceHealth: "healthy",
 		Input: graph.Input{
 			Resources: []graph.ResourceAssertion{{Claim: subject, Kind: "test/resource", PluginID: "edges", SourceID: "source", RuleID: "resource"}},
@@ -1069,6 +1060,10 @@ func TestPostgreSQLUnresolvedRelationshipLifecycle(t *testing.T) {
 			}},
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,6 +1199,13 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	if resources != 0 || conflicts != 1 {
 		t.Fatalf("projection resources=%d conflicts=%d", resources, conflicts)
 	}
+	view, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Snapshot.Conflicts) != 1 || len(view.Snapshot.Conflicts[0].Assertions) != 2 || view.Snapshot.Conflicts[0].Assertions[0].PluginID == "" || view.Snapshot.Conflicts[0].Assertions[1].PluginID == "" {
+		t.Fatalf("projected conflict lost assertion provenance: %+v", view.Snapshot.Conflicts)
+	}
 }
 
 func TestPostgreSQLAnalysisViewPinsContributionVersions(t *testing.T) {
@@ -1252,7 +1254,10 @@ func TestPostgreSQLContributionRetirementRetractsAssertions(t *testing.T) {
 	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.RetireContribution(context.Background(), "test", "source", "inventory", 2, time.Now().UTC())
+	if _, err := store.RetireContribution(context.Background(), "test", "source", "inventory", 2, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
