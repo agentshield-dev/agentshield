@@ -5,7 +5,7 @@
 # platform and cross-compile, so `docker buildx build --platform linux/amd64,linux/arm64` works
 # without emulation.
 
-FROM --platform=$BUILDPLATFORM node:26.12.0-trixie-slim AS ui
+FROM --platform=$BUILDPLATFORM node:26.13.0-trixie-slim AS ui
 WORKDIR /src/ui
 # Node 26 no longer bundles Corepack; install the pnpm version pinned by packageManager.
 RUN npm install --global pnpm@11.9.0
