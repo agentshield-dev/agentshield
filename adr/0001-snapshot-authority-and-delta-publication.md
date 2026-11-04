@@ -135,7 +135,7 @@ These measurements support the publication contract. They are not service-level 
 
 ## Operational signals
 
-Complete checkpoints emit one debug-level event with fixed phase durations for compilation, transaction setup, preparation, membership, persistence, projection, commit, and total time. The event has no contribution, resource, assertion, or provider-object dimensions. A future metrics backend should expose bounded-cardinality counters and histograms for:
+Complete checkpoints emit one debug-level completion event with fixed success and applied fields plus phase durations for compilation, local publication queueing, transaction setup, preparation, membership, persistence, projection, commit, and total time. Database and transaction failures emit the same event with the completed phases; compile and validation failures use their direct error paths. The event has no contribution, resource, assertion, or provider-object dimensions. A future metrics backend should expose bounded-cardinality counters and histograms for:
 
 - delta and replacement publication latency;
 - assertions added and retracted per publication;

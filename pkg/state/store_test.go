@@ -539,6 +539,117 @@ func TestPostgreSQLContributionDeltaUpdatesMembershipAndRejectsStaleBase(t *test
 	}
 }
 
+func TestPostgreSQLCompleteReplacementAndDeltaAreEquivalent(t *testing.T) {
+	observedAt := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
+	subject := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "subject"}
+	object := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "object"}
+	resource := func(version string) graph.ResourceAssertion {
+		return graph.ResourceAssertion{
+			Claim: subject, Kind: "test/workload", Attributes: map[string]string{"version": version},
+			PluginID: "test", SourceID: "source", RuleID: "resource", EvidenceIDs: []string{"resource-" + version},
+		}
+	}
+	facet := func(version string) graph.FacetAssertion {
+		return graph.FacetAssertion{
+			Resource: subject, Kind: "security", Key: "policy", Attributes: map[string]string{"version": version},
+			PluginID: "test", SourceID: "source", RuleID: "facet", EvidenceIDs: []string{"facet-" + version},
+		}
+	}
+	relationship := func(version string) graph.RelationshipAssertion {
+		return graph.RelationshipAssertion{
+			Subject: subject, Predicate: graph.PredicateCommunicates, Object: object, Qualifier: version,
+			Properties: map[string]string{"version": version}, PluginID: "test", SourceID: "source",
+			RuleID: "relationship", EvidenceIDs: []string{"relationship-" + version},
+		}
+	}
+	telemetryAssertion := func(version string) graph.TelemetryAssertion {
+		return graph.TelemetryAssertion{
+			EventID: "flow-" + version, Kind: "network-flow", Subject: subject, Object: object, Count: 1,
+			Properties: map[string]string{"version": version}, PluginID: "test", SourceID: "source",
+			RuleID: "telemetry", EvidenceIDs: []string{"telemetry-" + version},
+		}
+	}
+	stableResource := graph.ResourceAssertion{
+		Claim: object, Kind: "test/service", PluginID: "test", SourceID: "source", RuleID: "resource", EvidenceIDs: []string{"object"},
+	}
+	input := func(version string) graph.Input {
+		return graph.Input{
+			Resources:     []graph.ResourceAssertion{resource(version), stableResource},
+			Facets:        []graph.FacetAssertion{facet(version)},
+			Relationships: []graph.RelationshipAssertion{relationship(version)},
+			Telemetry:     []graph.TelemetryAssertion{telemetryAssertion(version)},
+		}
+	}
+
+	type result struct {
+		snapshot string
+		change   string
+	}
+	run := func(t *testing.T, delta bool) result {
+		t.Helper()
+		store, _ := integrationStore(t)
+		first := Contribution{
+			PluginID: "test", SourceID: "source", Name: "mixed", Generation: 1, Input: input("one"),
+			SourceObservedAt: observedAt, Ready: true, SourceHealth: SourceHealthHealthy,
+		}
+		if _, err := store.ReplaceContribution(context.Background(), first); err != nil {
+			t.Fatal(err)
+		}
+		initialEvents, err := store.ReadContributionChanges(context.Background(), 0, 10)
+		if err != nil || len(initialEvents) != 1 {
+			t.Fatalf("initial changes = %+v, err = %v", initialEvents, err)
+		}
+		second := first
+		second.Generation = 2
+		second.Input = input("two")
+		if delta {
+			_, err = store.ApplyContributionDelta(context.Background(), ContributionDelta{
+				PluginID: first.PluginID, SourceID: first.SourceID, Name: first.Name,
+				BaseGeneration: 1, Generation: 2,
+				Added: graph.Input{
+					Resources: []graph.ResourceAssertion{second.Input.Resources[0]}, Facets: second.Input.Facets,
+					Relationships: second.Input.Relationships, Telemetry: second.Input.Telemetry,
+				},
+				Retracted: graph.Input{
+					Resources: []graph.ResourceAssertion{first.Input.Resources[0]}, Facets: first.Input.Facets,
+					Relationships: first.Input.Relationships, Telemetry: first.Input.Telemetry,
+				},
+				SourceObservedAt: observedAt, Ready: true, SourceHealth: SourceHealthHealthy,
+			})
+		} else {
+			_, err = store.ReplaceContribution(context.Background(), second)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := store.Latest(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := json.Marshal(view.Snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := store.ReadContributionChanges(context.Background(), initialEvents[0].Sequence, 10)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("mutation changes = %+v, err = %v", events, err)
+		}
+		events[0].Sequence = 0
+		events[0].Contribution.VersionID = 0
+		change, err := json.Marshal(events[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result{snapshot: string(snapshot), change: string(change)}
+	}
+
+	complete := run(t, false)
+	delta := run(t, true)
+	if complete != delta {
+		t.Fatalf("complete replacement and delta differ:\ncomplete=%+v\ndelta=%+v", complete, delta)
+	}
+}
+
 func TestPostgreSQLResourceQueryUsesCurrentProjection(t *testing.T) {
 	store, _ := integrationStore(t)
 	contribution := testContribution("inventory", 1, "checkout")

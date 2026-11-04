@@ -407,12 +407,11 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 	}
 	timings := checkpointTimings{compile: time.Since(compileStarted)}
 	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled, &timings)
-	if err != nil {
-		return Publication{}, err
-	}
-	slog.DebugContext(ctx, "contribution checkpoint published",
+	slog.DebugContext(ctx, "contribution checkpoint completed",
+		"success", err == nil,
 		"applied", timings.applied,
 		"compile", timings.compile,
+		"queue", timings.queue,
 		"transaction_setup", timings.transactionSetup,
 		"prepare", timings.prepare,
 		"membership", timings.membership,
@@ -420,6 +419,9 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 		"projection", timings.projection,
 		"commit", timings.commit,
 		"total", time.Since(started))
+	if err != nil {
+		return Publication{}, err
+	}
 	return publication, nil
 }
 

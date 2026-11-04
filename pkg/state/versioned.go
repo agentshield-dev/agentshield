@@ -52,6 +52,7 @@ type contributionPublication struct {
 type checkpointTimings struct {
 	applied          bool
 	compile          time.Duration
+	queue            time.Duration
 	transactionSetup time.Duration
 	prepare          time.Duration
 	membership       time.Duration
@@ -102,8 +103,10 @@ type AnalysisViewToken struct {
 func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot, timings *checkpointTimings) (Publication, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
 	defer cancel()
+	queueStarted := time.Now()
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
+	timings.queue = time.Since(queueStarted)
 	transactionStarted := time.Now()
 	tx, err := s.beginPublication(ctx)
 	if err != nil {
