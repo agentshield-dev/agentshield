@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agentshield-dev/agentshield/pkg/graph"
@@ -618,9 +619,9 @@ func contributionStatus(contribution Contribution) string {
 // as compiler input of type T.
 type assertionTable[T any] struct {
 	assertionType string
-	// insert takes assertion_id and content_digest as $1 and $2, then the
-	// type's own columns.
-	insert string
+	table         string
+	columns       []string
+	insert        string
 	// active selects the DISTINCT active rows in a stable order, and scan
 	// decodes one of them.
 	active string
@@ -630,6 +631,8 @@ type assertionTable[T any] struct {
 type assertionInsert struct {
 	ref         assertionRef
 	identityIDs []string
+	table       string
+	columns     []string
 	query       string
 	args        []any
 }
@@ -640,8 +643,8 @@ func (table assertionTable[T]) prepare(content any, identityIDs []string, values
 		return assertionInsert{}, err
 	}
 	return assertionInsert{
-		ref: assertionRef{Type: table.assertionType, ID: id}, identityIDs: identityIDs, query: table.insert,
-		args: append([]any{id, digest[:]}, values...),
+		ref: assertionRef{Type: table.assertionType, ID: id}, identityIDs: identityIDs,
+		table: table.table, columns: table.columns, query: table.insert, args: append([]any{id, digest[:]}, values...),
 	}, nil
 }
 
@@ -665,6 +668,8 @@ func (table assertionTable[T]) collect(ctx context.Context, tx pgx.Tx) ([]T, err
 
 var resourceAssertions = assertionTable[graph.ResourceAssertion]{
 	assertionType: assertionResource,
+	table:         "resource_assertions",
+	columns:       []string{"assertion_id", "content_digest", "resource_id", "kind", "display_name", "attributes", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO resource_assertions (assertion_id, content_digest, resource_id, kind, display_name, attributes, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.display_name, a.attributes, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN resource_assertions a ON m.assertion_type='resource' AND a.assertion_id=m.assertion_id JOIN resource_identities i ON i.resource_id=a.resource_id ORDER BY i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.ResourceAssertion, error) {
@@ -679,6 +684,8 @@ var resourceAssertions = assertionTable[graph.ResourceAssertion]{
 
 var facetAssertions = assertionTable[graph.FacetAssertion]{
 	assertionType: assertionFacet,
+	table:         "facet_assertions",
+	columns:       []string{"assertion_id", "content_digest", "facet_id", "resource_id", "kind", "facet_key", "attributes", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO facet_assertions (assertion_id, content_digest, facet_id, resource_id, kind, facet_key, attributes, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.facet_key, a.attributes, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN facet_assertions a ON m.assertion_type='facet' AND a.assertion_id=m.assertion_id JOIN resource_identities i ON i.resource_id=a.resource_id ORDER BY i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.facet_key, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.FacetAssertion, error) {
@@ -693,6 +700,8 @@ var facetAssertions = assertionTable[graph.FacetAssertion]{
 
 var relationshipAssertions = assertionTable[graph.RelationshipAssertion]{
 	assertionType: assertionRelationship,
+	table:         "relationship_assertions",
+	columns:       []string{"assertion_id", "content_digest", "relationship_id", "subject_id", "object_id", "predicate", "qualifier", "properties", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO relationship_assertions (assertion_id, content_digest, relationship_id, subject_id, object_id, predicate, qualifier, properties, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, a.predicate, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.qualifier, a.properties, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN relationship_assertions a ON m.assertion_type='relationship' AND a.assertion_id=m.assertion_id JOIN resource_identities si ON si.resource_id=a.subject_id JOIN resource_identities oi ON oi.resource_id=a.object_id ORDER BY si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, a.predicate, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.qualifier, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.RelationshipAssertion, error) {
@@ -711,6 +720,8 @@ var relationshipAssertions = assertionTable[graph.RelationshipAssertion]{
 // them back as graph.TelemetryAssertion input.
 var telemetryAssertions = assertionTable[graph.TelemetryAssertion]{
 	assertionType: assertionTelemetry,
+	table:         "telemetry_assertions",
+	columns:       []string{"assertion_id", "content_digest", "telemetry_id", "event_id", "kind", "subject_id", "object_id", "operation", "outcome", "coverage", "event_count", "properties", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO telemetry_assertions (assertion_id, content_digest, telemetry_id, event_id, kind, subject_id, object_id, operation, outcome, coverage, event_count, properties, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT a.event_id, a.kind, si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.operation, a.outcome, a.coverage, a.event_count, a.properties, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN telemetry_assertions a ON m.assertion_type='telemetry' AND a.assertion_id=m.assertion_id JOIN resource_identities si ON si.resource_id=a.subject_id JOIN resource_identities oi ON oi.resource_id=a.object_id ORDER BY a.plugin_id, a.source_id, a.event_id`,
 	scan: func(rows pgx.Rows) (graph.TelemetryAssertion, error) {
@@ -808,6 +819,17 @@ func prepareCompiledAssertions(compiled graph.Snapshot) (preparedAssertions, err
 }
 
 func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, prepared preparedAssertions, added []assertionRef) error {
+	identitySet := make(map[string]struct{})
+	for _, ref := range added {
+		for _, resourceID := range prepared.inserts[ref].identityIDs {
+			identitySet[resourceID] = struct{}{}
+		}
+	}
+	identityIDs := make([]string, 0, len(identitySet))
+	for resourceID := range identitySet {
+		identityIDs = append(identityIDs, resourceID)
+	}
+	slices.Sort(identityIDs)
 	if len(prepared.identities) > 0 {
 		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE incoming_resource_identities (resource_id uuid PRIMARY KEY, scheme_group text NOT NULL, scheme_version text NOT NULL, scheme_kind text NOT NULL, authority_id text NOT NULL, immutable_key text NOT NULL) ON COMMIT DROP`); err != nil {
 			return fmt.Errorf("create incoming resource identities: %w", err)
@@ -834,60 +856,88 @@ func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, prepared prepared
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("validate resource identities: %w", err)
 		}
-	}
-	identitySet := make(map[string]struct{})
-	for _, ref := range added {
-		for _, resourceID := range prepared.inserts[ref].identityIDs {
-			identitySet[resourceID] = struct{}{}
-		}
-	}
-	identityIDs := make([]string, 0, len(identitySet))
-	for resourceID := range identitySet {
-		identityIDs = append(identityIDs, resourceID)
-	}
-	slices.Sort(identityIDs)
-	var identityBatch pgx.Batch
-	for _, resourceID := range identityIDs {
-		claim := prepared.identities[resourceID]
-		identityBatch.Queue(`
-			INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
-			VALUES ($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
-			WHERE resource_identities.scheme_group=EXCLUDED.scheme_group
-			  AND resource_identities.scheme_version=EXCLUDED.scheme_version
-			  AND resource_identities.scheme_kind=EXCLUDED.scheme_kind
-			  AND resource_identities.authority_id=EXCLUDED.authority_id
-			  AND resource_identities.immutable_key=EXCLUDED.immutable_key
-			RETURNING resource_id::text`, resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey)
-	}
-	identityResults := tx.SendBatch(ctx, &identityBatch)
-	for _, resourceID := range identityIDs {
-		var storedID string
-		if err := identityResults.QueryRow().Scan(&storedID); err != nil {
-			_ = identityResults.Close()
-			if errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
+		if len(identityIDs) == 1 {
+			resourceID := identityIDs[0]
+			claim := prepared.identities[resourceID]
+			var storedID string
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
+				VALUES ($1,$2,$3,$4,$5,$6)
+				ON CONFLICT (resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+				WHERE resource_identities.scheme_group=EXCLUDED.scheme_group
+				  AND resource_identities.scheme_version=EXCLUDED.scheme_version
+				  AND resource_identities.scheme_kind=EXCLUDED.scheme_kind
+				  AND resource_identities.authority_id=EXCLUDED.authority_id
+				  AND resource_identities.immutable_key=EXCLUDED.immutable_key
+				RETURNING resource_id::text`, resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey).Scan(&storedID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
+				}
+				return fmt.Errorf("persist resource identity %s: %w", resourceID, err)
 			}
-			return fmt.Errorf("persist resource identity %s: %w", resourceID, err)
+		} else if len(identityIDs) > 0 {
+			ids, err := projectionUUIDs(identityIDs)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
+				SELECT resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key
+				FROM incoming_resource_identities
+				WHERE resource_id=ANY($1)
+				ON CONFLICT (resource_id) DO NOTHING`, ids); err != nil {
+				return fmt.Errorf("persist resource identities: %w", err)
+			}
 		}
 	}
-	if err := identityResults.Close(); err != nil {
-		return fmt.Errorf("persist resource identities: %w", err)
+	type assertionStage struct {
+		columns []string
+		rows    [][]any
 	}
-	var assertionBatch pgx.Batch
+	if len(added) == 1 {
+		insert := prepared.inserts[added[0]]
+		if _, err := tx.Exec(ctx, insert.query, insert.args...); err != nil {
+			return fmt.Errorf("persist %s assertion: %w", insert.ref.Type, err)
+		}
+		return nil
+	}
+	stages := make(map[string]assertionStage)
 	for _, ref := range added {
 		insert := prepared.inserts[ref]
-		assertionBatch.Queue(insert.query, insert.args...)
+		stage := stages[insert.table]
+		stage.columns = insert.columns
+		stage.rows = append(stage.rows, insert.args)
+		stages[insert.table] = stage
 	}
-	assertionResults := tx.SendBatch(ctx, &assertionBatch)
-	for _, ref := range added {
-		if _, err := assertionResults.Exec(); err != nil {
-			_ = assertionResults.Close()
-			return fmt.Errorf("persist %s assertion: %w", ref.Type, err)
+	for _, table := range []string{resourceAssertions.table, facetAssertions.table, relationshipAssertions.table, telemetryAssertions.table} {
+		stage, exists := stages[table]
+		if !exists {
+			continue
+		}
+		if err := persistAssertionStage(ctx, tx, table, stage.columns, stage.rows); err != nil {
+			return err
 		}
 	}
-	if err := assertionResults.Close(); err != nil {
-		return fmt.Errorf("persist assertions: %w", err)
+	return nil
+}
+
+func persistAssertionStage(ctx context.Context, tx pgx.Tx, table string, columns []string, rows [][]any) error {
+	stagingTable := "incoming_" + table
+	targetIdentifier := pgx.Identifier{table}.Sanitize()
+	stagingIdentifier := pgx.Identifier{stagingTable}.Sanitize()
+	quotedColumns := make([]string, len(columns))
+	for index, column := range columns {
+		quotedColumns[index] = pgx.Identifier{column}.Sanitize()
+	}
+	columnList := strings.Join(quotedColumns, ",")
+	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE `+stagingIdentifier+` (LIKE `+targetIdentifier+` INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
+		return fmt.Errorf("create incoming %s: %w", table, err)
+	}
+	if _, err := tx.CopyFrom(ctx, pgx.Identifier{stagingTable}, columns, pgx.CopyFromRows(rows)); err != nil {
+		return fmt.Errorf("stage incoming %s: %w", table, err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO `+targetIdentifier+` (`+columnList+`) SELECT `+columnList+` FROM `+stagingIdentifier+` ON CONFLICT (assertion_id) DO NOTHING`); err != nil {
+		return fmt.Errorf("persist %s: %w", table, err)
 	}
 	return nil
 }

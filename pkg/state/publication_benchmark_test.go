@@ -27,6 +27,26 @@ func BenchmarkPostgreSQLPublication(b *testing.B) {
 	}
 }
 
+func BenchmarkPostgreSQLInitialPublication(b *testing.B) {
+	for _, size := range []int{10_000, 50_000, 100_000} {
+		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
+			store := benchmarkStore(b)
+			contribution := benchmarkContribution(1, benchmarkInput(size, "a"))
+			b.ResetTimer()
+			for index := 0; index < b.N; index++ {
+				if index > 0 {
+					b.StopTimer()
+					resetBenchmarkStore(b, store)
+					b.StartTimer()
+				}
+				if _, err := store.ReplaceContribution(context.Background(), contribution); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkPostgreSQLDeltaPublication(b *testing.B) {
 	for _, size := range []int{10_000, 50_000, 100_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
@@ -81,12 +101,17 @@ func benchmarkStore(b *testing.B) *Store {
 	if err != nil {
 		b.Fatal(err)
 	}
+	resetBenchmarkStore(b, store)
+	b.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func resetBenchmarkStore(b *testing.B, store *Store) {
+	b.Helper()
 	if _, err := store.pool.Exec(context.Background(), `TRUNCATE deployment_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
 		store.Close()
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = store.Close() })
-	return store
 }
 
 func benchmarkContribution(generation uint64, input graph.Input) Contribution {
