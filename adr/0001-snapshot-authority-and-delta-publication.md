@@ -99,7 +99,19 @@ The host also produced isolated 23-second, 90-second, and 118-second PostgreSQL 
 
 The stall investigation repeated the 100,000-assertion replacement against PostgreSQL 16 with its data directory on tmpfs. Three samples completed in 2.25-2.62 seconds without a tail event, compared with a 93.77-second outlier on shared container storage. `EXPLAIN (ANALYZE, BUFFERS, WAL)` measured the membership replacement at 276 milliseconds and the initial 100,000-resource projection insert at 2.51 seconds, including 1.27 seconds across 100,000 foreign-key trigger calls and 62.6 MB of WAL. The membership plan remained sensitive to statistics and memory: after `ANALYZE`, 4 MB `work_mem` selected a 17.6 MB external merge sort and took 965 milliseconds, while a transaction-local 64 MB setting selected an in-memory hash plan and took 285 milliseconds.
 
-The evidence attributes the extreme tail to shared host storage contention amplifying a write-heavy checkpoint, not to Kind or a PostgreSQL lock wait. Complete checkpoints still have substantial linear CPU, allocation, statement, foreign-key, and WAL costs. Further work should bulk-persist new identities and assertions, reduce whole-membership comparison work, and validate any transaction-local memory tuning under concurrent publishers; a global `work_mem` increase is not implied by this experiment.
+The evidence attributes the extreme tail to shared host storage contention amplifying a write-heavy checkpoint, not to Kind or a PostgreSQL lock wait. Complete checkpoints still have substantial linear CPU, allocation, statement, foreign-key, and WAL costs. The follow-up experiments therefore evaluated bulk persistence, indexed membership comparison, and transaction-local memory tuning independently.
+
+Sequential checkpoint optimization produced:
+
+| Initial publication | 10,000 assertions | 50,000 assertions | 100,000 assertions |
+| --- | ---: | ---: | ---: |
+| Selective persistence baseline | 3.31 s | 15.03 s | 28.68 s |
+| Bulk identity and assertion persistence | 3.26 s | 14.58 s | 25.69 s |
+| Indexed membership anti-joins | 1.12-1.20 s | 5.88-5.93 s | 11.95-12.25 s |
+
+The anti-join path also reduced localized replacement to 133-161 milliseconds at 10,000 assertions, 620-683 milliseconds at 50,000, and 1.34-1.50 seconds at 100,000. A transaction-local 16 MB `work_mem` setting did not improve the anti-join plan and produced worse initial-publication tail samples, so PostgreSQL defaults remain in use. Bulk persistence and indexed anti-joins retain all identity collision and foreign-key checks.
+
+A final integrated fixed-operation sample measured localized replacement at 140 milliseconds, 647 milliseconds, and 1.35 seconds, and explicit delta publication at 31 milliseconds, 54 milliseconds, and 90 milliseconds for 10,000, 50,000, and 100,000 assertions respectively. Initial publication measured 1.15 seconds and 6.04 seconds at 10,000 and 50,000, while the 100,000 sample hit another shared-host tail at 33.88 seconds. The repeated three-sample 100,000 range remains the representative result; the tail reinforces the storage-contention finding rather than changing the checkpoint design.
 
 These measurements support the publication contract. They are not service-level objectives. Production limits require representative provider payloads, concurrent publishers, and sustained-load measurements.
 
@@ -123,7 +135,7 @@ These measurements support the publication contract. They are not service-level 
 
 ## Operational signals
 
-The implementation should expose bounded-cardinality metrics for:
+Complete checkpoints emit one debug-level event with fixed phase durations for compilation, transaction setup, preparation, membership, persistence, projection, commit, and total time. The event has no contribution, resource, assertion, or provider-object dimensions. A future metrics backend should expose bounded-cardinality counters and histograms for:
 
 - delta and replacement publication latency;
 - assertions added and retracted per publication;
