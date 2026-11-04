@@ -485,14 +485,22 @@ func replaceMembership(ctx context.Context, tx pgx.Tx, contributionID int64, new
 		return membershipDelta{}, fmt.Errorf("stage incoming contribution membership: %w", err)
 	}
 	changed, err := tx.Query(ctx, `
-		WITH additions AS (
-			SELECT assertion_type, assertion_id FROM incoming_contribution_assertions
-			EXCEPT
-			SELECT assertion_type, assertion_id FROM contribution_current_assertions WHERE contribution_id=$1
-		), retractions AS (
-			SELECT assertion_type, assertion_id FROM contribution_current_assertions WHERE contribution_id=$1
-			EXCEPT
-			SELECT assertion_type, assertion_id FROM incoming_contribution_assertions
+		WITH additions AS MATERIALIZED (
+			SELECT incoming.assertion_type, incoming.assertion_id
+			FROM incoming_contribution_assertions incoming
+			WHERE NOT EXISTS (
+				SELECT 1 FROM contribution_current_assertions membership
+				WHERE membership.contribution_id=$1
+				  AND membership.assertion_type=incoming.assertion_type
+				  AND membership.assertion_id=incoming.assertion_id)
+		), retractions AS MATERIALIZED (
+			SELECT membership.assertion_type, membership.assertion_id
+			FROM contribution_current_assertions membership
+			WHERE membership.contribution_id=$1
+			  AND NOT EXISTS (
+				SELECT 1 FROM incoming_contribution_assertions incoming
+				WHERE incoming.assertion_type=membership.assertion_type
+				  AND incoming.assertion_id=membership.assertion_id)
 		), inserted AS (
 			INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id)
 			SELECT $1, assertion_type, assertion_id FROM additions
