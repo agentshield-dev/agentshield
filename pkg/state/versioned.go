@@ -49,6 +49,17 @@ type contributionPublication struct {
 	GeneratedAt time.Time
 }
 
+type checkpointTimings struct {
+	applied          bool
+	compile          time.Duration
+	transactionSetup time.Duration
+	prepare          time.Duration
+	membership       time.Duration
+	persistence      time.Duration
+	projection       time.Duration
+	commit           time.Duration
+}
+
 // ManifestContribution is one contribution version pinned by a manifest.
 type ManifestContribution struct {
 	ContributionID        int64     `json:"contributionId"`
@@ -88,23 +99,27 @@ type AnalysisViewToken struct {
 	EvaluationTime time.Time `json:"evaluationTime"`
 }
 
-func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (Publication, error) {
+func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot, timings *checkpointTimings) (Publication, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
 	defer cancel()
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
+	transactionStarted := time.Now()
 	tx, err := s.beginPublication(ctx)
 	if err != nil {
 		return Publication{}, err
 	}
-	publication, err := s.commitCandidate(ctx, tx, contribution, inputDigest, compiled)
+	timings.transactionSetup = time.Since(transactionStarted)
+	publication, err := s.commitCandidate(ctx, tx, contribution, inputDigest, compiled, timings)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return Publication{}, err
 	}
+	commitStarted := time.Now()
 	if err := tx.Commit(ctx); err != nil {
 		return Publication{}, fmt.Errorf("commit contribution publication: %w", err)
 	}
+	timings.commit = time.Since(commitStarted)
 	s.materialized = nil
 	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
 }
@@ -298,7 +313,7 @@ func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph
 	return loaded, nil
 }
 
-func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, error) {
+func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot, timings *checkpointTimings) (contributionPublication, error) {
 	var revision int64
 	var generatedAt *time.Time
 	var graphExists bool
@@ -326,7 +341,10 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 		}
 		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
 	}
+	timings.applied = true
+	phaseStarted := time.Now()
 	prepared, err := prepareCompiledAssertions(compiled)
+	timings.prepare = time.Since(phaseStarted)
 	if err != nil {
 		return contributionPublication{}, err
 	}
@@ -335,10 +353,13 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 	if err != nil {
 		return contributionPublication{}, err
 	}
+	phaseStarted = time.Now()
 	delta, err := replaceMembership(ctx, tx, contributionID, prepared.refs)
+	timings.membership = time.Since(phaseStarted)
 	if err != nil {
 		return contributionPublication{}, err
 	}
+	phaseStarted = time.Now()
 	if err := persistCompiledAssertions(ctx, tx, prepared, delta.added); err != nil {
 		return contributionPublication{}, err
 	}
@@ -348,6 +369,8 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
 		return contributionPublication{}, err
 	}
+	timings.persistence = time.Since(phaseStarted)
+	phaseStarted = time.Now()
 	var changedResources []graph.Resource
 	if !graphExists {
 		initial, err := s.compiler.Compile(contribution.Input)
@@ -364,6 +387,7 @@ func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Con
 			return contributionPublication{}, err
 		}
 	}
+	timings.projection = time.Since(phaseStarted)
 	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
 		return contributionPublication{}, err
 	}

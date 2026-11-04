@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -379,6 +380,7 @@ func (s *Store) Ping(ctx context.Context) error {
 // never enters the commit path. Assertion provenance must match the
 // contribution owner; it is rejected, not rewritten.
 func (s *Store) ReplaceContribution(ctx context.Context, contribution Contribution) (Publication, error) {
+	started := time.Now()
 	if err := validateContribution(contribution); err != nil {
 		return Publication{}, err
 	}
@@ -398,14 +400,26 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 	if err != nil {
 		return Publication{}, err
 	}
+	compileStarted := time.Now()
 	compiled, err := s.compiler.CompileContribution(contribution.Input)
 	if err != nil {
 		return Publication{}, fmt.Errorf("compile contribution: %w", err)
 	}
-	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled)
+	timings := checkpointTimings{compile: time.Since(compileStarted)}
+	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled, &timings)
 	if err != nil {
 		return Publication{}, err
 	}
+	slog.DebugContext(ctx, "contribution checkpoint published",
+		"applied", timings.applied,
+		"compile", timings.compile,
+		"transaction_setup", timings.transactionSetup,
+		"prepare", timings.prepare,
+		"membership", timings.membership,
+		"persistence", timings.persistence,
+		"projection", timings.projection,
+		"commit", timings.commit,
+		"total", time.Since(started))
 	return publication, nil
 }
 
