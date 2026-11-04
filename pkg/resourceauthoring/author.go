@@ -270,7 +270,7 @@ func ValidateContext(resource state.ResourceAuthoringContext) error {
 			}
 		}
 		for _, request := range behavior.Requests {
-			if len(request.Telemetry) > 128 || len(request.Destination) > 507 || len(request.DestinationKind) > 128 ||
+			if len(request.Telemetry) > 128 || len(request.Destination) > 507 || len(request.DestinationResourceID) > 128 || len(request.DestinationKind) > 128 ||
 				len(request.DestinationRole) > 64 || len(request.Operation) > 256 || len(request.Outcome) > 64 {
 				return errors.New("resource observed behavior exceeds field limits")
 			}

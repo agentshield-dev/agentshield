@@ -142,8 +142,8 @@ func TestWorkloadBehaviorForSummarizesTheDeploymentsOutboundTelemetry(t *testing
 		},
 	}
 	want := WorkloadBehavior{CollectedTelemetry: []string{"active-probe", "network-flow"}, Requests: []ObservedRequest{
-		{Telemetry: "network-flow", DestinationKind: "network/destination", DestinationRole: graph.NetworkRoleControlPlaneAPI, Operation: "egress", Outcome: "forwarded", Count: 1},
-		{Telemetry: "active-probe", Destination: "shop/catalog-api", DestinationKind: "kubernetes/service", Operation: "GET /v1/products", Outcome: "allowed", Count: 5},
+		{Telemetry: "network-flow", DestinationResourceID: "apiserver", DestinationKind: "network/destination", DestinationRole: graph.NetworkRoleControlPlaneAPI, Operation: "egress", Outcome: "forwarded", Count: 1},
+		{Telemetry: "active-probe", Destination: "shop/catalog-api", DestinationResourceID: "catalog", DestinationKind: "kubernetes/service", Operation: "GET /v1/products", Outcome: "allowed", Count: 5},
 	}}
 	if got := WorkloadBehaviorFor(snapshot, "frontend"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("behavior = %#v, want %#v", got, want)

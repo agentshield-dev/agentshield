@@ -267,7 +267,7 @@ func TestModelAuthorBoundsEncodedInput(t *testing.T) {
 	for index := range resource.ObservedBehavior.Requests {
 		resource.ObservedBehavior.Requests[index] = state.ObservedRequest{
 			Telemetry: strings.Repeat("\x00", 128), Destination: strings.Repeat("\x00", 507), DestinationKind: strings.Repeat("\x00", 128),
-			DestinationRole: strings.Repeat("\x00", 64), Operation: strings.Repeat("\x00", 256), Outcome: strings.Repeat("\x00", 64),
+			DestinationResourceID: strings.Repeat("\x00", 128), DestinationRole: strings.Repeat("\x00", 64), Operation: strings.Repeat("\x00", 256), Outcome: strings.Repeat("\x00", 64),
 		}
 	}
 	if _, err := (ModelAuthor{}).Author(context.Background(), resource); err == nil || !strings.Contains(err.Error(), fmt.Sprint(ModelAuthorInputMaxBytes)) {

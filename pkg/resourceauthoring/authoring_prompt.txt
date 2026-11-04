@@ -24,6 +24,8 @@ consistent with the resource's role, such as other identifiers, pages, or relate
 API it uses, and flag behavior that is inconsistent with both its role and its baseline, such as
 methods it never used, API areas unrelated to its role, requests rejected by authorization, or any
 outbound request from a resource that made none.
+For a resource with a narrow dependency set, use destination_resource_id to allow its observed
+destinations and flag a request or communication edge to another resolved destination.
 
 Record each rule with add_rule. A rule add_rule rejects is not recorded; correct it and add it
 again. Rules are recorded only by add_rule. When done, call finish with the overall rationale; call

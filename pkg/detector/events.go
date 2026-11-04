@@ -18,12 +18,13 @@ const InputVersion = "v1"
 
 // Input holds every CEL variable; CELEnvironment declares only the subset a selector populates.
 type Input struct {
-	Operation          string            `json:"operation" cel_description:"Normalized operation of the observed activity; values depend on the selector."`
-	Outcome            string            `json:"outcome" cel_description:"Normalized outcome of the observed activity; values depend on the selector."`
-	DestinationIPClass string            `json:"destination_ip_class" cel_description:"Class of the destination IP address. The raw address is never exposed."`
-	DestinationRole    string            `json:"destination_role" cel_description:"Cluster role of the destination, from the graph's known resource addresses."`
-	ProcessClass       string            `json:"process_class" cel_description:"Class of the process the subject workload started."`
-	Attributes         map[string]string `json:"attributes,omitempty" cel_description:"Bounded normalized attributes of the changed resource."`
+	Operation             string            `json:"operation" cel_description:"Normalized operation of the observed activity; values depend on the selector."`
+	Outcome               string            `json:"outcome" cel_description:"Normalized outcome of the observed activity; values depend on the selector."`
+	DestinationIPClass    string            `json:"destination_ip_class" cel_description:"Class of the destination IP address. The raw address is never exposed."`
+	DestinationRole       string            `json:"destination_role" cel_description:"Cluster role of the destination, from the graph's known resource addresses."`
+	DestinationResourceID string            `json:"destination_resource_id" cel_description:"Stable graph resource ID of the destination."`
+	ProcessClass          string            `json:"process_class" cel_description:"Class of the process the subject workload started."`
+	Attributes            map[string]string `json:"attributes,omitempty" cel_description:"Bounded normalized attributes of the changed resource."`
 }
 
 // Event is one rule-evaluation input. ID is stable for the same edge owner or
@@ -164,7 +165,7 @@ func relationshipInput(relationship graph.Relationship, resources map[string]gra
 	if relationship.Predicate != graph.PredicateCommunicates {
 		return Input{}
 	}
-	input := Input{DestinationIPClass: telemetry.DestinationIPClassUnknown, DestinationRole: roles[relationship.ObjectID]}
+	input := Input{DestinationIPClass: telemetry.DestinationIPClassUnknown, DestinationRole: roles[relationship.ObjectID], DestinationResourceID: relationship.ObjectID}
 	object, exists := resources[relationship.ObjectID]
 	if exists && object.Kind == "network/destination" && strings.HasPrefix(object.Identity.ImmutableKey, "ip/") {
 		if class, err := telemetry.ClassifyDestinationIP(strings.TrimPrefix(object.Identity.ImmutableKey, "ip/")); err == nil {
@@ -191,7 +192,7 @@ func novelTelemetryEvents(previous, current graph.Snapshot, resources map[string
 			AnchorIDs: []string{event.SubjectID, event.ObjectID}, SubjectIDs: []string{event.SubjectID}, ObservedAt: timestamp,
 			Input: Input{
 				Operation: event.Operation, Outcome: event.Outcome,
-				DestinationIPClass: destinationIPClass(event.Properties["destination-ip-class"]), DestinationRole: roles[event.ObjectID],
+				DestinationIPClass: destinationIPClass(event.Properties["destination-ip-class"]), DestinationRole: roles[event.ObjectID], DestinationResourceID: event.ObjectID,
 				ProcessClass: processClass(event.ObjectID, resources),
 			},
 		})

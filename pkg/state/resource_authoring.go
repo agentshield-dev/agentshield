@@ -60,16 +60,17 @@ type WorkloadBehavior struct {
 }
 
 // ObservedRequest is one distinct (telemetry kind, destination, operation,
-// outcome) combination and how often it was observed. Destinations outside
-// Kubernetes are described by kind and role only, never by raw address.
+// outcome) combination and how often it was observed. Destinations include a
+// stable graph resource ID but never a raw address.
 type ObservedRequest struct {
-	Telemetry       string `json:"telemetry"`
-	Destination     string `json:"destination,omitempty"`
-	DestinationKind string `json:"destinationKind"`
-	DestinationRole string `json:"destinationRole,omitempty"`
-	Operation       string `json:"operation,omitempty"`
-	Outcome         string `json:"outcome,omitempty"`
-	Count           uint64 `json:"count"`
+	Telemetry             string `json:"telemetry"`
+	Destination           string `json:"destination,omitempty"`
+	DestinationResourceID string `json:"destinationResourceId,omitempty"`
+	DestinationKind       string `json:"destinationKind"`
+	DestinationRole       string `json:"destinationRole,omitempty"`
+	Operation             string `json:"operation,omitempty"`
+	Outcome               string `json:"outcome,omitempty"`
+	Count                 uint64 `json:"count"`
 }
 
 // WorkloadObservedBehavior summarizes the current graph's telemetry for a
@@ -132,7 +133,7 @@ func WorkloadBehaviorFor(snapshot graph.Snapshot, resourceID string) WorkloadBeh
 			continue
 		}
 		key := ObservedRequest{
-			Telemetry: event.Kind, Destination: names[event.ObjectID], DestinationKind: kinds[event.ObjectID],
+			Telemetry: event.Kind, Destination: names[event.ObjectID], DestinationResourceID: event.ObjectID, DestinationKind: kinds[event.ObjectID],
 			DestinationRole: roles[event.ObjectID], Operation: NormalizeObservedOperation(event.Operation), Outcome: boundedString(event.Outcome, 64),
 		}
 		counts[key] += event.Count
@@ -157,7 +158,7 @@ func WorkloadBehaviorFor(snapshot graph.Snapshot, resourceID string) WorkloadBeh
 
 func compareObservedRequests(left, right ObservedRequest) int {
 	return cmp.Or(
-		cmp.Compare(left.Destination, right.Destination), cmp.Compare(left.DestinationKind, right.DestinationKind),
+		cmp.Compare(left.Destination, right.Destination), cmp.Compare(left.DestinationResourceID, right.DestinationResourceID), cmp.Compare(left.DestinationKind, right.DestinationKind),
 		cmp.Compare(left.DestinationRole, right.DestinationRole), cmp.Compare(left.Telemetry, right.Telemetry),
 		cmp.Compare(left.Operation, right.Operation), cmp.Compare(left.Outcome, right.Outcome),
 	)

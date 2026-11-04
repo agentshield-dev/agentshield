@@ -92,8 +92,8 @@ func TestEventsEmitOnlyNewEdgesWithDestinationClassAndRole(t *testing.T) {
 		}
 	}
 	want := map[string]Input{
-		"api":      {DestinationIPClass: "public", DestinationRole: graph.NetworkRoleControlPlaneAPI},
-		"internet": {DestinationIPClass: "public"},
+		"api":      {DestinationIPClass: "public", DestinationRole: graph.NetworkRoleControlPlaneAPI, DestinationResourceID: "api"},
+		"internet": {DestinationIPClass: "public", DestinationResourceID: "internet"},
 	}
 	if len(inputs) != len(want) || !reflect.DeepEqual(inputs["api"], want["api"]) || !reflect.DeepEqual(inputs["internet"], want["internet"]) {
 		t.Fatalf("inputs=%#v, want only new edges %#v", inputs, want)
@@ -102,7 +102,7 @@ func TestEventsEmitOnlyNewEdgesWithDestinationClassAndRole(t *testing.T) {
 	rule := Rule{
 		ID: "new-public", Revision: 1, InputVersion: InputVersion, PluginID: "*", ScopeResourceID: "deployment",
 		Type: "relationship", Kind: string(graph.PredicateCommunicates),
-		Expression: "destination_ip_class == 'public' && destination_role == ''", Risk: RiskMedium, Reasons: []string{"new_public_destination"},
+		Expression: "destination_ip_class == 'public' && destination_role == '' && destination_resource_id == 'internet'", Risk: RiskMedium, Reasons: []string{"new_public_destination"},
 	}
 	engine, err := New(DefaultConfig(), Ruleset{ID: "edges", Rules: []Rule{rule}})
 	if err != nil {

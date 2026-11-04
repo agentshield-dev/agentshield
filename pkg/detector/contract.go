@@ -43,8 +43,9 @@ func CELSelectors() []CELSelector {
 		}
 		if predicate.Predicate == graph.PredicateCommunicates {
 			selector.Fields = map[string]string{
-				"destination_ip_class": "class of the object's IP address; `unknown` when the object is not an IP destination",
-				"destination_role":     "role of the object in the cluster",
+				"destination_ip_class":    "class of the object's IP address; `unknown` when the object is not an IP destination",
+				"destination_role":        "role of the object in the cluster",
+				"destination_resource_id": "stable graph resource ID of the object",
 			}
 		}
 		if predicate.Predicate == graph.PredicateExecutes {
@@ -56,6 +57,7 @@ func CELSelectors() []CELSelector {
 		fields := map[string]string{"operation": kind.Operation, "outcome": kind.Outcome}
 		if kind.Lease == graph.PredicateCommunicates {
 			fields["destination_role"] = "role of the object endpoint in the cluster"
+			fields["destination_resource_id"] = "stable graph resource ID of the object endpoint"
 		}
 		if kind.DestinationIPClass {
 			fields["destination_ip_class"] = "class of the object endpoint's IP address"
