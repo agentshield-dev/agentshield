@@ -73,7 +73,7 @@ Publishers must produce a complete replacement:
 - when the publisher detects local membership drift;
 - periodically, using a bounded time or accepted-delta count.
 
-The runtime checkpoints after 1,000 accepted deltas or 15 minutes, whichever is observed first on the contribution's next publication. Both bounds are operator-configurable. Checkpoints should be staggered across contributions so they do not synchronize into a database spike.
+The runtime checkpoints after 1,000 accepted deltas or 15 minutes, whichever is observed first on the contribution's next publication. Both bounds are operator-configurable. The first periodic deadline after startup is deterministically distributed across the final eighth of the configured interval by contribution owner; later periodic deadlines use the complete interval. The configured interval remains a hard maximum.
 
 At startup, a plugin reads its durable generation, obtains a coherent complete provider view, and publishes the next generation as a replacement. It must not infer retractions from an empty in-memory cache. It may publish deltas only after that replacement commits.
 

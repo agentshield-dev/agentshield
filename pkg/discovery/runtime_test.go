@@ -191,6 +191,50 @@ func TestRuntimeKeepsPublicationStatePerContributionOwner(t *testing.T) {
 	}
 }
 
+func TestRuntimeStaggersInitialPeriodicCheckpointsWithinMaximum(t *testing.T) {
+	store := newFakeStore()
+	maximum := 8 * time.Hour
+	runtime := &RuntimeService{
+		hub: NewHub(), store: store,
+		config: RuntimeConfig{CheckpointInterval: maximum, CheckpointDeltas: 100},
+	}
+	session := newPublicationSession()
+	keys := []publicationKey{
+		{pluginID: "test", sourceID: "one", name: "inventory"},
+		{pluginID: "test", sourceID: "two", name: "inventory"},
+	}
+	for _, key := range keys {
+		if _, err := runtime.publishContribution(context.Background(), key.pluginID, key.sourceID, ContributionOutput{
+			Name: key.name, Generation: 1,
+		}, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := session.contributions[keys[0]].checkpointAfter
+	second := session.contributions[keys[1]].checkpointAfter
+	minimum := maximum - maximum/checkpointStaggerDivisor
+	for _, interval := range []time.Duration{first, second} {
+		if interval < minimum || interval > maximum {
+			t.Fatalf("checkpoint interval = %v, want [%v, %v]", interval, minimum, maximum)
+		}
+	}
+	if first == second {
+		t.Fatalf("checkpoint intervals = %v and %v, want different owner deadlines", first, second)
+	}
+	publication := session.contributions[keys[0]]
+	publication.checkpointAt = time.Now().Add(-maximum)
+	session.contributions[keys[0]] = publication
+	mode, err := runtime.publishContribution(context.Background(), keys[0].pluginID, keys[0].sourceID, ContributionOutput{
+		Name: keys[0].name, Generation: 2,
+	}, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "checkpoint" || session.contributions[keys[0]].checkpointAfter != maximum {
+		t.Fatalf("next publication = %s after %v, want checkpoint after %v", mode, session.contributions[keys[0]].checkpointAfter, maximum)
+	}
+}
+
 func TestRuntimeSnapshotsAcceptedContributionOutput(t *testing.T) {
 	store := newFakeStore()
 	runtime := &RuntimeService{

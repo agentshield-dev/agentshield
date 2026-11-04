@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"maps"
 	"runtime/debug"
@@ -154,6 +155,7 @@ func (r *RuntimeService) ReplaceContribution(ctx context.Context, pluginID, sour
 type contributionPublication struct {
 	output          ContributionOutput
 	checkpointAt    time.Time
+	checkpointAfter time.Duration
 	deltas          uint64
 	forceCheckpoint bool
 }
@@ -169,6 +171,21 @@ type publicationKey struct {
 
 func newPublicationSession() *publicationSession {
 	return &publicationSession{contributions: make(map[publicationKey]contributionPublication)}
+}
+
+const checkpointStaggerDivisor = 8
+
+func initialCheckpointInterval(maximum time.Duration, key publicationKey) time.Duration {
+	window := maximum / checkpointStaggerDivisor
+	if window == 0 {
+		return maximum
+	}
+	hash := fnv.New64a()
+	for _, value := range []string{key.pluginID, key.sourceID, key.name} {
+		_, _ = hash.Write([]byte(value))
+		_, _ = hash.Write([]byte{0})
+	}
+	return maximum - time.Duration(hash.Sum64()%uint64(window+1))
 }
 
 func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sourceID string, output ContributionOutput, session *publicationSession) (string, error) {
@@ -189,14 +206,18 @@ func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sour
 		reason = "recovery"
 	case previous.deltas >= r.config.CheckpointDeltas:
 		reason = "delta_limit"
-	case now.Sub(previous.checkpointAt) >= r.config.CheckpointInterval:
+	case now.Sub(previous.checkpointAt) >= previous.checkpointAfter:
 		reason = "interval"
 	}
 	if reason != "" {
 		if err := r.replaceContribution(ctx, pluginID, sourceID, output); err != nil {
 			return "checkpoint", err
 		}
-		session.contributions[key] = contributionPublication{output: cloneContributionOutput(output), checkpointAt: now}
+		checkpointAfter := r.config.CheckpointInterval
+		if reason == "startup" {
+			checkpointAfter = initialCheckpointInterval(checkpointAfter, key)
+		}
+		session.contributions[key] = contributionPublication{output: cloneContributionOutput(output), checkpointAt: now, checkpointAfter: checkpointAfter}
 		slog.DebugContext(ctx, "published authoritative contribution checkpoint",
 			"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "reason", reason)
 		return "checkpoint", nil
@@ -214,7 +235,9 @@ func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sour
 	if err != nil {
 		if errors.Is(err, state.ErrContributionDeltaMembershipMismatch) {
 			if checkpointErr := r.replaceContribution(ctx, pluginID, sourceID, output); checkpointErr == nil {
-				session.contributions[key] = contributionPublication{output: cloneContributionOutput(output), checkpointAt: now}
+				session.contributions[key] = contributionPublication{
+					output: cloneContributionOutput(output), checkpointAt: now, checkpointAfter: r.config.CheckpointInterval,
+				}
 				slog.DebugContext(ctx, "published authoritative contribution checkpoint",
 					"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "reason", "membership_drift")
 				return "checkpoint", nil
