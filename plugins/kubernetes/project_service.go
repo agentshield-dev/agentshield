@@ -60,7 +60,7 @@ func isAuthorableResource(item *unstructured.Unstructured) bool {
 		item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && (item.GetKind() == "Gateway" || item.GetKind() == "HTTPRoute")
 }
 
-func addResourceAuthoringProjection(attributes map[string]string) error {
+func addResourceAuthoringContext(attributes map[string]string) error {
 	safe := make(map[string]string)
 	for key, value := range attributes {
 		if resourceAuthoringAttribute(key) {
@@ -68,19 +68,19 @@ func addResourceAuthoringProjection(attributes map[string]string) error {
 		}
 	}
 	context := map[string]any{}
-	if encoded := attributes[workloadProjectionAttribute]; encoded != "" {
+	if encoded := attributes[workloadContextAttribute]; encoded != "" {
 		var workload map[string]any
 		if err := json.Unmarshal([]byte(encoded), &workload); err != nil {
 			return err
 		}
 		context["workload"] = workload
-		delete(attributes, workloadProjectionAttribute)
+		delete(attributes, workloadContextAttribute)
 	}
-	projection, err := graph.NewResourceAuthoringProjection(context, safe)
+	authoringContext, err := graph.NewResourceAuthoringContext(context, safe)
 	if err != nil {
 		return err
 	}
-	attributes[graph.ResourceAuthoringContextAttribute] = projectkit.MustCanonicalJSON(projection)
+	attributes[graph.ResourceAuthoringContextAttribute] = projectkit.MustCanonicalJSON(authoringContext)
 	return nil
 }
 

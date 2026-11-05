@@ -71,7 +71,7 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 			return graph.Input{}, err
 		}
 		if isAuthorableResource(item) {
-			if err := addResourceAuthoringProjection(itemAttributes); err != nil {
+			if err := addResourceAuthoringContext(itemAttributes); err != nil {
 				return graph.Input{}, fmt.Errorf("project %s %s/%s for rule authoring: %w", item.GetKind(), item.GetNamespace(), item.GetName(), err)
 			}
 		}

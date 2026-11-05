@@ -263,49 +263,76 @@ func detectTopologyChanges(previous, current graph.Snapshot, observedAt time.Tim
 // detectSensitiveResources signals newly created resources whose kind grants
 // privilege or intercepts admission. Attribute-only changes are not signaled.
 func detectSensitiveResources(previous, current graph.Snapshot, observedAt time.Time, config Config) []InvestigationSignal {
-	if len(config.SensitiveResourceKinds) == 0 {
+	if len(config.SensitiveResourcePolicies) == 0 {
 		return nil
 	}
 	existing := resourcesByID(previous)
-	added := make(map[string][]string)
-	var clusterAdminBindings []string
+	type group struct {
+		risk    Risk
+		reasons string
+	}
+	added := make(map[group][]string)
 	for _, resource := range current.Resources {
-		reason := config.SensitiveResourceKinds[resource.Kind]
-		if reason == "" {
-			continue
-		}
 		if _, existed := existing[resource.ID]; existed {
 			continue
 		}
-		if reason == "rbac_binding" && clusterAdminBinding(resource) {
-			clusterAdminBindings = append(clusterAdminBindings, resource.ID)
-		} else {
-			added[reason] = append(added[reason], resource.ID)
+		var selected *SensitiveResourcePolicy
+		for index := range config.SensitiveResourcePolicies {
+			policy := &config.SensitiveResourcePolicies[index]
+			if sensitiveResourcePolicyMatches(*policy, resource) && (selected == nil || policy.Risk.Rank() > selected.Risk.Rank()) {
+				selected = policy
+			}
+		}
+		if selected != nil {
+			reasons := slices.Clone(selected.Reasons)
+			slices.Sort(reasons)
+			key := group{risk: selected.Risk, reasons: strings.Join(reasons, "\x00")}
+			added[key] = append(added[key], resource.ID)
 		}
 	}
 	var signals []InvestigationSignal
-	for reason, anchors := range added {
-		signals = appendScoredSignal(signals, 3, []string{"sensitive_resource_added", reason}, boundedAnchors(anchors), observedAt, config)
-	}
-	if len(clusterAdminBindings) > 0 {
-		signals = appendScoredSignal(signals, 4, []string{"sensitive_resource_added", "rbac_binding", "cluster_admin_binding"}, boundedAnchors(clusterAdminBindings), observedAt, config)
+	for policy, anchors := range added {
+		signals = appendScoredSignal(signals, sensitiveResourceScore(policy.risk), strings.Split(policy.reasons, "\x00"), boundedAnchors(anchors), observedAt, config)
 	}
 	return signals
 }
 
-func clusterAdminBinding(resource graph.Resource) bool {
-	if resource.Kind != "kubernetes/clusterrolebinding" {
+func sensitiveResourcePolicyMatches(policy SensitiveResourcePolicy, resource graph.Resource) bool {
+	if resource.Kind != policy.Kind {
 		return false
 	}
+	if len(policy.RequiredAttributes) == 0 && len(policy.AnyPresentAttributes) == 0 {
+		return true
+	}
 	for _, assertion := range resource.Assertions {
-		if assertion.PluginID == "kubernetes" && assertion.RuleID == "kubernetes.rbac-binding.resource" &&
-			assertion.Attributes["kubernetes/rbac-role-ref-api-group"] == "rbac.authorization.k8s.io" &&
-			assertion.Attributes["kubernetes/rbac-role-ref-kind"] == "ClusterRole" && assertion.Attributes["kubernetes/rbac-role-ref-name"] == "cluster-admin" &&
-			(assertion.Attributes["kubernetes/rbac-subjects"] != "" || assertion.Attributes["kubernetes/rbac-subjects-omitted"] != "") {
+		matches := true
+		for key, value := range policy.RequiredAttributes {
+			if assertion.Attributes[key] != value {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		if len(policy.AnyPresentAttributes) == 0 || slices.ContainsFunc(policy.AnyPresentAttributes, func(key string) bool { return assertion.Attributes[key] != "" }) {
 			return true
 		}
 	}
 	return false
+}
+
+func sensitiveResourceScore(risk Risk) int {
+	switch risk {
+	case RiskCritical:
+		return 6
+	case RiskHigh:
+		return 4
+	case RiskMedium:
+		return 3
+	default:
+		return 2
+	}
 }
 
 // detectWorkloadIdentityChanges signals an existing workload whose instances

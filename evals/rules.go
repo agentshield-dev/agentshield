@@ -10,17 +10,17 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
-	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
+	"github.com/agentshield-dev/agentshield/pkg/state"
 )
 
 // Rule sources scored by the rule evals.
 const (
 	// RuleSourcePolicy is the campaign's operator-written policy, run as an active CEL ruleset.
 	RuleSourcePolicy = "policy"
-	// RuleSourceAuthored is the production Workload rule author's draft for the
+	// RuleSourceAuthored is the production resource rule author's draft for the
 	// source workload, written from its observed behavior at the end of the
-	// baseline phase and run as an approved (active) Workload rule.
+	// baseline phase and run as an approved (active) resource rule.
 	RuleSourceAuthored = "authored"
 )
 
@@ -71,8 +71,8 @@ type ruleWindow struct {
 }
 
 // evaluateRules runs rules through the production detector and rule-finding path
-// over every window and scores them for the campaign class. Workload rules are
-// loaded as approved Workload rules; other rules form the active ruleset.
+// over every window and scores them for the campaign class. Resource rules are
+// loaded as approved resource rules; other rules form the active ruleset.
 func evaluateRules(ctx context.Context, source, class string, rules []detector.Rule, resourceRules bool, windows []ruleWindow, now time.Time) (RuleEvaluation, error) {
 	evaluation := RuleEvaluation{Source: source, Rules: rules, Phases: []RulePhase{}}
 	if evaluation.Rules == nil {
@@ -157,7 +157,7 @@ func policyRules(policies []RulePolicy, workloadResourceID string) ([]detector.R
 // authorRules drafts rules for the source Deployment with the production author.
 func authorRules(ctx context.Context, author resourceauthoring.Author, workload state.ResourceAuthoringContext) ([]detector.Rule, string, error) {
 	if author == nil {
-		return nil, "", errors.New("Workload rule author is required")
+		return nil, "", errors.New("resource rule author is required")
 	}
 	proposal, err := author.Author(ctx, workload)
 	if err != nil {

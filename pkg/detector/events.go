@@ -81,13 +81,13 @@ func Events(previous, current graph.Snapshot, observedAt time.Time) []Event {
 func newResourceEvents(previous, current graph.Snapshot, observedAt time.Time) []Event {
 	known := make(map[string]string, len(previous.Resources))
 	for _, resource := range previous.Resources {
-		if _, _, revision, _, ok := resourceRuleProjection(resource); ok {
+		if _, _, revision, _, ok := resourceRuleContext(resource); ok {
 			known[resource.ID] = revision
 		}
 	}
 	var events []Event
 	for _, resource := range current.Resources {
-		pluginID, sourceID, revision, attributes, ok := resourceRuleProjection(resource)
+		pluginID, sourceID, revision, attributes, ok := resourceRuleContext(resource)
 		if !ok || known[resource.ID] == revision {
 			continue
 		}
@@ -100,7 +100,7 @@ func newResourceEvents(previous, current graph.Snapshot, observedAt time.Time) [
 	return events
 }
 
-func resourceRuleProjection(resource graph.Resource) (string, string, string, map[string]string, bool) {
+func resourceRuleContext(resource graph.Resource) (string, string, string, map[string]string, bool) {
 	var pluginID, sourceID, revision string
 	var attributes map[string]string
 	for _, assertion := range resource.Assertions {
@@ -108,11 +108,11 @@ func resourceRuleProjection(resource graph.Resource) (string, string, string, ma
 		if encoded == "" {
 			continue
 		}
-		projection, err := graph.DecodeResourceAuthoringProjection(encoded)
+		context, err := graph.DecodeResourceAuthoringContext(encoded)
 		if err != nil {
 			continue
 		}
-		candidate, err := projection.RevisionSHA256()
+		candidate, err := context.SHA256()
 		if err != nil {
 			continue
 		}
@@ -120,7 +120,7 @@ func resourceRuleProjection(resource graph.Resource) (string, string, string, ma
 			return "", "", "", nil, false
 		}
 		if revision == "" {
-			pluginID, sourceID, revision, attributes = assertion.PluginID, assertion.SourceID, candidate, maps.Clone(projection.Attributes)
+			pluginID, sourceID, revision, attributes = assertion.PluginID, assertion.SourceID, candidate, maps.Clone(context.Attributes)
 		}
 	}
 	return pluginID, sourceID, revision, attributes, revision != ""
@@ -231,7 +231,7 @@ func attachWorkloadAnchors(events []Event, snapshot graph.Snapshot, resources ma
 	}
 	workloadsByPod := map[string][]string{}
 	for _, workload := range snapshot.Resources {
-		if !resourceAuthoringKind(workload.Kind) {
+		if _, _, _, _, ok := resourceRuleContext(workload); !ok {
 			continue
 		}
 		visited := map[string]struct{}{workload.ID: {}}
@@ -263,8 +263,4 @@ func withWorkloads(ids []string, workloadsByPod map[string][]string) []string {
 	}
 	slices.Sort(ids)
 	return slices.Compact(ids)
-}
-
-func resourceAuthoringKind(kind string) bool {
-	return kind == "kubernetes/deployment" || kind == "kubernetes/statefulset" || kind == "kubernetes/daemonset"
 }

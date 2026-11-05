@@ -20,7 +20,7 @@ type anthropicMessage struct {
 }
 
 // anthropicToolTurn runs one tool turn against Anthropic's Messages API. Only
-// [Client.GenerateWithTools], used for Workload rule authoring, reaches it.
+// [Client.GenerateWithTools], used for resource rule authoring, reaches it.
 // Runtime reasoning (Analyze, Repair, Investigate) is built on the OpenAI
 // Responses API and has no Anthropic path.
 //

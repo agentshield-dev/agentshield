@@ -172,11 +172,14 @@ func TestDetectNovelChangesDistinguishesClusterAdminBinding(t *testing.T) {
 		}
 		return graph.Resource{ID: id, Kind: kind, Assertions: []graph.ResourceAssertion{{PluginID: "kubernetes", RuleID: "kubernetes.rbac-binding.resource", Attributes: attributes}}}
 	}
+	omitted := binding("omitted", "kubernetes/clusterrolebinding", "cluster-admin", "")
+	omitted.Assertions[0].Attributes["kubernetes/rbac-subjects-omitted"] = "true"
 	current := graph.Snapshot{Resources: []graph.Resource{
 		binding("ordinary", "kubernetes/clusterrolebinding", "view", `[{"kind":"User","name":"reader"}]`),
 		binding("namespaced", "kubernetes/rolebinding", "cluster-admin", `[{"kind":"ServiceAccount","name":"app","namespace":"demo"}]`),
 		binding("empty", "kubernetes/clusterrolebinding", "cluster-admin", ""),
 		binding("privileged", "kubernetes/clusterrolebinding", "cluster-admin", `[{"kind":"User","name":"admin"}]`),
+		omitted,
 	}}
 	signals := DetectNovelChanges(graph.Snapshot{}, current, time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC), DefaultConfig())
 	if len(signals) != 2 {
@@ -185,7 +188,7 @@ func TestDetectNovelChangesDistinguishesClusterAdminBinding(t *testing.T) {
 	for _, signal := range signals {
 		switch {
 		case slices.Contains(signal.Reasons, "cluster_admin_binding"):
-			if signal.Risk != RiskHigh || !reflect.DeepEqual(signal.AnchorIDs, []string{"privileged"}) {
+			if signal.Risk != RiskHigh || !reflect.DeepEqual(signal.AnchorIDs, []string{"omitted", "privileged"}) {
 				t.Fatalf("cluster-admin signal = %#v", signal)
 			}
 		default:

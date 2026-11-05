@@ -142,20 +142,20 @@ func (author *fakeAuthor) Author(_ context.Context, resource state.ResourceAutho
 }
 
 func TestAuthorRulesUsesTheProductionAuthoringContext(t *testing.T) {
-	projection, err := graph.NewResourceAuthoringProjection(
+	authoringContext, err := graph.NewResourceAuthoringContext(
 		map[string]any{"workload": map[string]any{"serviceAccountName": "checkout-api"}},
 		map[string]string{"kubernetes/service-account-name": "checkout-api"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encodedProjection, err := json.Marshal(projection)
+	encodedContext, err := json.Marshal(authoringContext)
 	if err != nil {
 		t.Fatal(err)
 	}
 	deployment := graph.Resource{ID: "source", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{{
 		PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context",
-		Attributes: map[string]string{"kubernetes/name": "checkout-api", "kubernetes/namespace": "shop", graph.ResourceAuthoringContextAttribute: string(encodedProjection)},
+		Attributes: map[string]string{"kubernetes/name": "checkout-api", "kubernetes/namespace": "shop", graph.ResourceAuthoringContextAttribute: string(encodedContext)},
 	}}}
 	rule := detector.Rule{ID: "deployment/source/rule-1"}
 	author := &fakeAuthor{proposal: resourceauthoring.Proposal{Rationale: "why", Rules: []resourceauthoring.ProposalRule{{Rule: rule}}}}

@@ -219,9 +219,9 @@ func parseOptions(args []string) (options, error) {
 	flags.DurationVar(&config.investigationDedupWindow, "agentic-investigation-dedup-window", time.Hour, "skip an investigation whose signal pattern was already investigated within this window; 0 disables")
 	flags.IntVar(&config.investigationMaxAttempts, "agentic-investigation-max-attempts", 5, "failed investigation attempts before a queued investigation fails permanently")
 	flags.DurationVar(&config.investigationPollInterval, "agentic-investigation-poll-interval", time.Second, "investigation queue polling interval")
-	flags.BoolVar(&config.resourceRuleAuthoring, "resource-rule-authoring", envBool("AGENTSHIELD_RESOURCE_RULE_AUTHORING", false), "draft detector rules for resources that publish bounded authoring projections, and run approved rules; calls --model-endpoint once per projection revision")
+	flags.BoolVar(&config.resourceRuleAuthoring, "resource-rule-authoring", envBool("AGENTSHIELD_RESOURCE_RULE_AUTHORING", false), "draft detector rules for resources that publish bounded authoring context, and run approved rules; calls --model-endpoint once per context revision")
 	flags.BoolVar(&config.ruleReviewAPI, "rule-review-api", envBool("AGENTSHIELD_RULE_REVIEW_API", false), "serve the unauthenticated rule review and regenerate API routes on a non-loopback listener; they are always served on a loopback listener. Expose only behind an authenticating proxy or for disposable environments")
-	flags.DurationVar(&config.resourceRuleStabilization, "resource-rule-stabilization-window", 6*time.Hour, "how long a new resource projection is observed before its rules are drafted (0 to 24h, bounded by telemetry retention)")
+	flags.DurationVar(&config.resourceRuleStabilization, "resource-rule-stabilization-window", 6*time.Hour, "how long a new resource context is observed before its rules are drafted (0 to 24h, bounded by telemetry retention)")
 	flags.DurationVar(&config.resourceRulePollInterval, "resource-rule-authoring-poll-interval", time.Second, "resource rule authoring queue polling interval")
 	flags.DurationVar(&config.resourceRuleAuthorTimeout, "resource-rule-authoring-timeout", 5*time.Minute, "maximum duration for one resource rule authoring model call")
 	for _, register := range []func(*pflag.FlagSet) error{
@@ -474,7 +474,7 @@ type detectionServices struct {
 	engine         *detector.Engine
 	detection      *reasoning.Service
 	investigation  *reasoning.InvestigationWorker
-	workloadAuthor *resourceauthoring.Worker
+	resourceAuthor *resourceauthoring.Worker
 }
 
 // newDetectionServices builds deterministic detection, which never calls a
@@ -529,8 +529,8 @@ func newDetectionServices(ctx context.Context, config options, store *state.Stor
 		if config.modelProvider == reasoning.ProviderAnthropic && authorModel == reasoning.Model {
 			authorModel = ""
 		}
-		services.workloadAuthor, err = resourceauthoring.NewWorker(store, resourceauthoring.WorkerConfig{
-			ID: fmt.Sprintf("workload-author/%d", os.Getpid()), PollInterval: config.resourceRulePollInterval,
+		services.resourceAuthor, err = resourceauthoring.NewWorker(store, resourceauthoring.WorkerConfig{
+			ID: fmt.Sprintf("resource-author/%d", os.Getpid()), PollInterval: config.resourceRulePollInterval,
 			LeaseDuration: 30 * time.Second, StabilizationWindow: config.resourceRuleStabilization,
 			Author: resourceauthoring.ModelAuthor{Client: reasoning.Client{
 				Endpoint: config.modelEndpoint, APIKey: config.modelAPIKey, Model: authorModel, Provider: config.modelProvider,
@@ -608,9 +608,9 @@ func serve(config options, httpServer *http.Server, store *state.Store, pipeline
 			return nil
 		})
 	}
-	if detection.workloadAuthor != nil {
+	if detection.resourceAuthor != nil {
 		goRecover(group, "Resource rule author", func() error {
-			detection.workloadAuthor.Run(ctx)
+			detection.resourceAuthor.Run(ctx)
 			return nil
 		})
 	}

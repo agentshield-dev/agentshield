@@ -30,7 +30,7 @@ func main() {
 	flag.BoolVar(&config.DetectorOnly, "detector-only", os.Getenv("AGENTSHIELD_EVAL_DETECTOR_ONLY") == "1", "measure deterministic detection without agentic investigation or model calls")
 	flag.DurationVar(&config.Timeout, "timeout", 3*time.Minute, "per-phase convergence timeout")
 	var authorSelectors string
-	flag.StringVar(&authorSelectors, "author-selectors", os.Getenv("AGENTSHIELD_EVAL_AUTHOR_SELECTORS"), "comma-separated selectors the rule suite's Workload rule author may use; empty offers every selector")
+	flag.StringVar(&authorSelectors, "author-selectors", os.Getenv("AGENTSHIELD_EVAL_AUTHOR_SELECTORS"), "comma-separated selectors the rule suite's resource rule author may use; empty offers every selector")
 	flag.Parse()
 	if config.CatalogPath == "" {
 		config.CatalogPath = "evals/campaigns.json"

@@ -2,7 +2,7 @@ import type { DetectorRule, RuleDraft, RuleProposal } from '@/api/types';
 import { list } from '@/lib/model';
 import { dataset, digest256, minutesAgo } from './dataset';
 
-// Workload rule authoring jobs for the demo environment, shaped like pkg/api rules.go.
+// Resource rule authoring jobs for the demo environment, shaped like pkg/api rules.go.
 
 export interface RuleJob {
 	draft: RuleDraft;
@@ -82,7 +82,7 @@ export function authoredProposal(resourceId: string, seed: number, count: number
 		rationale:
 			'The workload’s baseline shows a narrow runtime profile; each rule targets one deviation from it.',
 		rules,
-		projection: {
+		context: {
 			automountServiceAccountToken: false,
 			podSecurityContext: { runAsNonRoot: true, seccompProfile: 'RuntimeDefault' },
 			containers: [
@@ -124,7 +124,7 @@ function job(
 	return {
 		id,
 		resourceId,
-		revisionSha256: templateFor(resourceId),
+		contextSha256: templateFor(resourceId),
 		status: 'queued',
 		attemptCount: 0,
 		reviewStatus: 'pending',

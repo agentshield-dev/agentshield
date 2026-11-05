@@ -229,13 +229,13 @@ export function RuleDraftDetail({
 			{!draft.currentRevision ? (
 				<div className="stale-note">
 					<strong>Previous revision.</strong> This draft cannot be newly approved. An earlier
-					approval may remain active while the resource still publishes an authoring projection.
+					approval may remain active while the resource still publishes that authoring context.
 				</div>
 			) : null}
 			<dl className="finding-meta">
 				<div>
 					<dt>Trigger</dt>
-					<dd>{draft.requestedBy ? `Requested by ${draft.requestedBy}` : 'New projection'}</dd>
+					<dd>{draft.requestedBy ? `Requested by ${draft.requestedBy}` : 'New context'}</dd>
 				</div>
 				<div>
 					<dt>Requested</dt>
@@ -256,12 +256,12 @@ export function RuleDraftDetail({
 					<dd>{draft.ruleCount}</dd>
 				</div>
 			</dl>
-			{proposal?.projection ? (
+			{proposal?.context ? (
 				<section className="record-section">
 					<h3>Resource context</h3>
 					<pre>
 						{JSON.stringify(
-							{ projection: proposal.projection, attributes: proposal.attributes },
+							{ context: proposal.context, attributes: proposal.attributes },
 							null,
 							2
 						)}

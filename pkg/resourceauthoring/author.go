@@ -31,9 +31,8 @@ const (
 	ModelAuthorInputMaxBytes = 96 << 10
 )
 
-// Host-owned rule metadata; the model chooses only the selector, expression, and rationale.
+// Host-owned rule metadata.
 const (
-	draftRisk          = detector.RiskMedium
 	draftReason        = "resource_rule_match"
 	draftWindowSeconds = 300
 )
@@ -46,7 +45,7 @@ type Proposal struct {
 	Rules           []ProposalRule                 `json:"rules"`
 	ApprovedRuleIDs []string                       `json:"approvedRuleIds,omitempty"`
 	ToolCalls       []reasoning.StructuredToolCall `json:"toolCalls,omitempty"`
-	Projection      json.RawMessage                `json:"projection,omitempty"`
+	Context         json.RawMessage                `json:"context,omitempty"`
 	Attributes      map[string]string              `json:"attributes,omitempty"`
 	// ObservedBehavior is the baseline the draft was written from, kept for review.
 	ObservedBehavior *state.WorkloadBehavior `json:"observedBehavior,omitempty"`
@@ -65,9 +64,10 @@ type modelDraft struct {
 }
 
 type modelRule struct {
-	Selector   string `json:"selector"`
-	Expression string `json:"expression"`
-	Rationale  string `json:"rationale"`
+	Selector   string        `json:"selector"`
+	Expression string        `json:"expression"`
+	Risk       detector.Risk `json:"risk"`
+	Rationale  string        `json:"rationale"`
 }
 
 // Author drafts rules for one resource authoring context.
@@ -110,10 +110,10 @@ func (author ModelAuthor) Author(ctx context.Context, resource state.ResourceAut
 		Kind             string                  `json:"kind"`
 		Name             string                  `json:"name,omitempty"`
 		Namespace        string                  `json:"namespace,omitempty"`
-		Projection       json.RawMessage         `json:"projection"`
+		Context          json.RawMessage         `json:"context"`
 		Attributes       map[string]string       `json:"attributes,omitempty"`
 		ObservedBehavior *state.WorkloadBehavior `json:"observedBehavior,omitempty"`
-	}{resource.Kind, resource.Name, resource.Namespace, resource.Projection, resource.Attributes, resource.ObservedBehavior})
+	}{resource.Kind, resource.Name, resource.Namespace, resource.Context, resource.Attributes, resource.ObservedBehavior})
 	if err != nil {
 		return Proposal{}, fmt.Errorf("encode authoring input: %w", err)
 	}
@@ -152,7 +152,7 @@ func (author ModelAuthor) Author(ctx context.Context, resource state.ResourceAut
 	if err != nil {
 		return Proposal{}, err
 	}
-	proposal.ToolCalls, proposal.Projection, proposal.Attributes, proposal.ObservedBehavior = output.Calls, slices.Clone(resource.Projection), maps.Clone(resource.Attributes), resource.ObservedBehavior
+	proposal.ToolCalls, proposal.Context, proposal.Attributes, proposal.ObservedBehavior = output.Calls, slices.Clone(resource.Context), maps.Clone(resource.Attributes), resource.ObservedBehavior
 	return proposal, nil
 }
 
@@ -180,7 +180,7 @@ func buildProposal(resource state.ResourceAuthoringContext, draft modelDraft, se
 		rule := detector.Rule{
 			Revision: 1, InputVersion: detector.InputVersion,
 			PluginID: "*", ScopeResourceID: resource.ResourceID, Type: inputType, Kind: kind, Expression: candidate.Expression,
-			Risk: draftRisk, Reasons: []string{draftReason}, WindowSeconds: draftWindowSeconds,
+			Risk: candidate.Risk, Reasons: []string{draftReason}, WindowSeconds: draftWindowSeconds,
 		}
 		var err error
 		if rule.ID, err = ruleID(resource, rule); err != nil {
@@ -195,7 +195,7 @@ func buildProposal(resource state.ResourceAuthoringContext, draft modelDraft, se
 	return proposal, nil
 }
 
-// ruleID scopes a draft rule to its resource projection revision. Its
+// ruleID scopes a draft rule to its resource authoring context revision. Its
 // behavior digest keeps identity stable when a proposal reorders its rules.
 func ruleID(resource state.ResourceAuthoringContext, rule detector.Rule) (string, error) {
 	prefix := strings.TrimPrefix(resource.Kind, "kubernetes/")
@@ -206,13 +206,13 @@ func ruleID(resource state.ResourceAuthoringContext, rule detector.Rule) (string
 		return "", err
 	}
 	ruleDigest := sha256.Sum256(encoded)
-	id := fmt.Sprintf("%s/%x/v-%s/r-%x", prefix, resourceDigest[:16], resource.RevisionSHA256[:12], ruleDigest[:])
+	id := fmt.Sprintf("%s/%x/v-%s/r-%x", prefix, resourceDigest[:16], resource.ContextSHA256[:12], ruleDigest[:])
 	if len(id) > 128 {
-		id = fmt.Sprintf("%s/%x/v-%s/r-%x", prefix, resourceDigest[:16], resource.RevisionSHA256[:12], ruleDigest[:24])
+		id = fmt.Sprintf("%s/%x/v-%s/r-%x", prefix, resourceDigest[:16], resource.ContextSHA256[:12], ruleDigest[:24])
 	}
 	if len(id) > 128 {
 		kindDigest := sha256.Sum256([]byte(resource.Kind))
-		id = fmt.Sprintf("kind-%x/%x/v-%s/r-%x", kindDigest[:8], resourceDigest[:16], resource.RevisionSHA256[:12], ruleDigest[:24])
+		id = fmt.Sprintf("kind-%x/%x/v-%s/r-%x", kindDigest[:8], resourceDigest[:16], resource.ContextSHA256[:12], ruleDigest[:24])
 	}
 	return id, nil
 }
@@ -237,20 +237,20 @@ func WithObservedBehavior(ctx context.Context, source BaselineSource, resource s
 	return resource, nil
 }
 
-// ValidateContext checks the bounded resource projection before it is sent to a model.
+// ValidateContext checks the bounded resource authoring context before it is sent to a model.
 func ValidateContext(resource state.ResourceAuthoringContext) error {
 	if resource.ResourceID == "" || len(resource.ResourceID) > 128 || resource.Kind == "" || len(resource.Kind) > 128 || !strings.Contains(resource.Kind, "/") {
 		return errors.New("authoring context must identify a bounded resource")
 	}
-	if decoded, err := hex.DecodeString(resource.RevisionSHA256); err != nil || len(decoded) != sha256.Size {
+	if decoded, err := hex.DecodeString(resource.ContextSHA256); err != nil || len(decoded) != sha256.Size {
 		return errors.New("authoring context revision must be a SHA-256")
 	}
 	if len(resource.Name) > 253 || len(resource.Namespace) > 253 {
 		return errors.New("resource authoring context exceeds field limits")
 	}
-	var projection map[string]any
-	if len(resource.Projection) == 0 || json.Unmarshal(resource.Projection, &projection) != nil || projection == nil {
-		return errors.New("resource authoring projection must be a JSON object")
+	var authoringContext map[string]any
+	if len(resource.Context) == 0 || json.Unmarshal(resource.Context, &authoringContext) != nil || authoringContext == nil {
+		return errors.New("resource authoring context must be a JSON object")
 	}
 	if len(resource.Attributes) > graph.ResourceAuthoringAttributesMaxItems {
 		return errors.New("resource authoring attributes exceed the item limit")
@@ -292,11 +292,12 @@ func decodeStrict(encoded []byte, result any) error {
 func modelRuleSchema(selectors []string) map[string]any {
 	return map[string]any{
 		"type": "object", "additionalProperties": false,
-		"required": []string{"selector", "expression", "rationale"},
+		"required": []string{"selector", "expression", "risk", "rationale"},
 		"properties": map[string]any{
 			"selector": map[string]any{"type": "string", "enum": selectors, "description": detector.CELSelectorDescriptionFor(selectors)},
 			"expression": map[string]any{"type": "string", "minLength": 1, "maxLength": 8192,
 				"description": detector.CELExpressionDescription()},
+			"risk":      map[string]any{"type": "string", "enum": []string{string(detector.RiskLow), string(detector.RiskMedium), string(detector.RiskHigh), string(detector.RiskCritical)}},
 			"rationale": map[string]any{"type": "string", "minLength": 1, "maxLength": 1024},
 		},
 	}

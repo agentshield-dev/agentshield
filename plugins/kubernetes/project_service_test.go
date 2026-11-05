@@ -14,14 +14,14 @@ import (
 
 func projectedWorkloadContext(t *testing.T, assertion graph.ResourceAssertion) resourceAuthoringContext {
 	t.Helper()
-	projection, err := graph.DecodeResourceAuthoringProjection(assertion.Attributes[graph.ResourceAuthoringContextAttribute])
+	authoringContext, err := graph.DecodeResourceAuthoringContext(assertion.Attributes[graph.ResourceAuthoringContextAttribute])
 	if err != nil {
 		t.Fatal(err)
 	}
 	var context struct {
 		Workload resourceAuthoringContext `json:"workload"`
 	}
-	if err := json.Unmarshal(projection.Context, &context); err != nil {
+	if err := json.Unmarshal(authoringContext.Context, &context); err != nil {
 		t.Fatal(err)
 	}
 	return context.Workload
@@ -216,12 +216,12 @@ func TestProjectLargestResourceAuthoringContextRoundTripsThroughState(t *testing
 	}
 	assertion := resourceOfKind(t, input, "kubernetes/deployment")
 	encoded := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
-	if len(encoded) > graph.ResourceAuthoringProjectionMaxBytes {
-		t.Fatalf("encoded authoring context=%d bytes, limit=%d", len(encoded), graph.ResourceAuthoringProjectionMaxBytes)
+	if len(encoded) > graph.ResourceAuthoringContextMaxBytes {
+		t.Fatalf("encoded authoring context=%d bytes, limit=%d", len(encoded), graph.ResourceAuthoringContextMaxBytes)
 	}
 	projected := projectedWorkloadContext(t, assertion)
 	context := state.ResourceAuthoringContextFor(graph.Resource{ID: "largest", Kind: assertion.Kind, Assertions: []graph.ResourceAssertion{assertion}})
-	if !projected.Truncated || context.RevisionSHA256 == "" || !strings.Contains(string(context.Projection), `"truncated":true`) {
+	if !projected.Truncated || context.ContextSHA256 == "" || !strings.Contains(string(context.Context), `"truncated":true`) {
 		t.Fatalf("projected=%#v state context=%#v", projected, context)
 	}
 }

@@ -2,7 +2,7 @@ CREATE TABLE resource_rule_jobs (
     job_id bigserial PRIMARY KEY,
     resource_id uuid NOT NULL,
     resource_context jsonb NOT NULL,
-    context_sha256 text NOT NULL CHECK (length(context_sha256) = 64),
+    context_sha256 text NOT NULL CHECK (context_sha256 ~ '^[0-9a-f]{64}$'),
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'retryable', 'completed', 'failed')),
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     available_at timestamptz NOT NULL DEFAULT now(),
@@ -16,7 +16,6 @@ CREATE TABLE resource_rule_jobs (
     review_status text NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending', 'approved', 'rejected')),
     reviewed_by text CHECK (reviewed_by IS NULL OR length(reviewed_by) BETWEEN 1 AND 128),
     reviewed_at timestamptz,
-    revision_sha256 text NOT NULL CHECK (revision_sha256 ~ '^[0-9a-f]{64}$'),
     current_revision boolean NOT NULL DEFAULT false,
     requested_by text CHECK (requested_by IS NULL OR length(requested_by) BETWEEN 1 AND 128),
     requested_at timestamptz,
@@ -26,7 +25,7 @@ CREATE TABLE resource_rule_jobs (
     CONSTRAINT resource_rule_jobs_review_requires_proposal CHECK (review_status = 'pending' OR status = 'completed'),
     CONSTRAINT resource_rule_jobs_request_consistent CHECK ((requested_by IS NULL) = (requested_at IS NULL))
 );
-CREATE UNIQUE INDEX resource_rule_jobs_revision_idx ON resource_rule_jobs (resource_id, revision_sha256);
+CREATE UNIQUE INDEX resource_rule_jobs_context_idx ON resource_rule_jobs (resource_id, context_sha256);
 CREATE UNIQUE INDEX resource_rule_jobs_current_idx ON resource_rule_jobs (resource_id) WHERE current_revision;
 CREATE INDEX resource_rule_jobs_ready_idx ON resource_rule_jobs (available_at, job_id) WHERE status IN ('queued', 'retryable');
 CREATE INDEX resource_rule_jobs_expired_lease_idx ON resource_rule_jobs (lease_expires_at, job_id) WHERE status = 'running';

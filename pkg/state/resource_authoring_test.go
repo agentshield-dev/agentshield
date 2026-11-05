@@ -16,32 +16,32 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
-func mustAuthoringProjection(context any, attributes map[string]string) string {
-	projection, err := graph.NewResourceAuthoringProjection(context, attributes)
+func mustAuthoringContext(context any, attributes map[string]string) string {
+	authoringContext, err := graph.NewResourceAuthoringContext(context, attributes)
 	if err != nil {
 		panic(err)
 	}
-	encoded, err := json.Marshal(projection)
+	encoded, err := json.Marshal(authoringContext)
 	if err != nil {
 		panic(err)
 	}
 	return string(encoded)
 }
 
-func projectionRevision(encoded string) string {
-	projection, err := graph.DecodeResourceAuthoringProjection(encoded)
+func authoringContextSHA256(encoded string) string {
+	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
 	if err != nil {
 		panic(err)
 	}
-	revision, err := projection.RevisionSHA256()
+	revision, err := authoringContext.SHA256()
 	if err != nil {
 		panic(err)
 	}
 	return revision
 }
 
-func TestResourceAuthoringContextUsesBoundedPluginProjection(t *testing.T) {
-	encoded := mustAuthoringProjection(map[string]any{"roleClass": "admin"}, map[string]string{"authorization_class": "admin"})
+func TestResourceAuthoringContextUsesBoundedPluginContext(t *testing.T) {
+	encoded := mustAuthoringContext(map[string]any{"roleClass": "admin"}, map[string]string{"authorization_class": "admin"})
 	resource := graph.Resource{ID: "statefulset-id", Kind: "kubernetes/statefulset", Assertions: []graph.ResourceAssertion{
 		{PluginID: "untrusted-plugin", RuleID: "untrusted.resource", Attributes: map[string]string{"kubernetes/name": "spoofed"}},
 		{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
@@ -51,19 +51,19 @@ func TestResourceAuthoringContextUsesBoundedPluginProjection(t *testing.T) {
 	authoringContext := ResourceAuthoringContextFor(resource)
 	want := ResourceAuthoringContext{
 		ResourceID: "statefulset-id", Kind: "kubernetes/statefulset", Name: "ledger", Namespace: "payments",
-		RevisionSHA256: projectionRevision(encoded), Projection: json.RawMessage(`{"roleClass":"admin"}`), Attributes: map[string]string{"authorization_class": "admin"},
+		ContextSHA256: authoringContextSHA256(encoded), Context: json.RawMessage(`{"roleClass":"admin"}`), Attributes: map[string]string{"authorization_class": "admin"},
 	}
 	if !reflect.DeepEqual(authoringContext, want) {
 		t.Fatalf("context=%#v, want %#v", authoringContext, want)
 	}
 	resource.Assertions[1].Attributes[graph.ResourceAuthoringContextAttribute] = `{"schemaVersion":"v1","context":{},"rawManifest":{}}`
-	if context := ResourceAuthoringContextFor(resource); context.RevisionSHA256 != "" {
-		t.Fatalf("an invalid projection remained eligible for authoring: %#v", context)
+	if context := ResourceAuthoringContextFor(resource); context.ContextSHA256 != "" {
+		t.Fatalf("an invalid context remained eligible for authoring: %#v", context)
 	}
 }
 
-func TestResourceAuthoringContextSelectsValidProjectionAfterMalformedAssertion(t *testing.T) {
-	encoded := mustAuthoringProjection(map[string]any{"hostPID": true}, nil)
+func TestResourceAuthoringContextSelectsValidContextAfterMalformedAssertion(t *testing.T) {
+	encoded := mustAuthoringContext(map[string]any{"hostPID": true}, nil)
 	v1 := graph.ResourceAssertion{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
 		"kubernetes/name": "current", "kubernetes/namespace": "payments",
 		graph.ResourceAuthoringContextAttribute: encoded,
@@ -71,21 +71,21 @@ func TestResourceAuthoringContextSelectsValidProjectionAfterMalformedAssertion(t
 	malformed := graph.ResourceAssertion{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
 		graph.ResourceAuthoringContextAttribute: `{"schemaVersion":"v1","context":[]}`,
 	}}
-	want := ResourceAuthoringContext{ResourceID: "deployment-id", Kind: "kubernetes/deployment", Name: "current", Namespace: "payments", RevisionSHA256: projectionRevision(encoded), Projection: json.RawMessage(`{"hostPID":true}`)}
+	want := ResourceAuthoringContext{ResourceID: "deployment-id", Kind: "kubernetes/deployment", Name: "current", Namespace: "payments", ContextSHA256: authoringContextSHA256(encoded), Context: json.RawMessage(`{"hostPID":true}`)}
 	resource := graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{malformed, v1}}
 	if got := ResourceAuthoringContextFor(resource); !reflect.DeepEqual(got, want) {
 		t.Fatalf("context=%#v, want %#v", got, want)
 	}
 }
 
-func TestResourceAuthoringContextRejectsConflictingValidProjections(t *testing.T) {
-	projection := func(hostPID bool) graph.ResourceAssertion {
+func TestResourceAuthoringContextRejectsConflictingValidContexts(t *testing.T) {
+	authoringAssertion := func(hostPID bool) graph.ResourceAssertion {
 		return graph.ResourceAssertion{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
 			"kubernetes/name": "payments", "kubernetes/namespace": "payments",
-			graph.ResourceAuthoringContextAttribute: mustAuthoringProjection(map[string]any{"hostPID": hostPID}, nil),
+			graph.ResourceAuthoringContextAttribute: mustAuthoringContext(map[string]any{"hostPID": hostPID}, nil),
 		}}
 	}
-	resource := graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{projection(false), projection(true)}}
+	resource := graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{authoringAssertion(false), authoringAssertion(true)}}
 	want := ResourceAuthoringContext{ResourceID: "deployment-id", Kind: "kubernetes/deployment"}
 	if got := ResourceAuthoringContextFor(resource); !reflect.DeepEqual(got, want) {
 		t.Fatalf("context=%#v, want %#v", got, want)
@@ -176,7 +176,7 @@ func deploymentContribution(name string, generation uint64, uid, label string) C
 			Kind:  "kubernetes/deployment", DisplayName: "prod/payments",
 			Attributes: map[string]string{
 				"kubernetes/name": "payments", "kubernetes/namespace": "prod", "kubernetes/label/app": label,
-				graph.ResourceAuthoringContextAttribute: mustAuthoringProjection(map[string]any{"label": label}, map[string]string{"kubernetes/label/app": label}),
+				graph.ResourceAuthoringContextAttribute: mustAuthoringContext(map[string]any{"label": label}, map[string]string{"kubernetes/label/app": label}),
 			},
 			PluginID: "kubernetes", SourceID: "cluster/local", RuleID: "kubernetes.resource.authoring-context",
 		}}},
@@ -262,16 +262,16 @@ func TestPostgreSQLResourceAuthoringQueuesEveryProjectedResourceKind(t *testing.
 func revisionContribution(generation uint64, revision string) Contribution {
 	contribution := deploymentContribution("deployments", generation, "deployment-uid", "payments")
 	contribution.SourceObservedAt = time.Now().UTC()
-	contribution.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringProjection(map[string]any{"revision": revision, "hostPID": true}, nil)
+	contribution.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringContext(map[string]any{"revision": revision, "hostPID": true}, nil)
 	return contribution
 }
 
-func TestPostgreSQLResourceAuthoringJobPerProjectionRevision(t *testing.T) {
+func TestPostgreSQLResourceAuthoringJobPerContextRevision(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	revisions := func() []string {
 		t.Helper()
-		rows, err := store.pool.Query(ctx, `SELECT revision_sha256 || ':' || status FROM resource_rule_jobs ORDER BY job_id`)
+		rows, err := store.pool.Query(ctx, `SELECT context_sha256 || ':' || status FROM resource_rule_jobs ORDER BY job_id`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -293,7 +293,7 @@ func TestPostgreSQLResourceAuthoringJobPerProjectionRevision(t *testing.T) {
 		}
 	}
 	revision := func(value string) string {
-		return projectionRevision(revisionContribution(1, value).Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute])
+		return authoringContextSHA256(revisionContribution(1, value).Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute])
 	}
 	publish(1, "a")
 	if got := revisions(); !reflect.DeepEqual(got, []string{revision("a") + ":queued"}) {
@@ -303,7 +303,7 @@ func TestPostgreSQLResourceAuthoringJobPerProjectionRevision(t *testing.T) {
 	if err != nil || claimed {
 		t.Fatalf("a job inside its stabilization window was claimed: job=%#v err=%v", job, err)
 	}
-	if job, claimed, err = store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0); err != nil || !claimed || job.Context.RevisionSHA256 != revision("a") || !bytes.Contains(job.Context.Projection, []byte(`"hostPID": true`)) {
+	if job, claimed, err = store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0); err != nil || !claimed || job.Context.ContextSHA256 != revision("a") || !bytes.Contains(job.Context.Context, []byte(`"hostPID": true`)) {
 		t.Fatalf("job=%#v claimed=%t err=%v", job, claimed, err)
 	}
 	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker", json.RawMessage(`{"rationale":"r","rules":[]}`)); err != nil {
@@ -319,12 +319,12 @@ func TestPostgreSQLResourceAuthoringJobPerProjectionRevision(t *testing.T) {
 		t.Fatalf("returning to an authored revision: jobs=%v", got)
 	}
 	status, found, err := store.ResourceRuleJobStatus(ctx, job.ID)
-	if err != nil || !found || status.RevisionSHA256 != revision("a") {
+	if err != nil || !found || status.ContextSHA256 != revision("a") {
 		t.Fatalf("status=%#v found=%t err=%v", status, found, err)
 	}
 }
 
-func TestPostgreSQLResourceRuleRevisionsFollowTheCurrentProjection(t *testing.T) {
+func TestPostgreSQLResourceRuleRevisionsFollowTheCurrentContext(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	generation := uint64(0)
@@ -654,7 +654,7 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	contribution := deploymentContribution("deployments", 1, "deployment-uid", "payments")
-	contribution.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringProjection(map[string]any{"serviceAccountName": "payments"}, nil)
+	contribution.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringContext(map[string]any{"serviceAccountName": "payments"}, nil)
 	if _, err := store.ReplaceContribution(ctx, contribution); err != nil {
 		t.Fatal(err)
 	}
@@ -695,7 +695,7 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 		t.Fatalf("completed status=%#v err=%v", status, err)
 	}
 	refreshed := deploymentContribution("deployments", 2, "deployment-uid", "payments")
-	refreshed.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringProjection(map[string]any{"serviceAccountName": "payments"}, nil)
+	refreshed.Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute] = mustAuthoringContext(map[string]any{"serviceAccountName": "payments"}, nil)
 	if _, err := store.ReplaceContribution(ctx, refreshed); err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 		t.Fatalf("the reset job's rules are still loaded: %#v err=%v", rules, err)
 	}
 	// A requested job skips the stabilization wait.
-	if reclaimed, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 6*time.Hour); err != nil || !claimed || reclaimed.ID != job.ID || !bytes.Contains(reclaimed.Context.Projection, []byte(`"serviceAccountName": "payments"`)) {
+	if reclaimed, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 6*time.Hour); err != nil || !claimed || reclaimed.ID != job.ID || !bytes.Contains(reclaimed.Context.Context, []byte(`"serviceAccountName": "payments"`)) {
 		t.Fatalf("requested job did not use refreshed context: job=%#v claimed=%t err=%v", reclaimed, claimed, err)
 	}
 	if _, err := store.RequestResourceRuleJob(ctx, "00000000-0000-0000-0000-000000000000", "operator/ui"); !errors.Is(err, ErrResourceRuleJobNotFound) {

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,15 +20,15 @@ import (
 
 const ResourceAuthoringContextMaxBytes = 48 << 10
 
-// ResourceAuthoringContext is the bounded plugin projection given to the rule author.
+// ResourceAuthoringContext is the bounded plugin context given to the rule author.
 type ResourceAuthoringContext struct {
-	ResourceID     string            `json:"resourceId"`
-	Kind           string            `json:"kind"`
-	Name           string            `json:"name,omitempty"`
-	Namespace      string            `json:"namespace,omitempty"`
-	RevisionSHA256 string            `json:"revisionSha256"`
-	Projection     json.RawMessage   `json:"projection"`
-	Attributes     map[string]string `json:"attributes,omitempty"`
+	ResourceID    string            `json:"resourceId"`
+	Kind          string            `json:"kind"`
+	Name          string            `json:"name,omitempty"`
+	Namespace     string            `json:"namespace,omitempty"`
+	ContextSHA256 string            `json:"contextSha256"`
+	Context       json.RawMessage   `json:"context"`
+	Attributes    map[string]string `json:"attributes,omitempty"`
 	// ObservedBehavior is the workload's baseline of outbound requests. Nil
 	// means no baseline was taken; an empty request list means one was taken
 	// and the workload made no outbound requests. The authoring worker sets
@@ -204,14 +202,14 @@ type ResourceRuleJob struct {
 	AttemptCount int                      `json:"attemptCount"`
 }
 
-// enqueueChangedResourceRuleJobs queues authoring for resources with a valid projection.
+// enqueueChangedResourceRuleJobs queues authoring for resources with valid authoring context.
 func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []graph.Resource) error {
 	var resources []ResourceAuthoringContext
 	var ids []string
 	var optedOut []string
 	for _, resource := range changed {
 		candidate := ResourceAuthoringContextFor(resource)
-		if candidate.RevisionSHA256 == "" {
+		if candidate.ContextSHA256 == "" {
 			optedOut = append(optedOut, resource.ID)
 			continue
 		}
@@ -229,7 +227,7 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 	if len(resources) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT resource_id::text, revision_sha256, status IN ('queued', 'retryable'), current_revision FROM resource_rule_jobs WHERE resource_id = ANY($1::uuid[])`, ids)
+	rows, err := tx.Query(ctx, `SELECT resource_id::text, context_sha256, status IN ('queued', 'retryable'), current_revision FROM resource_rule_jobs WHERE resource_id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return fmt.Errorf("read resource rule authoring revisions: %w", err)
 	}
@@ -264,26 +262,19 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 		if len(encoded) > ResourceAuthoringContextMaxBytes {
 			return fmt.Errorf("resource authoring context %s exceeds %d bytes", resource.ResourceID, ResourceAuthoringContextMaxBytes)
 		}
-		digest := sha256.Sum256(encoded)
-		contextSHA256 := hex.EncodeToString(digest[:])
-		if slices.ContainsFunc(waiting[resource.ResourceID], func(revision string) bool { return revision != resource.RevisionSHA256 }) {
+		if slices.ContainsFunc(waiting[resource.ResourceID], func(revision string) bool { return revision != resource.ContextSHA256 }) {
 			if _, err := tx.Exec(ctx, `
 				DELETE FROM resource_rule_jobs
-				WHERE resource_id=$1 AND revision_sha256<>$2 AND status IN ('queued', 'retryable')`, resource.ResourceID, resource.RevisionSHA256); err != nil {
+				WHERE resource_id=$1 AND context_sha256<>$2 AND status IN ('queued', 'retryable')`, resource.ResourceID, resource.ContextSHA256); err != nil {
 				return fmt.Errorf("drop superseded resource rule authoring jobs %s: %w", resource.ResourceID, err)
 			}
 		}
-		if _, found := authored[[2]string{resource.ResourceID, resource.RevisionSHA256}]; found {
-			if _, err := tx.Exec(ctx, `
-				UPDATE resource_rule_jobs SET resource_context=$3, context_sha256=$4, updated_at=now()
-				WHERE resource_id=$1 AND revision_sha256=$2 AND context_sha256<>$4`, resource.ResourceID, resource.RevisionSHA256, encoded, contextSHA256); err != nil {
-				return fmt.Errorf("refresh resource authoring context %s: %w", resource.ResourceID, err)
-			}
-			if !slices.Equal(marked[resource.ResourceID], []string{resource.RevisionSHA256}) {
-				if _, err := tx.Exec(ctx, `UPDATE resource_rule_jobs SET current_revision=false WHERE resource_id=$1 AND current_revision AND revision_sha256<>$2`, resource.ResourceID, resource.RevisionSHA256); err != nil {
+		if _, found := authored[[2]string{resource.ResourceID, resource.ContextSHA256}]; found {
+			if !slices.Equal(marked[resource.ResourceID], []string{resource.ContextSHA256}) {
+				if _, err := tx.Exec(ctx, `UPDATE resource_rule_jobs SET current_revision=false WHERE resource_id=$1 AND current_revision AND context_sha256<>$2`, resource.ResourceID, resource.ContextSHA256); err != nil {
 					return fmt.Errorf("unmark previous resource revision %s: %w", resource.ResourceID, err)
 				}
-				if _, err := tx.Exec(ctx, `UPDATE resource_rule_jobs SET current_revision=true WHERE resource_id=$1 AND revision_sha256=$2 AND NOT current_revision`, resource.ResourceID, resource.RevisionSHA256); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE resource_rule_jobs SET current_revision=true WHERE resource_id=$1 AND context_sha256=$2 AND NOT current_revision`, resource.ResourceID, resource.ContextSHA256); err != nil {
 					return fmt.Errorf("mark current resource revision %s: %w", resource.ResourceID, err)
 				}
 			}
@@ -295,31 +286,31 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO resource_rule_jobs (resource_id, revision_sha256, current_revision, resource_context, context_sha256)
-			VALUES ($1,$2,true,$3,$4)
-			ON CONFLICT (resource_id, revision_sha256) DO NOTHING`, resource.ResourceID, resource.RevisionSHA256, encoded, contextSHA256); err != nil {
+			INSERT INTO resource_rule_jobs (resource_id, context_sha256, current_revision, resource_context)
+			VALUES ($1,$2,true,$3)
+			ON CONFLICT (resource_id, context_sha256) DO NOTHING`, resource.ResourceID, resource.ContextSHA256, encoded); err != nil {
 			return fmt.Errorf("enqueue resource rule authoring job %s: %w", resource.ResourceID, err)
 		}
 	}
 	return nil
 }
 
-// ResourceAuthoringContextFor returns a resource's bounded plugin projection.
+// ResourceAuthoringContextFor returns a resource's bounded plugin context.
 func ResourceAuthoringContextFor(resource graph.Resource) ResourceAuthoringContext {
 	empty := ResourceAuthoringContext{ResourceID: resource.ID, Kind: resource.Kind}
 	var selected *ResourceAuthoringContext
 	var selectedEncoded []byte
 	var conflict bool
 	for _, assertion := range resource.Assertions {
-		encodedProjection := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
-		if encodedProjection == "" {
+		encodedContext := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
+		if encodedContext == "" {
 			continue
 		}
-		projection, err := graph.DecodeResourceAuthoringProjection(encodedProjection)
+		authoringContext, err := graph.DecodeResourceAuthoringContext(encodedContext)
 		if err != nil {
 			continue
 		}
-		revision, err := projection.RevisionSHA256()
+		contextSHA256, err := authoringContext.SHA256()
 		if err != nil {
 			continue
 		}
@@ -329,9 +320,9 @@ func ResourceAuthoringContextFor(resource graph.Resource) ResourceAuthoringConte
 			candidate.Name = boundedString(name, 253)
 		}
 		candidate.Namespace = boundedString(assertion.Attributes["kubernetes/namespace"], 253)
-		candidate.RevisionSHA256 = revision
-		candidate.Projection = slices.Clone(projection.Context)
-		candidate.Attributes = maps.Clone(projection.Attributes)
+		candidate.ContextSHA256 = contextSHA256
+		candidate.Context = slices.Clone(authoringContext.Context)
+		candidate.Attributes = maps.Clone(authoringContext.Attributes)
 		encoded, _ := json.Marshal(candidate)
 		if selected == nil {
 			selected, selectedEncoded = &candidate, encoded
@@ -457,7 +448,7 @@ func (s *Store) CompleteResourceRuleJob(ctx context.Context, jobID int64, worker
 	return nil
 }
 
-// staleResourceRuleJob matches a job, aliased j, whose projection revision is
+// staleResourceRuleJob matches a job, aliased j, whose context revision is
 // no longer current, or whose resource left the graph. Its draft would describe
 // nothing that exists, and a newer revision
 // has its own job.
@@ -532,8 +523,8 @@ func (s *Store) RetryResourceRuleJob(ctx context.Context, jobID int64, workerID,
 type ResourceRuleJobSummary struct {
 	ID         int64  `json:"id"`
 	ResourceID string `json:"resourceId"`
-	// RevisionSHA256 identifies the bounded projection the job authors for.
-	RevisionSHA256 string `json:"revisionSha256,omitempty"`
+	// ContextSHA256 identifies the bounded authoring context for this job.
+	ContextSHA256 string `json:"contextSha256,omitempty"`
 	// Status is queued, running, retryable, completed, or failed.
 	Status       string     `json:"status"`
 	AttemptCount int        `json:"attemptCount"`
@@ -548,7 +539,7 @@ type ResourceRuleJobSummary struct {
 	// RequestedBy and RequestedAt record the operator's last regeneration request.
 	RequestedBy string     `json:"requestedBy,omitempty"`
 	RequestedAt *time.Time `json:"requestedAt,omitempty"`
-	// CurrentRevision reports whether the job is for the resource's current projection.
+	// CurrentRevision reports whether the job is for the resource's current authoring context.
 	CurrentRevision bool `json:"currentRevision"`
 }
 
@@ -568,12 +559,12 @@ const (
 	ResourceRuleReviewRejected = "rejected"
 )
 
-const resourceRuleJobColumns = `job_id, resource_id::text, revision_sha256, status, attempt_count, COALESCE(last_error,''), review_status, COALESCE(reviewed_by,''), reviewed_at, created_at, completed_at,
+const resourceRuleJobColumns = `job_id, resource_id::text, context_sha256, status, attempt_count, COALESCE(last_error,''), review_status, COALESCE(reviewed_by,''), reviewed_at, created_at, completed_at,
 	CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN jsonb_array_length(proposal->'rules') ELSE 0 END,
 	COALESCE(requested_by,''), requested_at, current_revision`
 
 func scanResourceRuleJob(row pgx.Row, job *ResourceRuleJobSummary) error {
-	return row.Scan(&job.ID, &job.ResourceID, &job.RevisionSHA256, &job.Status, &job.AttemptCount, &job.LastError, &job.ReviewStatus, &job.ReviewedBy, &job.ReviewedAt, &job.CreatedAt, &job.CompletedAt,
+	return row.Scan(&job.ID, &job.ResourceID, &job.ContextSHA256, &job.Status, &job.AttemptCount, &job.LastError, &job.ReviewStatus, &job.ReviewedBy, &job.ReviewedAt, &job.CreatedAt, &job.CompletedAt,
 		&job.RuleCount, &job.RequestedBy, &job.RequestedAt, &job.CurrentRevision)
 }
 
@@ -724,7 +715,7 @@ func proposalWithApprovedRules(encoded []byte, decision string, selectedRuleIDs 
 	return updated, nil
 }
 
-// RequestResourceRuleJob asks for the resource's current projection revision
+// RequestResourceRuleJob asks for the resource's current authoring context
 // to be authored now. A queued or retrying job is woken: it skips the
 // stabilization wait and any retry backoff. A completed job is reset to queued,
 // dropping its proposal and review, so the next proposal starts in shadow mode;

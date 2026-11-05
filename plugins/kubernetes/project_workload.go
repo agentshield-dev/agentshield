@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	workloadProjectionAttribute      = "kubernetes/workload-projection"
+	workloadContextAttribute         = "kubernetes/workload-context"
 	maxWorkloadContainers            = 16
 	maxWorkloadContainerItems        = 32
 	maxWorkloadReferences            = 64
@@ -97,7 +97,7 @@ func addWorkloadAttributes(result map[string]string, item *unstructured.Unstruct
 	labels, _, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "template", "metadata", "labels")
 	podSpec, _, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "template", "spec")
 	context.PodTemplateSHA256 = projectkit.Digest(map[string]any{"labels": labels, "spec": podSpec})
-	result[workloadProjectionAttribute] = canonicalResourceAuthoringContext(context)
+	result[workloadContextAttribute] = canonicalResourceAuthoringContext(context)
 	result["kubernetes/pod-template-sha256"] = context.PodTemplateSHA256
 	if context.ServiceAccountName != "" {
 		result["kubernetes/service-account-name"] = context.ServiceAccountName

@@ -22,12 +22,12 @@ import (
 func testWorkload() state.ResourceAuthoringContext {
 	return state.ResourceAuthoringContext{
 		ResourceID: "deployment-id", Kind: "kubernetes/deployment", Name: "payments", Namespace: "prod",
-		RevisionSHA256: strings.Repeat("a", 64), Projection: json.RawMessage(`{"workload":{"serviceAccountName":"payments-runtime"}}`),
+		ContextSHA256: strings.Repeat("a", 64), Context: json.RawMessage(`{"workload":{"serviceAccountName":"payments-runtime"}}`),
 	}
 }
 
 func TestBuildProposalAppliesHostOwnedScopeAndMetadata(t *testing.T) {
-	proposal, err := buildProposal(testWorkload(), modelDraft{Rationale: "New public destinations are unusual for this resource.", Rules: []modelRule{{
+	proposal, err := buildProposal(testWorkload(), modelDraft{Rationale: "New public destinations are unusual for this resource.", Rules: []modelRule{{Risk: detector.RiskMedium,
 		Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public'", Rationale: "Alert on new public destinations.",
 	}}}, detector.CELSelectorNames())
 	if err != nil {
@@ -36,7 +36,7 @@ func TestBuildProposalAppliesHostOwnedScopeAndMetadata(t *testing.T) {
 	want := detector.Rule{
 		ID: "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-aaaaaaaaaaaa/r-1653ce7b06c875e78ad70e7d21895fc22d06531c4637a8c1f0218a781a6ccaf6", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: "deployment-id",
 		Type: "relationship", Kind: "communicates-with", Expression: "destination_ip_class == 'public'",
-		Risk: draftRisk, Reasons: []string{draftReason}, WindowSeconds: draftWindowSeconds,
+		Risk: detector.RiskMedium, Reasons: []string{draftReason}, WindowSeconds: draftWindowSeconds,
 	}
 	if len(proposal.Rules) != 1 || !reflect.DeepEqual(proposal.Rules[0].Rule, want) {
 		t.Fatalf("proposal=%#v, want rule %#v", proposal, want)
@@ -44,21 +44,22 @@ func TestBuildProposalAppliesHostOwnedScopeAndMetadata(t *testing.T) {
 }
 
 func TestBuildProposalRejectsInvalidDrafts(t *testing.T) {
-	valid := modelRule{Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}
+	valid := modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}
 	for _, test := range []struct {
 		name   string
 		mutate func(*modelDraft)
 	}{
 		{"unknown selector", func(draft *modelDraft) { draft.Rules[0].Selector = "resource:kubernetes/deployment" }},
 		{"undeclared variable", func(draft *modelDraft) { draft.Rules[0].Expression = "operation == 'egress'" }},
+		{"invalid risk", func(draft *modelDraft) { draft.Rules[0].Risk = "urgent" }},
 		{"missing rationale", func(draft *modelDraft) { draft.Rules[0].Rationale = "" }},
 		{"too many rules", func(draft *modelDraft) {
 			for _, expression := range []string{"destination_role == ''", "destination_ip_class == 'public'", "destination_ip_class == 'private'"} {
-				draft.Rules = append(draft.Rules, modelRule{Selector: valid.Selector, Expression: expression, Rationale: "r"})
+				draft.Rules = append(draft.Rules, modelRule{Risk: detector.RiskMedium, Selector: valid.Selector, Expression: expression, Rationale: "r"})
 			}
 		}},
 		{"duplicate rule", func(draft *modelDraft) {
-			draft.Rules = append(draft.Rules, modelRule{Selector: valid.Selector, Expression: " " + valid.Expression + " ", Rationale: "other"})
+			draft.Rules = append(draft.Rules, modelRule{Risk: detector.RiskMedium, Selector: valid.Selector, Expression: " " + valid.Expression + " ", Rationale: "other"})
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,11 +79,11 @@ func TestAddRuleValidatesAgainstSelectorEnvironment(t *testing.T) {
 		added bool
 		error string
 	}{
-		{"populated relationship fields", modelRule{Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public' && destination_role == ''", Rationale: "r"}, true, ""},
-		{"populated telemetry fields", modelRule{Selector: "telemetry:network-flow", Expression: "operation == 'egress' && outcome == 'forwarded'", Rationale: "r"}, true, ""},
-		{"process class", modelRule{Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "r"}, true, ""},
-		{"field the relationship does not populate", modelRule{Selector: "relationship:communicates-with", Expression: "operation == 'egress'", Rationale: "r"}, false, "undeclared reference to 'operation'"},
-		{"unknown selector", modelRule{Selector: "relationship:not-a-predicate", Expression: "true", Rationale: "r"}, false, "unsupported selector"},
+		{"populated relationship fields", modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public' && destination_role == ''", Rationale: "r"}, true, ""},
+		{"populated telemetry fields", modelRule{Risk: detector.RiskMedium, Selector: "telemetry:network-flow", Expression: "operation == 'egress' && outcome == 'forwarded'", Rationale: "r"}, true, ""},
+		{"process class", modelRule{Risk: detector.RiskMedium, Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "r"}, true, ""},
+		{"field the relationship does not populate", modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "operation == 'egress'", Rationale: "r"}, false, "undeclared reference to 'operation'"},
+		{"unknown selector", modelRule{Risk: detector.RiskMedium, Selector: "relationship:not-a-predicate", Expression: "true", Rationale: "r"}, false, "unsupported selector"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			collector := &ruleCollector{resource: testWorkload(), selectors: detector.CELSelectorNames()}
@@ -98,17 +99,17 @@ func TestAddRuleRecordsDistinctRulesUpToTheLimit(t *testing.T) {
 	var logs bytes.Buffer
 	collector := &ruleCollector{resource: testWorkload(), selectors: detector.CELSelectorNames(), logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	rules := []modelRule{
-		{Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "Interactive shells are unexpected."},
-		{Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public'", Rationale: "Public egress is unexpected."},
-		{Selector: "telemetry:network-flow", Expression: "outcome == 'dropped'", Rationale: "Dropped flows indicate probing."},
+		{Risk: detector.RiskHigh, Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "Interactive shells are unexpected."},
+		{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public'", Rationale: "Public egress is unexpected."},
+		{Risk: detector.RiskLow, Selector: "telemetry:network-flow", Expression: "outcome == 'dropped'", Rationale: "Dropped flows indicate probing."},
 	}
 	if result := addRule(t, collector, rules[0]); !result.Added || result.Remaining != maxDraftRules-1 {
 		t.Fatalf("first rule result = %#v", result)
 	}
-	if result := addRule(t, collector, modelRule{Selector: rules[0].Selector, Expression: rules[0].Expression, Rationale: "again"}); result.Added || !strings.Contains(result.Error, "repeats") {
+	if result := addRule(t, collector, modelRule{Risk: detector.RiskMedium, Selector: rules[0].Selector, Expression: rules[0].Expression, Rationale: "again"}); result.Added || !strings.Contains(result.Error, "repeats") {
 		t.Fatalf("duplicate rule result = %#v", result)
 	}
-	if result := addRule(t, collector, modelRule{Selector: "relationship:executes", Expression: "operation == 'x'", Rationale: "r"}); result.Added {
+	if result := addRule(t, collector, modelRule{Risk: detector.RiskMedium, Selector: "relationship:executes", Expression: "operation == 'x'", Rationale: "r"}); result.Added {
 		t.Fatalf("invalid rule result = %#v", result)
 	}
 	for _, rule := range rules[1:] {
@@ -116,7 +117,7 @@ func TestAddRuleRecordsDistinctRulesUpToTheLimit(t *testing.T) {
 			t.Fatalf("rule %#v result = %#v", rule, result)
 		}
 	}
-	if result := addRule(t, collector, modelRule{Selector: "relationship:exposes", Expression: "true", Rationale: "r"}); result.Added || !strings.Contains(result.Error, "3 rules") {
+	if result := addRule(t, collector, modelRule{Risk: detector.RiskMedium, Selector: "relationship:exposes", Expression: "true", Rationale: "r"}); result.Added || !strings.Contains(result.Error, "3 rules") {
 		t.Fatalf("over-limit rule result = %#v", result)
 	}
 	if !reflect.DeepEqual(collector.rules, rules) {
@@ -131,7 +132,7 @@ func TestAddRuleRecordsDistinctRulesUpToTheLimit(t *testing.T) {
 	}
 	wantPrefix := "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-aaaaaaaaaaaa/r-"
 	for index, rule := range proposal.Rules {
-		if !strings.HasPrefix(rule.Rule.ID, wantPrefix) || rule.Rule.ScopeResourceID != "deployment-id" {
+		if !strings.HasPrefix(rule.Rule.ID, wantPrefix) || rule.Rule.ScopeResourceID != "deployment-id" || rule.Rule.Risk != rules[index].Risk {
 			t.Fatalf("rule %d = %#v, want revision-scoped ID with prefix %s", index, rule.Rule, wantPrefix)
 		}
 	}
@@ -181,13 +182,13 @@ func addRule(t *testing.T, collector *ruleCollector, rule modelRule) addRuleResu
 	return result
 }
 
-func TestModelAuthorSendsProjectedResourceAttributesAndAppliesHostScope(t *testing.T) {
+func TestModelAuthorSendsResourceContextAndAppliesHostScope(t *testing.T) {
 	resource := testWorkload()
 	resource.Kind = "kubernetes/clusterrolebinding"
 	resource.Name, resource.Namespace = "lab-admin", ""
-	resource.Projection = json.RawMessage(`{}`)
+	resource.Context = json.RawMessage(`{}`)
 	resource.Attributes = map[string]string{"kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": "cluster-admin"}
-	rule := modelRule{Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public' && destination_role == ''", Rationale: "Detect new public destinations."}
+	rule := modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public' && destination_role == ''", Rationale: "Detect new public destinations."}
 	toolArguments, err := json.Marshal(rule)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +233,7 @@ func TestModelAuthorSendsProjectedResourceAttributesAndAppliesHostScope(t *testi
 				t.Error(err)
 			}
 			want := map[string]any{
-				"kind": "kubernetes/clusterrolebinding", "name": "lab-admin", "projection": map[string]any{},
+				"kind": "kubernetes/clusterrolebinding", "name": "lab-admin", "context": map[string]any{},
 				"attributes": map[string]any{"kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": "cluster-admin"},
 			}
 			if !reflect.DeepEqual(input, want) {
@@ -255,7 +256,7 @@ func TestModelAuthorSendsProjectedResourceAttributesAndAppliesHostScope(t *testi
 	if !strings.Contains(logs.String(), "add_rule added rule") || !strings.Contains(logs.String(), "add_rule_calls=1 accepted_rules=1") {
 		t.Fatalf("debug logs omit the add_rule trace or run summary:\n%s", logs.String())
 	}
-	if requests != 2 || len(proposal.Rules) != 1 || len(proposal.ToolCalls) != 2 || proposal.Rules[0].Rule.ScopeResourceID != "deployment-id" || !bytes.Equal(proposal.Projection, resource.Projection) || !reflect.DeepEqual(proposal.Attributes, resource.Attributes) ||
+	if requests != 2 || len(proposal.Rules) != 1 || len(proposal.ToolCalls) != 2 || proposal.Rules[0].Rule.ScopeResourceID != "deployment-id" || !bytes.Equal(proposal.Context, resource.Context) || !reflect.DeepEqual(proposal.Attributes, resource.Attributes) ||
 		proposal.Rationale != "The resource should not reach unknown public addresses." {
 		t.Fatalf("requests=%d proposal=%#v", requests, proposal)
 	}
@@ -395,10 +396,10 @@ func TestWorkerRetriesWhenTheBaselineCannotBeRead(t *testing.T) {
 	}
 }
 
-func TestDraftRuleIDsAreScopedToTheProjectionRevision(t *testing.T) {
+func TestDraftRuleIDsAreScopedToTheContextRevision(t *testing.T) {
 	resource := testWorkload()
-	resource.RevisionSHA256 = strings.Repeat("ab", 32)
-	proposal, err := buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
+	resource.ContextSHA256 = strings.Repeat("ab", 32)
+	proposal, err := buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +408,7 @@ func TestDraftRuleIDsAreScopedToTheProjectionRevision(t *testing.T) {
 	}
 	for _, kind := range []string{"kubernetes/statefulset", "kubernetes/daemonset"} {
 		resource.Kind = kind
-		proposal, err = buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
+		proposal, err = buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -417,7 +418,7 @@ func TestDraftRuleIDsAreScopedToTheProjectionRevision(t *testing.T) {
 	}
 	resource.Kind = "kubernetes/statefulset"
 	resource.ResourceID = strings.Repeat("x", 128)
-	proposal, err = buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
+	proposal, err = buildProposal(resource, modelDraft{Rationale: "r", Rules: []modelRule{{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "true", Rationale: "r"}}}, detector.CELSelectorNames())
 	if err != nil || len(proposal.Rules[0].Rule.ID) > 128 {
 		t.Fatalf("maximum resource ID produced invalid rule identity: %#v err=%v", proposal, err)
 	}
@@ -426,15 +427,15 @@ func TestDraftRuleIDsAreScopedToTheProjectionRevision(t *testing.T) {
 		t.Fatalf("generic resource context was rejected: %v", err)
 	}
 	resource.Kind = "kubernetes/deployment"
-	resource.RevisionSHA256 = "short"
+	resource.ContextSHA256 = "short"
 	if err := ValidateContext(resource); err == nil {
-		t.Fatal("a malformed projection revision was accepted")
+		t.Fatal("a malformed context revision was accepted")
 	}
 }
 
 func TestDraftRuleIDsFollowLogicAcrossReordering(t *testing.T) {
-	first := modelRule{Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public'", Rationale: "r"}
-	second := modelRule{Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "r"}
+	first := modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public'", Rationale: "r"}
+	second := modelRule{Risk: detector.RiskMedium, Selector: "relationship:executes", Expression: "process_class == 'shell'", Rationale: "r"}
 	proposal, err := buildProposal(testWorkload(), modelDraft{Rules: []modelRule{first, second}}, detector.CELSelectorNames())
 	if err != nil {
 		t.Fatal(err)
@@ -591,7 +592,7 @@ func TestModelAuthorSelectorAllowlist(t *testing.T) {
 	if enum := schema["enum"].([]string); len(enum) != 2 || strings.Contains(schema["description"].(string), "network-flow") {
 		t.Fatalf("selector schema offers more than the allowlist: %v", schema)
 	}
-	draft := modelDraft{Rationale: "r", Rules: []modelRule{{Selector: "telemetry:network-flow", Expression: "outcome == 'dropped'", Rationale: "r"}}}
+	draft := modelDraft{Rationale: "r", Rules: []modelRule{{Risk: detector.RiskMedium, Selector: "telemetry:network-flow", Expression: "outcome == 'dropped'", Rationale: "r"}}}
 	if _, err := buildProposal(testWorkload(), draft, selectors); err == nil {
 		t.Fatal("a selector outside the allowlist was accepted")
 	}
@@ -618,7 +619,7 @@ func TestModelAuthorSendsObservedBehaviorAndValidatesItsLimits(t *testing.T) {
 	}))
 	defer server.Close()
 	resource := testWorkload()
-	resource.RevisionSHA256 = strings.Repeat("ab", 32)
+	resource.ContextSHA256 = strings.Repeat("ab", 32)
 	resource.ObservedBehavior = &state.WorkloadBehavior{Requests: []state.ObservedRequest{}}
 	if _, err := (ModelAuthor{Client: reasoning.Client{Endpoint: server.URL, HTTPClient: server.Client()}}).Author(context.Background(), resource); err != nil {
 		t.Fatal(err)
@@ -626,7 +627,7 @@ func TestModelAuthorSendsObservedBehaviorAndValidatesItsLimits(t *testing.T) {
 	if behavior, ok := input["observedBehavior"].(map[string]any); !ok || !reflect.DeepEqual(behavior["requests"], []any{}) {
 		t.Fatalf("an empty baseline was not sent as an empty request list: %#v", input)
 	}
-	if _, sent := input["revisionSha256"]; sent {
+	if _, sent := input["contextSha256"]; sent {
 		t.Fatalf("the template digest was sent to the model: %#v", input)
 	}
 

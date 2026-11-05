@@ -269,7 +269,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 								{draft.currentRevision ? '' : ' · previous revision'}
 							</p>
 							<small>
-								{draft.requestedBy ? 'manual' : 'new projection'} ·{' '}
+								{draft.requestedBy ? 'manual' : 'new context'} ·{' '}
 								{formatTime(draft.requestedAt ?? draft.createdAt)}
 							</small>
 						</span>

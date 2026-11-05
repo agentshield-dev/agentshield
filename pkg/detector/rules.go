@@ -197,7 +197,7 @@ func Load(ctx context.Context, repository Repository, config Config) (*Engine, e
 
 // Reload reads the active activation and swaps in its ruleset if it is new.
 // When repository also implements ResourceRuleRepository, it then refreshes
-// the workload-scoped rules the same way.
+// the resource-scoped rules the same way.
 //
 // The candidate is compiled completely before the atomic swap, so an
 // evaluation sees either the old ruleset or the new one, never a mix, and

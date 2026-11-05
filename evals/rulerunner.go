@@ -18,8 +18,8 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
-	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
+	"github.com/agentshield-dev/agentshield/pkg/state"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 )
 
@@ -56,7 +56,7 @@ type RuleSuiteSummary struct {
 }
 
 // runRuleSuite scores operator policies and, unless detector-only, rules drafted
-// by the production Workload rule author, against live rule campaigns.
+// by the production resource rule author, against live rule campaigns.
 func runRuleSuite(ctx context.Context, config RunConfig) error {
 	adapter, err := observationAdapter(config.ObservationAdapter)
 	if err != nil {

@@ -15,20 +15,10 @@ import (
 
 func TestResourceRuleEvaluatesProjectedClusterRoleBinding(t *testing.T) {
 	projected := func(id string) graph.Resource {
-		projection, err := graph.NewResourceAuthoringProjection(map[string]any{}, map[string]string{
+		return resourceWithAuthoringContext(t, id, "kubernetes/clusterrolebinding", map[string]string{
 			"kubernetes/rbac-role-ref-kind": "ClusterRole",
 			"kubernetes/rbac-role-ref-name": "cluster-admin",
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := json.Marshal(projection)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return graph.Resource{ID: id, Kind: "kubernetes/clusterrolebinding", Assertions: []graph.ResourceAssertion{{
-			PluginID: "kubernetes", SourceID: "cluster", Attributes: map[string]string{graph.ResourceAuthoringContextAttribute: string(encoded)},
-		}}}
 	}
 	target, other := projected("binding-target"), projected("binding-other")
 	engine, err := New(DefaultConfig(), DefaultRuleset())
@@ -69,7 +59,7 @@ func TestEventsEmitOnlyNewEdgesWithDestinationClassAndRole(t *testing.T) {
 		}}}
 	}
 	resources := []graph.Resource{
-		resource("deployment", "kubernetes/deployment", "deployment", nil),
+		resourceWithAuthoringContext(t, "deployment", "kubernetes/deployment", nil),
 		resource("pod", "kubernetes/pod", "pod", nil),
 		resource("api-service", "kubernetes/service", "service", map[string]string{"network/role": graph.NetworkRoleControlPlaneAPI, "network/addresses": `["ip/34.1.2.3"]`}),
 		resource("api", "network/destination", "ip/34.1.2.3", nil),
@@ -129,7 +119,7 @@ func TestWorkloadShellRuleFiresOncePerNewPodProcessSeries(t *testing.T) {
 		t.Fatal(err)
 	}
 	resources := []graph.Resource{
-		{ID: "deployment", Kind: "kubernetes/deployment"}, {ID: "other-deployment", Kind: "kubernetes/deployment"},
+		resourceWithAuthoringContext(t, "deployment", "kubernetes/deployment", nil), {ID: "other-deployment", Kind: "kubernetes/deployment"},
 		{ID: "replicaset", Kind: "kubernetes/replicaset"},
 		{ID: "pod", Kind: "kubernetes/pod"}, {ID: "other-pod", Kind: "kubernetes/pod"}, {ID: "shell", Kind: "process/class", Identity: shellClaim},
 	}
@@ -223,19 +213,24 @@ func TestWorkloadShellRuleFiresOncePerNewPodProcessSeries(t *testing.T) {
 	}
 }
 
-func TestEventsAttachSupportedWorkloadControllersToPodActivity(t *testing.T) {
+func TestEventsAttachAuthoringControllersToPodActivity(t *testing.T) {
 	for _, test := range []struct {
-		kind string
-		want bool
+		name      string
+		kind      string
+		projected bool
+		want      bool
 	}{
-		{kind: "kubernetes/deployment", want: true},
-		{kind: "kubernetes/statefulset", want: true},
-		{kind: "kubernetes/daemonset", want: true},
-		{kind: "kubernetes/job"},
+		{name: "projected deployment", kind: "kubernetes/deployment", projected: true, want: true},
+		{name: "projected custom controller", kind: "kubernetes/job", projected: true, want: true},
+		{name: "unprojected deployment", kind: "kubernetes/deployment"},
 	} {
-		t.Run(test.kind, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
+			controller := graph.Resource{ID: "controller", Kind: test.kind}
+			if test.projected {
+				controller = resourceWithAuthoringContext(t, "controller", test.kind, nil)
+			}
 			snapshot := graph.Snapshot{
-				Resources:     []graph.Resource{{ID: "controller", Kind: test.kind}, {ID: "pod", Kind: "kubernetes/pod"}, {ID: "destination", Kind: "kubernetes/service"}},
+				Resources:     []graph.Resource{controller, {ID: "pod", Kind: "kubernetes/pod"}, {ID: "destination", Kind: "kubernetes/service"}},
 				Relationships: []graph.Relationship{{SubjectID: "controller", Predicate: graph.PredicateInstantiates, ObjectID: "pod"}},
 				Telemetry:     []graph.TelemetryEvent{{ID: "request", Kind: telemetry.EventKindActiveProbe, SubjectID: "pod", ObjectID: "destination", Properties: map[string]string{"telemetry/first-seen": "2026-10-15T12:00:00Z"}}},
 			}
@@ -249,4 +244,19 @@ func TestEventsAttachSupportedWorkloadControllersToPodActivity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func resourceWithAuthoringContext(t *testing.T, id, kind string, attributes map[string]string) graph.Resource {
+	t.Helper()
+	context, err := graph.NewResourceAuthoringContext(map[string]any{}, attributes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return graph.Resource{ID: id, Kind: kind, Assertions: []graph.ResourceAssertion{{
+		PluginID: "kubernetes", SourceID: "cluster", Attributes: map[string]string{graph.ResourceAuthoringContextAttribute: string(encoded)},
+	}}}
 }

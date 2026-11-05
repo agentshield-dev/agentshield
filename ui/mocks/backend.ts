@@ -51,7 +51,7 @@ export interface BackendConfig {
 	settleMs: number;
 	// False models a non-loopback service started without --rule-review-api: rule writes return 503.
 	ruleReview: boolean;
-	// How long a requested Workload rule draft takes to be authored.
+	// How long a requested resource rule draft takes to be authored.
 	authorMs: number;
 }
 
@@ -768,7 +768,7 @@ export class FakeBackend {
 
 	private ruleJob(id: string, action: string): RuleJob {
 		const job = this.ruleJobs.find(item => String(item.draft.id) === id);
-		if (!job) throw new ApiError(404, action, 'Workload rule authoring job not found');
+		if (!job) throw new ApiError(404, action, 'Resource rule authoring job not found');
 		return job;
 	}
 
@@ -800,7 +800,7 @@ export class FakeBackend {
 			throw new ApiError(400, 'review rule draft', 'decision must be approved or rejected');
 		}
 		if (job.draft.status !== 'completed') {
-			throw new ApiError(409, 'review rule draft', 'Workload rule job is not a completed proposal');
+			throw new ApiError(409, 'review rule draft', 'Resource rule job is not a completed proposal');
 		}
 		if (decision === 'approved' && ruleIds) {
 			const available = new Set(list(job.proposal?.rules).map(item => item.rule.id));
@@ -836,12 +836,12 @@ export class FakeBackend {
 			throw new ApiError(
 				404,
 				'regenerate rules',
-				"Workload rule authoring job not found for the workload's current revision"
+				"Resource rule authoring job not found for the resource's current revision"
 			);
 		}
 		// Like the service, a queued or retrying draft is woken; only a running one conflicts.
 		if (job.draft.status === 'running') {
-			throw new ApiError(409, 'regenerate rules', 'Workload rule authoring is already in progress');
+			throw new ApiError(409, 'regenerate rules', 'Resource rule authoring is already in progress');
 		}
 		const requestedAt = new Date().toISOString();
 		job.draft = {

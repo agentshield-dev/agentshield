@@ -78,7 +78,7 @@ func resourceCELSelector(kind string) (CELSelector, bool) {
 		return CELSelector{}, false
 	}
 	return CELSelector{
-		Type: "resource", Kind: kind, Description: "A bounded normalized resource projection changed.",
+		Type: "resource", Kind: kind, Description: "A bounded normalized resource context changed.",
 		Trigger: "when the resource first appears or its projected rule attributes change",
 		Fields:  map[string]string{"attributes": "bounded normalized attributes selected by the source plugin"},
 	}, true

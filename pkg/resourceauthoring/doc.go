@@ -2,7 +2,7 @@
 // observed Kubernetes Deployments, StatefulSets, and DaemonSets.
 //
 // Graph publication enqueues one durable job, in the same transaction, the
-// first time a bounded resource projection appears (see pkg/state). A [Worker] claims
+// first time a bounded resource authoring context appears (see pkg/state). A [Worker] claims
 // jobs under a renewable lease, calls an [Author] outside any database
 // transaction, and stores the resulting [Proposal] on the job. Failures are
 // retried with bounded exponential backoff, and an expired lease is

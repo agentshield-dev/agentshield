@@ -323,11 +323,11 @@ export interface RulesResponse {
 export type RuleDraftStatus = 'queued' | 'running' | 'retryable' | 'completed' | 'failed';
 export type RuleReviewStatus = 'pending' | 'approved' | 'rejected';
 
-// One resource rule authoring job for one projection revision.
+// One resource rule authoring job for one context revision.
 export interface RuleDraft {
 	id: number;
 	resourceId: string;
-	revisionSha256?: string;
+	contextSha256?: string;
 	status: RuleDraftStatus;
 	attemptCount: number;
 	lastError?: string;
@@ -354,7 +354,7 @@ export interface RuleProposal {
 	rules: List<{ rule: DetectorRule; rationale: string }>;
 	approvedRuleIds?: List<string>;
 	toolCalls?: List<RuleDraftToolCall>;
-	projection?: Record<string, unknown>;
+	context?: Record<string, unknown>;
 	attributes?: Record<string, string>;
 }
 
