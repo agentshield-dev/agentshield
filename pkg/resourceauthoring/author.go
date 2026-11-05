@@ -18,6 +18,7 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
 	"github.com/agentshield-dev/agentshield/pkg/state"
+	"github.com/agentshield-dev/agentshield/pkg/telemetry"
 )
 
 // authoringPrompt is the system prompt for rule drafting.
@@ -95,7 +96,18 @@ func (author ModelAuthor) selectors(resource state.ResourceAuthoringContext) ([]
 		if !observedBehaviorKind(resource.Kind) {
 			return []string{resourceSelector}, nil
 		}
-		return append(detector.CELSelectorNames(), resourceSelector), nil
+		return []string{
+			"relationship:" + string(graph.PredicateInstantiates),
+			"relationship:" + string(graph.PredicateUsesIdentity),
+			"relationship:" + string(graph.PredicateGovernedBy),
+			"relationship:" + string(graph.PredicateCommunicates),
+			"relationship:" + string(graph.PredicateRunsOn),
+			"relationship:" + string(graph.PredicateExecutes),
+			"telemetry:" + telemetry.EventKindNetworkFlow,
+			"telemetry:" + telemetry.EventKindActiveProbe,
+			"telemetry:" + telemetry.EventKindProcessExec,
+			resourceSelector,
+		}, nil
 	}
 	for _, name := range author.Selectors {
 		if _, _, ok := detector.ParseCELSelector(name); !ok {
