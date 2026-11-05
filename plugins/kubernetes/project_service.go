@@ -61,13 +61,37 @@ func isAuthorableResource(item *unstructured.Unstructured) bool {
 }
 
 func addResourceAuthoringContext(attributes map[string]string) error {
-	safe := make(map[string]string)
-	for key, value := range attributes {
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
 		if resourceAuthoringAttribute(key) {
-			safe[key] = value
+			keys = append(keys, key)
 		}
 	}
+	slices.SortFunc(keys, func(left, right string) int {
+		leftLabel := strings.HasPrefix(left, "kubernetes/label/")
+		rightLabel := strings.HasPrefix(right, "kubernetes/label/")
+		if leftLabel != rightLabel {
+			if leftLabel {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(left, right)
+	})
+	safe := make(map[string]string, min(len(keys), graph.ResourceAuthoringAttributesMaxItems))
+	truncated := false
+	for _, key := range keys {
+		value := attributes[key]
+		if len(safe) == graph.ResourceAuthoringAttributesMaxItems || len(key) > 128 || len(value) > 2048 {
+			truncated = true
+			continue
+		}
+		safe[key] = value
+	}
 	context := map[string]any{}
+	if truncated {
+		context["attributesTruncated"] = true
+	}
 	if encoded := attributes[workloadContextAttribute]; encoded != "" {
 		var workload map[string]any
 		if err := json.Unmarshal([]byte(encoded), &workload); err != nil {

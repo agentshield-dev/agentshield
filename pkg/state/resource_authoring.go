@@ -825,8 +825,12 @@ func (s *Store) ResourceRuleQueueStats(ctx context.Context, minAge time.Duration
 // unreviewed drafts run in shadow mode. A proposal that does not decode, or
 // that holds a rule scoped to another resource, is skipped and logged so one
 // bad row cannot block every reload. The result may exceed
-// detector.MaxResourceRules; the detector caps it deterministically.
+// detector.MaxResourceRules by one so the detector can report the bound.
 func (s *Store) ReadResourceRules(ctx context.Context) ([]detector.ResourceRule, error) {
+	return s.readResourceRules(ctx, detector.MaxResourceRules)
+}
+
+func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.ResourceRule, error) {
 	// Per resource, the current revision's approved rule runs active; until it
 	// is approved, the newest approved rule of another revision stays active and
 	// the current revision's pending draft runs in shadow.
@@ -845,7 +849,7 @@ func (s *Store) ReadResourceRules(ctx context.Context) ([]detector.ResourceRule,
 		SELECT resource_id::text, review_status, proposal
 		FROM loadable
 		WHERE job_id IN (SELECT job_id FROM active) OR (current_revision AND review_status = 'pending')
-		ORDER BY job_id`)
+		ORDER BY (review_status = 'approved') DESC, job_id`)
 	if err != nil {
 		return nil, fmt.Errorf("read resource rules: %w", err)
 	}
@@ -893,6 +897,9 @@ func (s *Store) ReadResourceRules(ctx context.Context) ([]detector.ResourceRule,
 				}
 			}
 			result = append(result, detector.ResourceRule{Rule: candidate.Rule, Mode: mode})
+			if len(result) > limit {
+				return result, nil
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {

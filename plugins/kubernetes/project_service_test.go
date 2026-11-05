@@ -1,7 +1,10 @@
 package kubernetes
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,6 +154,52 @@ func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("authoring context leaked %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestProjectResourceAuthoringAttributesAreDeterministicallyBounded(t *testing.T) {
+	labels := make(map[string]string)
+	for index := range graph.ResourceAuthoringAttributesMaxItems + 12 {
+		labels[fmt.Sprintf("label-%03d", index)] = "value"
+	}
+	longLabel := strings.Repeat("a", 60) + "." + strings.Repeat("b", 60) + ".example/security"
+	labels[longLabel] = "value"
+	project := func(labels map[string]string) graph.ResourceAuthoringContext {
+		t.Helper()
+		deployment := testObject("apps/v1", "Deployment", "prod", "payments", "deployment-uid", map[string]any{"spec": map[string]any{
+			"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "api", "image": "registry.example/payments:v4"}}}},
+		}})
+		deployment.SetLabels(labels)
+		input, err := Project("cluster", "source", []*unstructured.Unstructured{deployment})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded := resourceOfKind(t, input, "kubernetes/deployment").Attributes[graph.ResourceAuthoringContextAttribute]
+		context, err := graph.DecodeResourceAuthoringContext(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return context
+	}
+	first := project(labels)
+	reversed := make(map[string]string, len(labels))
+	for index := graph.ResourceAuthoringAttributesMaxItems + 11; index >= 0; index-- {
+		reversed[fmt.Sprintf("label-%03d", index)] = "value"
+	}
+	reversed[longLabel] = "value"
+	second := project(reversed)
+	if !maps.Equal(first.Attributes, second.Attributes) || !bytes.Equal(first.Context, second.Context) {
+		t.Fatal("attribute insertion order changed the bounded authoring context")
+	}
+	if len(first.Attributes) != graph.ResourceAuthoringAttributesMaxItems || first.Attributes["kubernetes/name"] != "payments" {
+		t.Fatalf("bounded attributes=%#v", first.Attributes)
+	}
+	if _, found := first.Attributes["kubernetes/label/"+longLabel]; found {
+		t.Fatal("an oversized attribute key remained in authoring context")
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(first.Context, &metadata); err != nil || metadata["attributesTruncated"] != true {
+		t.Fatalf("context=%s err=%v", first.Context, err)
 	}
 }
 
