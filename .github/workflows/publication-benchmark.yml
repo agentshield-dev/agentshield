@@ -19,6 +19,33 @@ jobs:
     name: Publication benchmark
     continue-on-error: true
     runs-on: ubuntu-latest
+    services:
+      postgres-base:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: agentshield
+          POSTGRES_PASSWORD: agentshield
+          POSTGRES_DB: agentshield_base
+        options: >-
+          --health-cmd "pg_isready --username agentshield --dbname agentshield_base"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      postgres-pr:
+        image: postgres:16-alpine
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: agentshield
+          POSTGRES_PASSWORD: agentshield
+          POSTGRES_DB: agentshield_pr
+        options: >-
+          --health-cmd "pg_isready --username agentshield --dbname agentshield_pr"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,6 +59,7 @@ jobs:
       - name: Benchmark base
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AGENTSHIELD_TEST_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5432/agentshield_base?sslmode=disable
         run: |
           set -o pipefail
           PR_MODULE=$(go list -m)
@@ -44,6 +72,8 @@ jobs:
           sed -i "s|\"$PR_MODULE/|\"$BASE_MODULE/|g" pkg/state/publication_benchmark_test.go
           ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-base.txt"
       - name: Benchmark pull request
+        env:
+          AGENTSHIELD_TEST_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5433/agentshield_pr?sslmode=disable
         run: |
           set -o pipefail
           ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-pr.txt"
