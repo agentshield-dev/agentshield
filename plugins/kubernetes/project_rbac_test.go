@@ -25,7 +25,7 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "reader"},
 		"subjects": []any{map[string]any{"kind": "ServiceAccount", "namespace": "demo", "name": "api"}},
 	})
-	clusterRoleBinding := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "lab-admin", "cluster-role-binding", map[string]any{
+	clusterRoleBinding := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "platform-admin", "cluster-role-binding", map[string]any{
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"},
 		"subjects": subjects,
 	})
@@ -74,7 +74,7 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 	}
 
 	slices.Reverse(subjects)
-	reversed := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "lab-admin", "cluster-role-binding", map[string]any{
+	reversed := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "platform-admin", "cluster-role-binding", map[string]any{
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"},
 		"subjects": subjects,
 	})
@@ -93,7 +93,7 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 			break
 		}
 	}
-	replacedBinding := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "lab-admin", "cluster-role-binding", map[string]any{
+	replacedBinding := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "platform-admin", "cluster-role-binding", map[string]any{
 		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"}, "subjects": replaced,
 	})
 	replacedBinding.SetResourceVersion("11")

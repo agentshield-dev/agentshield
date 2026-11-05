@@ -12,7 +12,7 @@ func TestContributionInputDigestIsDeterministic(t *testing.T) {
 		for _, key := range attributeOrder {
 			attributes[key] = "value-" + key
 		}
-		claim := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "a"}
+		claim := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "a"}
 		return graph.Input{
 			Resources: []graph.ResourceAssertion{{
 				Claim: claim, Kind: "machine", Attributes: attributes,
@@ -59,7 +59,7 @@ func TestContributionInputDigestIsOrderSensitive(t *testing.T) {
 
 func digestTestResource(key string) graph.ResourceAssertion {
 	return graph.ResourceAssertion{
-		Claim: graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: key},
+		Claim: graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: key},
 		Kind:  "machine", PluginID: "test", SourceID: "fixture", RuleID: "test.resource", EvidenceIDs: []string{"event-" + key},
 	}
 }

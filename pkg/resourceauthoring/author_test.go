@@ -186,7 +186,7 @@ func addRule(t *testing.T, collector *ruleCollector, rule modelRule) addRuleResu
 func TestModelAuthorSendsResourceContextAndAppliesHostScope(t *testing.T) {
 	resource := testWorkload()
 	resource.Kind = "kubernetes/clusterrolebinding"
-	resource.Name, resource.Namespace = "lab-admin", ""
+	resource.Name, resource.Namespace = "platform-admin", ""
 	resource.Context = json.RawMessage(`{}`)
 	resource.Attributes = map[string]string{"kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": "cluster-admin"}
 	rule := modelRule{Risk: detector.RiskHigh, Selector: "resource:kubernetes/clusterrolebinding", Expression: "attributes['kubernetes/rbac-role-ref-name'] == 'cluster-admin'", Rationale: "Detect cluster-admin bindings."}
@@ -234,7 +234,7 @@ func TestModelAuthorSendsResourceContextAndAppliesHostScope(t *testing.T) {
 				t.Error(err)
 			}
 			want := map[string]any{
-				"kind": "kubernetes/clusterrolebinding", "name": "lab-admin", "context": map[string]any{},
+				"kind": "kubernetes/clusterrolebinding", "name": "platform-admin", "context": map[string]any{},
 				"attributes": map[string]any{"kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": "cluster-admin"},
 			}
 			if !reflect.DeepEqual(input, want) {
