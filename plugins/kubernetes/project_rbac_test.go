@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -98,5 +99,8 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 	replacedAttributes := resourceOfKind(t, replacedInput, "kubernetes/clusterrolebinding").Attributes
 	if replacedAttributes["kubernetes/rbac-subjects"] != attributes["kubernetes/rbac-subjects"] || replacedAttributes["kubernetes/rbac-subjects-omitted"] != attributes["kubernetes/rbac-subjects-omitted"] || replacedAttributes["kubernetes/rbac-subjects-sha256"] == attributes["kubernetes/rbac-subjects-sha256"] {
 		t.Fatalf("omitted subject replacement was not revision-sensitive: got=%#v want retained subjects unchanged", replacedAttributes)
+	}
+	if replacedAttributes[graph.ResourceAuthoringContextAttribute] != attributes[graph.ResourceAuthoringContextAttribute] {
+		t.Fatal("an omitted subject replacement changed the resource authoring context")
 	}
 }

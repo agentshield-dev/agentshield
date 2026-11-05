@@ -85,6 +85,9 @@ func addResourceAuthoringContext(attributes map[string]string) error {
 }
 
 func resourceAuthoringAttribute(key string) bool {
+	if strings.HasSuffix(key, "-sha256") {
+		return false
+	}
 	switch key {
 	case "kubernetes/api-version", "kubernetes/name", "kubernetes/namespace",
 		"kubernetes/service-type", "kubernetes/load-balancer-class", "kubernetes/external-traffic-policy",
