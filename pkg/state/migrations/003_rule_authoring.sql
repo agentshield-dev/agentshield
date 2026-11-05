@@ -28,5 +28,6 @@ CREATE TABLE resource_rule_jobs (
 CREATE UNIQUE INDEX resource_rule_jobs_context_idx ON resource_rule_jobs (resource_id, context_sha256);
 CREATE UNIQUE INDEX resource_rule_jobs_current_idx ON resource_rule_jobs (resource_id) WHERE current_revision;
 CREATE INDEX resource_rule_jobs_ready_idx ON resource_rule_jobs (available_at, job_id) WHERE status IN ('queued', 'retryable');
+CREATE INDEX resource_rule_jobs_waiting_resource_idx ON resource_rule_jobs (resource_id) WHERE status IN ('queued', 'retryable');
 CREATE INDEX resource_rule_jobs_expired_lease_idx ON resource_rule_jobs (lease_expires_at, job_id) WHERE status = 'running';
-CREATE INDEX resource_rule_jobs_loadable_idx ON resource_rule_jobs (resource_id) WHERE status = 'completed' AND review_status <> 'rejected';
+CREATE INDEX resource_rule_jobs_approved_idx ON resource_rule_jobs (resource_id, current_revision DESC, job_id DESC) WHERE status = 'completed' AND review_status = 'approved';

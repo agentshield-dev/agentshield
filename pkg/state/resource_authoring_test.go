@@ -510,6 +510,36 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLApprovedResourceRulesRequireExplicitSelection(t *testing.T) {
+	store, _ := integrationStore(t)
+	ctx := context.Background()
+	if _, err := store.ReplaceContribution(ctx, deploymentContribution("deployments", 1, "deployment-uid", "payments")); err != nil {
+		t.Fatal(err)
+	}
+	job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0)
+	if err != nil || !claimed {
+		t.Fatalf("claimed=%t err=%v", claimed, err)
+	}
+	rule := detector.Rule{
+		ID: "resource/rule-1", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+		Type: "resource", Kind: job.Context.Kind, Expression: "true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+	}
+	proposal, err := json.Marshal(map[string]any{"rules": []map[string]any{{"rule": rule}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker", proposal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE resource_rule_jobs SET review_status='approved', reviewed_by='operator', reviewed_at=now() WHERE job_id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := store.ReadResourceRules(ctx)
+	if err != nil || len(rules) != 0 {
+		t.Fatalf("rules=%#v err=%v", rules, err)
+	}
+}
+
 func TestPostgreSQLRemovingResourceUnloadsApprovedResourceRules(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()

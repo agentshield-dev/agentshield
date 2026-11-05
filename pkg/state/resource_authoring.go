@@ -249,7 +249,25 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 	if len(resources) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT resource_id::text, context_sha256, status IN ('queued', 'retryable'), current_revision FROM resource_rule_jobs WHERE resource_id = ANY($1::uuid[])`, ids)
+	revisions := make([]string, len(resources))
+	for index := range resources {
+		revisions[index] = resources[index].ContextSHA256
+	}
+	rows, err := tx.Query(ctx, `
+		WITH incoming AS (
+			SELECT * FROM unnest($1::uuid[], $2::text[]) AS revision(resource_id, context_sha256)
+		)
+		SELECT resource_id::text, context_sha256, status IN ('queued', 'retryable'), current_revision
+		FROM resource_rule_jobs j
+		JOIN incoming i USING (resource_id, context_sha256)
+		UNION
+		SELECT resource_id::text, context_sha256, status IN ('queued', 'retryable'), current_revision
+		FROM resource_rule_jobs
+		WHERE resource_id = ANY($1::uuid[]) AND current_revision
+		UNION
+		SELECT resource_id::text, context_sha256, true, current_revision
+		FROM resource_rule_jobs
+		WHERE resource_id = ANY($1::uuid[]) AND status IN ('queued', 'retryable')`, ids, revisions)
 	if err != nil {
 		return fmt.Errorf("read resource rule authoring revisions: %w", err)
 	}
@@ -950,8 +968,11 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 			WHERE expanded.candidate->'rule'->>'scopeResourceId' = resource_id::text
 			AND (
 				review_status <> 'approved'
-				OR proposal->'approvedRuleIds' IS NULL
-				OR proposal->'approvedRuleIds' ? (expanded.candidate->'rule'->>'id')
+				OR (
+					jsonb_typeof(proposal->'approvedRuleIds') = 'array'
+					AND jsonb_array_length(proposal->'approvedRuleIds') > 0
+					AND proposal->'approvedRuleIds' ? (expanded.candidate->'rule'->>'id')
+				)
 			)
 		)
 		SELECT resource_id::text, review_status, proposal->'approvedRuleIds', candidate
@@ -990,7 +1011,7 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 		for _, id := range approvedRuleIDs {
 			approved[id] = struct{}{}
 		}
-		if review == ResourceRuleReviewApproved && approvedRuleIDs != nil {
+		if review == ResourceRuleReviewApproved {
 			if _, found := approved[candidate.Rule.ID]; !found {
 				continue
 			}
