@@ -150,18 +150,13 @@ func readFullProjection(ctx context.Context, tx pgx.Tx) (graph.Snapshot, error) 
 	if err := rows.Err(); err != nil {
 		return snapshot, err
 	}
-	rows, err = tx.Query(ctx, `SELECT resource_id::text, assertions FROM assertion_conflicts ORDER BY resource_id`)
+	rows, err = tx.Query(ctx, `SELECT resource_id::text, kinds, assertions FROM assertion_conflicts ORDER BY resource_id`)
 	if err != nil {
 		return snapshot, err
 	}
 	for rows.Next() {
-		var conflict graph.AssertionConflict
-		var assertions []byte
-		if err := rows.Scan(&conflict.ResourceID, &assertions); err != nil {
-			rows.Close()
-			return snapshot, err
-		}
-		if err := json.Unmarshal(assertions, &conflict.Assertions); err != nil {
+		conflict, err := scanAssertionConflict(rows)
+		if err != nil {
 			rows.Close()
 			return snapshot, err
 		}
@@ -226,18 +221,13 @@ func readScopedProjection(ctx context.Context, tx pgx.Tx, scope projectionScope)
 		if err := rows.Err(); err != nil {
 			return snapshot, err
 		}
-		rows, err = tx.Query(ctx, `SELECT resource_id::text, assertions FROM assertion_conflicts WHERE resource_id=ANY($1) ORDER BY resource_id`, resourceIDs)
+		rows, err = tx.Query(ctx, `SELECT resource_id::text, kinds, assertions FROM assertion_conflicts WHERE resource_id=ANY($1) ORDER BY resource_id`, resourceIDs)
 		if err != nil {
 			return snapshot, err
 		}
 		for rows.Next() {
-			var conflict graph.AssertionConflict
-			var assertions []byte
-			if err := rows.Scan(&conflict.ResourceID, &assertions); err != nil {
-				rows.Close()
-				return snapshot, err
-			}
-			if err := json.Unmarshal(assertions, &conflict.Assertions); err != nil {
+			conflict, err := scanAssertionConflict(rows)
+			if err != nil {
 				rows.Close()
 				return snapshot, err
 			}
@@ -293,6 +283,18 @@ func readScopedProjection(ctx context.Context, tx pgx.Tx, scope projectionScope)
 		}
 	}
 	return snapshot, nil
+}
+
+func scanAssertionConflict(row rowScanner) (graph.AssertionConflict, error) {
+	var conflict graph.AssertionConflict
+	var kinds, assertions []byte
+	if err := row.Scan(&conflict.ResourceID, &kinds, &assertions); err != nil {
+		return conflict, err
+	}
+	if err := json.Unmarshal(kinds, &conflict.Kinds); err != nil {
+		return conflict, err
+	}
+	return conflict, json.Unmarshal(assertions, &conflict.Assertions)
 }
 
 func collectScopedInput(ctx context.Context, tx pgx.Tx, before graph.Snapshot, delta membershipDelta) (graph.Input, error) {

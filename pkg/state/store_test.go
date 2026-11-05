@@ -1366,7 +1366,7 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Snapshot.Conflicts) != 1 || len(view.Snapshot.Conflicts[0].Assertions) != 2 || view.Snapshot.Conflicts[0].Assertions[0].PluginID == "" || view.Snapshot.Conflicts[0].Assertions[1].PluginID == "" {
+	if len(view.Snapshot.Conflicts) != 1 || !slices.Equal(view.Snapshot.Conflicts[0].Kinds, []string{"machine", "service"}) || len(view.Snapshot.Conflicts[0].Assertions) != 2 || view.Snapshot.Conflicts[0].Assertions[0].PluginID == "" || view.Snapshot.Conflicts[0].Assertions[1].PluginID == "" {
 		t.Fatalf("projected conflict lost assertion provenance: %+v", view.Snapshot.Conflicts)
 	}
 }
