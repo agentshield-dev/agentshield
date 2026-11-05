@@ -756,10 +756,14 @@ export class FakeBackend {
 		return { activation: { revision: 1, rulesetId: 'builtin/v1' }, rules: [], resourceRules };
 	}
 
-	ruleDrafts(): RuleDraftsResponse {
-		return {
-			drafts: [...this.ruleJobs].map(job => job.draft).sort((left, right) => right.id - left.id)
-		};
+	ruleDrafts(resourceId = ''): RuleDraftsResponse {
+		if (resourceId.length > 128)
+			throw new ApiError(400, 'list rule drafts', 'resource ID must contain at most 128 bytes');
+		const drafts = this.ruleJobs
+			.filter(job => resourceId === '' || job.draft.resourceId === resourceId)
+			.map(job => job.draft)
+			.sort((left, right) => right.id - left.id);
+		return { drafts: drafts.slice(0, 500), ...(drafts.length > 500 ? { truncated: true } : {}) };
 	}
 
 	private ruleJob(id: string, action: string): RuleJob {

@@ -62,7 +62,9 @@ export const handlers: HttpHandler[] = [
 		}
 	),
 	http.get('/api/v1/rules', () => respond(() => backend.rules())),
-	http.get('/api/v1/rule-drafts', () => respond(() => backend.ruleDrafts())),
+	http.get('/api/v1/rule-drafts', ({ request }) =>
+		respond(() => backend.ruleDrafts(new URL(request.url).searchParams.get('resourceId') ?? ''))
+	),
 	http.get('/api/v1/rule-drafts/:jobID', ({ params }) =>
 		respond(() => backend.ruleDraft(text(params.jobID)))
 	),

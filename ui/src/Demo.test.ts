@@ -4,6 +4,15 @@ import { ApiError, FakeBackend } from '../mocks/backend';
 import { demoScenario } from '../mocks/scenarios';
 
 describe('demo scenarios', () => {
+	it('filters rule drafts by resource before applying list bounds', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts)[0];
+		if (!draft) throw new Error('expected a rule draft');
+		const filtered = list(backend.ruleDrafts(draft.resourceId).drafts);
+		expect(filtered.length).toBeGreaterThan(0);
+		expect(filtered.every(item => item.resourceId === draft.resourceId)).toBe(true);
+	});
+
 	it('requires explicit selections when loading approved rules', () => {
 		const backend = new FakeBackend();
 		const draft = list(backend.ruleDrafts().drafts).find(item => item.reviewStatus === 'approved');
