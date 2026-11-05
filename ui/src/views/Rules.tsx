@@ -164,10 +164,21 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 		tab === 'active'
 			? (loadedRules.find(item => item.key === selectedID) ?? loadedRules[0])
 			: undefined;
+	const parsedDraftID = Number(selectedID);
+	const routedDraftID =
+		tab === 'drafts' &&
+		selectedID !== undefined &&
+		/^\d+$/.test(selectedID) &&
+		Number.isSafeInteger(parsedDraftID) &&
+		parsedDraftID > 0
+			? parsedDraftID
+			: undefined;
 	const selectedDraft =
 		tab === 'drafts'
-			? (allDrafts.find(draft => String(draft.id) === selectedID) ?? shownDrafts[0])
+			? (allDrafts.find(draft => draft.id === routedDraftID) ??
+				(routedDraftID === undefined ? shownDrafts[0] : undefined))
 			: undefined;
+	const detailDraftID = routedDraftID ?? selectedDraft?.id;
 	const resourceRules = list(loaded.data?.resourceRules);
 	const metrics = [
 		['Active rules', resourceRules.filter(item => item.mode === 'active').length],
@@ -180,10 +191,10 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 	let detailPane: ReactNode;
 	if (tab === 'active' && selectedRule) {
 		detailPane = <LoadedRuleDetail item={selectedRule} onViewGraph={onViewGraph} />;
-	} else if (tab === 'drafts' && selectedDraft) {
+	} else if (tab === 'drafts' && detailDraftID !== undefined) {
 		detailPane = (
 			<RuleDraftDetail
-				draftId={selectedDraft.id}
+				draftId={detailDraftID}
 				active={active}
 				refresh={key}
 				onChanged={() => setChanges(value => value + 1)}

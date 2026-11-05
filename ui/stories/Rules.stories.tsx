@@ -176,3 +176,35 @@ export const RetryFailedDraft: Story = {
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
 	}
 };
+
+export const DeepLinkedDraftOutsideGlobalPage: Story = {
+	beforeEach: () => {
+		backend.configure({ authorMs: 200 });
+		const originalDrafts = backend.ruleDrafts.bind(backend);
+		const originalDraft = backend.ruleDraft.bind(backend);
+		const target = originalDraft('1');
+		const newer = Array.from({ length: 500 }, (_, index) => ({
+			...target.draft,
+			id: 501 - index
+		}));
+		backend.ruleDrafts = resourceId =>
+			resourceId ? originalDrafts(resourceId) : { drafts: newer, truncated: true };
+		backend.ruleDraft = id => {
+			const numericID = Number(id);
+			return numericID >= 2 && numericID <= 501
+				? { ...target, draft: { ...target.draft, id: numericID } }
+				: originalDraft(id);
+		};
+		window.history.replaceState(null, '', '#rules/drafts/1');
+		return () => {
+			backend.ruleDrafts = originalDrafts;
+			backend.ruleDraft = originalDraft;
+		};
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Draft #1', {}, wait);
+		await canvas.findByRole('heading', { name: name(workloads[0]), level: 2 }, wait);
+		await expect(canvasElement.querySelectorAll('.finding-row.active')).toHaveLength(0);
+	}
+};
