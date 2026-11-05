@@ -16,7 +16,7 @@
 // worker claims and admits jobs ([Store.ClaimInvestigationJob],
 // [Store.AdmitInvestigationJob]) and records agentic findings. Detector
 // rulesets, resource rule-authoring jobs, and their review status
-// ([Store.ReadResourceRules]) are stored here as well.
+// ([Store.ReadResourceRules], [Store.ReadResourceRulesForDetector]) are stored here as well.
 //
 // # Contributions and generations
 //

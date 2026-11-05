@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,24 @@ type ResourceAuthoringContext struct {
 	// and the workload made no outbound requests. The authoring worker sets
 	// it when it claims a job; the queue stores only identity.
 	ObservedBehavior *WorkloadBehavior `json:"observedBehavior,omitempty"`
+}
+
+func resourceAuthoringContextSHA256(resource ResourceAuthoringContext) (string, error) {
+	encoded, err := json.Marshal(struct {
+		Kind       string            `json:"kind"`
+		Name       string            `json:"name,omitempty"`
+		Namespace  string            `json:"namespace,omitempty"`
+		Context    json.RawMessage   `json:"context"`
+		Attributes map[string]string `json:"attributes,omitempty"`
+	}{
+		Kind: resource.Kind, Name: resource.Name, Namespace: resource.Namespace,
+		Context: resource.Context, Attributes: resource.Attributes,
+	})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 // Limits on [WorkloadBehavior], which is sent to a model.
@@ -310,19 +330,18 @@ func ResourceAuthoringContextFor(resource graph.Resource) ResourceAuthoringConte
 		if err != nil {
 			continue
 		}
-		contextSHA256, err := authoringContext.SHA256()
-		if err != nil {
-			continue
-		}
 		candidate := empty
 		candidate.Name = boundedString(assertion.DisplayName, 253)
 		if name := assertion.Attributes["kubernetes/name"]; name != "" {
 			candidate.Name = boundedString(name, 253)
 		}
 		candidate.Namespace = boundedString(assertion.Attributes["kubernetes/namespace"], 253)
-		candidate.ContextSHA256 = contextSHA256
 		candidate.Context = slices.Clone(authoringContext.Context)
 		candidate.Attributes = maps.Clone(authoringContext.Attributes)
+		candidate.ContextSHA256, err = resourceAuthoringContextSHA256(candidate)
+		if err != nil {
+			continue
+		}
 		encoded, _ := json.Marshal(candidate)
 		if selected == nil {
 			selected, selectedEncoded = &candidate, encoded
@@ -434,7 +453,38 @@ func (s *Store) CompleteResourceRuleJob(ctx context.Context, jobID int64, worker
 	if !json.Valid(proposal) || len(proposal) > 256*1024 {
 		return errors.New("resource rule proposal must be valid JSON no larger than 256 KiB")
 	}
-	result, err := s.pool.Exec(ctx, `
+	var decoded struct {
+		Rules []struct {
+			Rule detector.Rule `json:"rule"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(proposal, &decoded); err != nil {
+		return fmt.Errorf("decode resource rule proposal: %w", err)
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin Resource rule authoring completion: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var resourceID string
+	err = tx.QueryRow(ctx, `SELECT resource_id::text FROM resource_rule_jobs WHERE job_id=$1 AND status='running' AND lease_owner=$2 AND current_revision FOR UPDATE`, jobID, workerID).Scan(&resourceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("resource rule authoring lease is no longer owned by this worker")
+	}
+	if err != nil {
+		return fmt.Errorf("read Resource rule authoring job for completion: %w", err)
+	}
+	rules := make([]detector.ResourceRule, 0, len(decoded.Rules))
+	for _, candidate := range decoded.Rules {
+		if candidate.Rule.ScopeResourceID != resourceID {
+			return errors.New("resource rule proposal contains a rule scoped to another resource")
+		}
+		rules = append(rules, detector.ResourceRule{Rule: candidate.Rule, Mode: detector.RuleModeShadow})
+	}
+	if err := detector.ValidateResourceRules(rules); err != nil {
+		return fmt.Errorf("validate resource rule proposal: %w", err)
+	}
+	result, err := tx.Exec(ctx, `
 		UPDATE resource_rule_jobs
 		SET status='completed', proposal=$3, lease_owner=NULL, lease_expires_at=NULL,
 		    completed_at=now(), updated_at=now(), last_error=NULL
@@ -444,6 +494,9 @@ func (s *Store) CompleteResourceRuleJob(ctx context.Context, jobID int64, worker
 	}
 	if result.RowsAffected() != 1 {
 		return errors.New("resource rule authoring lease is no longer owned by this worker")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Resource rule authoring completion: %w", err)
 	}
 	return nil
 }
@@ -820,13 +873,16 @@ func (s *Store) ResourceRuleQueueStats(ctx context.Context, minAge time.Duration
 	return stats, nil
 }
 
-// ReadResourceRules returns the rules of completed, non-rejected resource
+// ReadResourceRules returns every rule from completed, non-rejected resource
 // proposals whose resource is still in the graph. Approved rules are active;
-// unreviewed drafts run in shadow mode. A proposal that does not decode, or
-// that holds a rule scoped to another resource, is skipped and logged so one
-// bad row cannot block every reload. The result may exceed
-// detector.MaxResourceRules by one so the detector can report the bound.
+// unreviewed drafts run in shadow mode.
 func (s *Store) ReadResourceRules(ctx context.Context) ([]detector.ResourceRule, error) {
+	return s.readResourceRules(ctx, 0)
+}
+
+// ReadResourceRulesForDetector returns active rules before shadow rules and
+// stops after the detector's capacity plus one overflow rule.
+func (s *Store) ReadResourceRulesForDetector(ctx context.Context) ([]detector.ResourceRule, error) {
 	return s.readResourceRules(ctx, detector.MaxResourceRules)
 }
 
@@ -897,7 +953,7 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 				}
 			}
 			result = append(result, detector.ResourceRule{Rule: candidate.Rule, Mode: mode})
-			if len(result) > limit {
+			if limit > 0 && len(result) > limit {
 				return result, nil
 			}
 		}

@@ -28,16 +28,20 @@ func mustAuthoringContext(context any, attributes map[string]string) string {
 	return string(encoded)
 }
 
-func authoringContextSHA256(encoded string) string {
+func authoringContextSHA256(resource ResourceAuthoringContext) string {
+	digest, err := resourceAuthoringContextSHA256(resource)
+	if err != nil {
+		panic(err)
+	}
+	return digest
+}
+
+func decodedAuthoringContext(encoded string) graph.ResourceAuthoringContext {
 	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
 	if err != nil {
 		panic(err)
 	}
-	revision, err := authoringContext.SHA256()
-	if err != nil {
-		panic(err)
-	}
-	return revision
+	return authoringContext
 }
 
 func TestResourceAuthoringContextUsesBoundedPluginContext(t *testing.T) {
@@ -51,8 +55,9 @@ func TestResourceAuthoringContextUsesBoundedPluginContext(t *testing.T) {
 	authoringContext := ResourceAuthoringContextFor(resource)
 	want := ResourceAuthoringContext{
 		ResourceID: "statefulset-id", Kind: "kubernetes/statefulset", Name: "ledger", Namespace: "payments",
-		ContextSHA256: authoringContextSHA256(encoded), Context: json.RawMessage(`{"roleClass":"admin"}`), Attributes: map[string]string{"authorization_class": "admin"},
+		Context: json.RawMessage(`{"roleClass":"admin"}`), Attributes: map[string]string{"authorization_class": "admin"},
 	}
+	want.ContextSHA256 = authoringContextSHA256(want)
 	if !reflect.DeepEqual(authoringContext, want) {
 		t.Fatalf("context=%#v, want %#v", authoringContext, want)
 	}
@@ -71,10 +76,24 @@ func TestResourceAuthoringContextSelectsValidContextAfterMalformedAssertion(t *t
 	malformed := graph.ResourceAssertion{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
 		graph.ResourceAuthoringContextAttribute: `{"schemaVersion":"v1","context":[]}`,
 	}}
-	want := ResourceAuthoringContext{ResourceID: "deployment-id", Kind: "kubernetes/deployment", Name: "current", Namespace: "payments", ContextSHA256: authoringContextSHA256(encoded), Context: json.RawMessage(`{"hostPID":true}`)}
+	want := ResourceAuthoringContext{ResourceID: "deployment-id", Kind: "kubernetes/deployment", Name: "current", Namespace: "payments", Context: json.RawMessage(`{"hostPID":true}`)}
+	want.ContextSHA256 = authoringContextSHA256(want)
 	resource := graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{malformed, v1}}
 	if got := ResourceAuthoringContextFor(resource); !reflect.DeepEqual(got, want) {
 		t.Fatalf("context=%#v, want %#v", got, want)
+	}
+}
+
+func TestResourceAuthoringContextRevisionIncludesModelVisibleIdentity(t *testing.T) {
+	encoded := mustAuthoringContext(map[string]any{"hostPID": true}, nil)
+	assertion := graph.ResourceAssertion{PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context", Attributes: map[string]string{
+		"kubernetes/name": "current", "kubernetes/namespace": "payments", graph.ResourceAuthoringContextAttribute: encoded,
+	}}
+	first := ResourceAuthoringContextFor(graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{assertion}})
+	assertion.Attributes["kubernetes/name"] = "renamed"
+	second := ResourceAuthoringContextFor(graph.Resource{ID: "deployment-id", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{assertion}})
+	if first.ContextSHA256 == second.ContextSHA256 {
+		t.Fatal("a model-visible name change retained the same authoring revision")
 	}
 }
 
@@ -293,7 +312,14 @@ func TestPostgreSQLResourceAuthoringJobPerContextRevision(t *testing.T) {
 		}
 	}
 	revision := func(value string) string {
-		return authoringContextSHA256(revisionContribution(1, value).Input.Resources[0].Attributes[graph.ResourceAuthoringContextAttribute])
+		contribution := revisionContribution(1, value)
+		assertion := contribution.Input.Resources[0]
+		context := decodedAuthoringContext(assertion.Attributes[graph.ResourceAuthoringContextAttribute])
+		resource := ResourceAuthoringContext{
+			Kind: assertion.Kind, Name: assertion.Attributes["kubernetes/name"], Namespace: assertion.Attributes["kubernetes/namespace"],
+			Context: context.Context, Attributes: context.Attributes,
+		}
+		return authoringContextSHA256(resource)
 	}
 	publish(1, "a")
 	if got := revisions(); !reflect.DeepEqual(got, []string{revision("a") + ":queued"}) {
@@ -445,6 +471,10 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	if err := store.ReviewResourceRuleJobRules(ctx, newest.ID, ResourceRuleReviewApproved, "operator", []string{ruleIDs[newest.ID]}); err != nil {
 		t.Fatal(err)
 	}
+	allRules, err := store.ReadResourceRules(ctx)
+	if err != nil || len(allRules) != 3 {
+		t.Fatalf("complete rule inventory=%#v err=%v", allRules, err)
+	}
 	rules, err := store.readResourceRules(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -557,6 +587,17 @@ func TestPostgreSQLDeploymentJobClaimLeaseRetryAndCompletion(t *testing.T) {
 	job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker/retry", time.Minute, 0)
 	if err != nil || !claimed || job.AttemptCount != 2 {
 		t.Fatalf("job=%#v claimed=%t err=%v", job, claimed, err)
+	}
+	invalidRule := detector.Rule{
+		ID: "resource/invalid/rule-1", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+		Type: "resource", Kind: job.Context.Kind, Expression: "missing_field == true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+	}
+	invalidProposal, err := json.Marshal(map[string]any{"rules": []map[string]any{{"rule": invalidRule}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteResourceRuleJob(ctx, jobID, "worker/retry", invalidProposal); err == nil {
+		t.Fatal("invalid resource rule proposal completed")
 	}
 	proposal := json.RawMessage(`{"jobId":1,"rules":[]}`)
 	if err := store.CompleteResourceRuleJob(ctx, jobID, "worker/other", proposal); err == nil {
@@ -728,7 +769,16 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 	if running, err := store.RequestResourceRuleJob(ctx, resourceID, "operator/ui"); !errors.Is(err, ErrResourceRuleJobInProgress) || running.Status != "running" {
 		t.Fatalf("request for a running job: job=%#v err=%v", running, err)
 	}
-	proposal := json.RawMessage(`{"rationale":"r","rules":[{"rule":{"id":"a"},"rationale":"x"},{"rule":{"id":"b"},"rationale":"y"}]}`)
+	rule := detector.Rule{
+		ID: "a", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+		Type: "resource", Kind: job.Context.Kind, Expression: "true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+	}
+	ruleTwo := rule
+	ruleTwo.ID = "b"
+	proposal, err := json.Marshal(map[string]any{"rationale": "r", "rules": []map[string]any{{"rule": rule, "rationale": "x"}, {"rule": ruleTwo, "rationale": "y"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker", proposal); err != nil {
 		t.Fatal(err)
 	}
@@ -792,10 +842,12 @@ func TestPostgreSQLReadResourceRulesSkipsMisScopedProposal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker/a", proposal); err != nil {
+	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker/a", proposal); err == nil {
+		t.Fatal("completed a proposal containing a rule scoped to another resource")
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE resource_rule_jobs SET status='completed', proposal=$2, lease_owner=NULL, lease_expires_at=NULL, completed_at=now() WHERE job_id=$1`, job.ID, proposal); err != nil {
 		t.Fatal(err)
 	}
-	// One bad proposal is skipped instead of failing every detector reload.
 	if rules, err := store.ReadResourceRules(ctx); err != nil || len(rules) != 0 {
 		t.Fatalf("rules=%#v err=%v, want none and no error", rules, err)
 	}

@@ -78,20 +78,17 @@ func addResourceAuthoringContext(attributes map[string]string) error {
 		}
 		return strings.Compare(left, right)
 	})
-	safe := make(map[string]string, min(len(keys), graph.ResourceAuthoringAttributesMaxItems))
+	selected := make([]string, 0, min(len(keys), graph.ResourceAuthoringAttributesMaxItems))
 	truncated := false
 	for _, key := range keys {
 		value := attributes[key]
-		if len(safe) == graph.ResourceAuthoringAttributesMaxItems || len(key) > 128 || len(value) > 2048 {
+		if len(selected) == graph.ResourceAuthoringAttributesMaxItems || len(key) > 128 || len(value) > 2048 {
 			truncated = true
 			continue
 		}
-		safe[key] = value
+		selected = append(selected, key)
 	}
 	context := map[string]any{}
-	if truncated {
-		context["attributesTruncated"] = true
-	}
 	if encoded := attributes[workloadContextAttribute]; encoded != "" {
 		var workload map[string]any
 		if err := json.Unmarshal([]byte(encoded), &workload); err != nil {
@@ -100,7 +97,30 @@ func addResourceAuthoringContext(attributes map[string]string) error {
 		context["workload"] = workload
 		delete(attributes, workloadContextAttribute)
 	}
-	authoringContext, err := graph.NewResourceAuthoringContext(context, safe)
+	if truncated {
+		context["attributesTruncated"] = true
+	}
+	build := func(count int) (graph.ResourceAuthoringContext, error) {
+		safe := make(map[string]string, count)
+		for _, key := range selected[:count] {
+			safe[key] = attributes[key]
+		}
+		return graph.NewResourceAuthoringContext(context, safe)
+	}
+	authoringContext, err := build(len(selected))
+	if err != nil {
+		context["attributesTruncated"] = true
+		low, high := 0, len(selected)
+		for low < high {
+			middle := (low + high + 1) / 2
+			if _, candidateErr := build(middle); candidateErr == nil {
+				low = middle
+			} else {
+				high = middle - 1
+			}
+		}
+		authoringContext, err = build(low)
+	}
 	if err != nil {
 		return err
 	}

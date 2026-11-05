@@ -14,7 +14,7 @@ type resourceRuleRepository struct {
 	err   error
 }
 
-func (repository resourceRuleRepository) ReadResourceRules(context.Context) ([]ResourceRule, error) {
+func (repository resourceRuleRepository) ReadResourceRulesForDetector(context.Context) ([]ResourceRule, error) {
 	return repository.rules, repository.err
 }
 

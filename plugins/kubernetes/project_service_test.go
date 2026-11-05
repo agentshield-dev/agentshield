@@ -267,6 +267,11 @@ func TestProjectLargestResourceAuthoringContextRoundTripsThroughState(t *testing
 	workload := testObject("apps/v1", "Deployment", "demo", "largest", "largest-uid", map[string]any{
 		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"serviceAccountName": "largest", "containers": containers}}},
 	})
+	labels := make(map[string]string, graph.ResourceAuthoringAttributesMaxItems)
+	for index := range graph.ResourceAuthoringAttributesMaxItems {
+		labels[fmt.Sprintf("bulk-%03d", index)] = strings.Repeat("v", 63)
+	}
+	workload.SetLabels(labels)
 	input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
 	if err != nil {
 		t.Fatal(err)
@@ -275,6 +280,14 @@ func TestProjectLargestResourceAuthoringContextRoundTripsThroughState(t *testing
 	encoded := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
 	if len(encoded) > graph.ResourceAuthoringContextMaxBytes {
 		t.Fatalf("encoded authoring context=%d bytes, limit=%d", len(encoded), graph.ResourceAuthoringContextMaxBytes)
+	}
+	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(authoringContext.Context, &metadata); err != nil || metadata["attributesTruncated"] != true || len(authoringContext.Attributes) >= graph.ResourceAuthoringAttributesMaxItems {
+		t.Fatalf("bounded authoring context=%#v err=%v", authoringContext, err)
 	}
 	projected := projectedWorkloadContext(t, assertion)
 	context := state.ResourceAuthoringContextFor(graph.Resource{ID: "largest", Kind: assertion.Kind, Assertions: []graph.ResourceAssertion{assertion}})

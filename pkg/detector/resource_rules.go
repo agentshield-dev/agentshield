@@ -38,7 +38,7 @@ type ResourceRule struct {
 // ResourceRuleRepository supplies resource rules. Engine.Load and Engine.Reload
 // read them when their Repository also implements this interface.
 type ResourceRuleRepository interface {
-	ReadResourceRules(context.Context) ([]ResourceRule, error)
+	ReadResourceRulesForDetector(context.Context) ([]ResourceRule, error)
 }
 
 type compiledResourceRule struct {
@@ -186,7 +186,7 @@ func (engine *Engine) reloadResourceRules(ctx context.Context, repository Resour
 	if repository == nil {
 		return errors.New("resource rule repository is required")
 	}
-	rules, err := repository.ReadResourceRules(ctx)
+	rules, err := repository.ReadResourceRulesForDetector(ctx)
 	if err != nil {
 		return fmt.Errorf("read resource rules: %w", err)
 	}
