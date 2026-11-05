@@ -245,7 +245,7 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 		if _, err := tx.Exec(ctx, `UPDATE resource_rule_jobs SET current_revision=false, updated_at=now() WHERE resource_id = ANY($1::uuid[]) AND current_revision`, optedOut); err != nil {
 			return fmt.Errorf("retire resource rule authoring revisions: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM resource_rule_jobs WHERE resource_id = ANY($1::uuid[]) AND status IN ('queued', 'retryable')`, optedOut); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM resource_rule_jobs WHERE resource_id = ANY($1::uuid[]) AND status <> 'running'`, optedOut); err != nil {
 			return fmt.Errorf("drop opted-out resource rule authoring jobs: %w", err)
 		}
 	}

@@ -648,6 +648,10 @@ func TestPostgreSQLRemovingResourceUnloadsApprovedResourceRules(t *testing.T) {
 	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM resource_rule_jobs WHERE resource_id=$1 AND current_revision`, job.Context.ResourceID).Scan(&current); err != nil || current != 0 {
 		t.Fatalf("current revisions=%d err=%v", current, err)
 	}
+	var retained int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM resource_rule_jobs WHERE resource_id=$1`, job.Context.ResourceID).Scan(&retained); err != nil || retained != 0 {
+		t.Fatalf("retained revisions=%d err=%v", retained, err)
+	}
 	if _, err := store.RequestResourceRuleJob(ctx, job.Context.ResourceID, "operator"); !errors.Is(err, ErrResourceRuleJobNotFound) {
 		t.Fatalf("removed resource regeneration error = %v", err)
 	}
