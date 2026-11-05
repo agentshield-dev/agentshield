@@ -486,7 +486,7 @@ func compileInput(t *testing.T, input graph.Input) {
 }
 
 func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
-	digest := func(mutate func(template map[string]any)) string {
+	project := func(mutate func(template map[string]any)) (string, string) {
 		t.Helper()
 		template := map[string]any{
 			"metadata": map[string]any{"labels": map[string]any{"app": "payments"}, "annotations": map[string]any{"team": "payments"}},
@@ -500,27 +500,37 @@ func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		value := resourceOfKind(t, input, "kubernetes/deployment").Attributes["kubernetes/pod-template-sha256"]
+		attributes := resourceOfKind(t, input, "kubernetes/deployment").Attributes
+		value := attributes["kubernetes/pod-template-sha256"]
 		if len(value) != 64 {
 			t.Fatalf("pod template digest = %q", value)
 		}
-		return value
+		return value, attributes[graph.ResourceAuthoringContextAttribute]
 	}
-	base := digest(nil)
-	restarted := digest(func(template map[string]any) {
+	base, baseContext := project(nil)
+	restarted, _ := project(func(template map[string]any) {
 		template["metadata"].(map[string]any)["annotations"].(map[string]any)["kubectl.kubernetes.io/restartedAt"] = "2026-10-18T00:00:00Z"
 	})
 	if restarted != base {
 		t.Fatal("a rollout restart annotation changed the Pod template digest")
 	}
-	if digest(func(template map[string]any) {
+	if changed, _ := project(func(template map[string]any) {
 		template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "registry.example/payments:v5"
-	}) == base {
+	}); changed == base {
 		t.Fatal("an image change did not change the Pod template digest")
 	}
-	if digest(func(template map[string]any) {
+	if changed, _ := project(func(template map[string]any) {
 		template["metadata"].(map[string]any)["labels"].(map[string]any)["version"] = "v5"
-	}) == base {
+	}); changed == base {
 		t.Fatal("a Pod label change did not change the Pod template digest")
+	}
+	environmentDigest, environmentContext := project(func(template map[string]any) {
+		template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"] = []any{map[string]any{"name": "LOG_LEVEL", "value": "debug"}}
+	})
+	if environmentDigest == base {
+		t.Fatal("an environment value change did not change the Pod template digest")
+	}
+	if environmentContext != baseContext {
+		t.Fatal("an unprojected environment value changed the resource authoring context")
 	}
 }

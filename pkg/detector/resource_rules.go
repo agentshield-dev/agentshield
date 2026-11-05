@@ -48,15 +48,15 @@ type compiledResourceRule struct {
 
 // compiledResourceRules indexes rules by resource so evaluation cost scales with
 // an input's anchors rather than with the number of resources. digest
-// identifies the loaded rules; source identifies the rules as read, so an
+// identifies the loaded rules; inputDigest identifies the rules as read, so an
 // unchanged read is not recompiled. skipped describes rules that were not loaded.
 type compiledResourceRules struct {
-	digest     string
-	source     string
-	active     int
-	shadow     int
-	skipped    []string
-	byResource map[string][]compiledResourceRule
+	digest      string
+	inputDigest string
+	active      int
+	shadow      int
+	skipped     []string
+	byResource  map[string][]compiledResourceRule
 }
 
 // ResourceRulesDigest returns the canonical digest of a resource rule set.
@@ -92,7 +92,7 @@ func ValidateResourceRules(rules []ResourceRule) error {
 // a fixed order, active before shadow and then by ID, so the rules kept under
 // [MaxResourceRules] and the first of any duplicate ID do not depend on read order.
 func compileResourceRules(rules []ResourceRule) (*compiledResourceRules, error) {
-	source, err := ResourceRulesDigest(rules)
+	inputDigest, err := ResourceRulesDigest(rules)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func compileResourceRules(rules []ResourceRule) (*compiledResourceRules, error) 
 		}
 		return strings.Compare(left.Rule.ID, right.Rule.ID)
 	})
-	compiled := &compiledResourceRules{source: source, byResource: make(map[string][]compiledResourceRule)}
+	compiled := &compiledResourceRules{inputDigest: inputDigest, byResource: make(map[string][]compiledResourceRule)}
 	cache := newCELCache()
 	seen := make(map[string]struct{}, len(ordered))
 	loaded := make([]ResourceRule, 0, min(len(ordered), MaxResourceRules))
@@ -190,11 +190,11 @@ func (engine *Engine) reloadResourceRules(ctx context.Context, repository Resour
 	if err != nil {
 		return fmt.Errorf("read resource rules: %w", err)
 	}
-	source, err := ResourceRulesDigest(rules)
+	inputDigest, err := ResourceRulesDigest(rules)
 	if err != nil {
 		return err
 	}
-	if source == engine.resource.Load().source {
+	if inputDigest == engine.resource.Load().inputDigest {
 		return nil
 	}
 	return engine.SetResourceRules(rules)

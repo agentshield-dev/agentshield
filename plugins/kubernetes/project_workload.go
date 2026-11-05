@@ -26,7 +26,6 @@ type resourceAuthoringContext struct {
 	SchemaVersion                string                      `json:"schemaVersion"`
 	ServiceAccountName           string                      `json:"serviceAccountName,omitempty"`
 	AutomountServiceAccountToken *bool                       `json:"automountServiceAccountToken,omitempty"`
-	PodTemplateSHA256            string                      `json:"podTemplateSha256"`
 	HostNetwork                  bool                        `json:"hostNetwork,omitempty"`
 	HostPID                      bool                        `json:"hostPID,omitempty"`
 	HostIPC                      bool                        `json:"hostIPC,omitempty"`
@@ -96,9 +95,9 @@ func addWorkloadAttributes(result map[string]string, item *unstructured.Unstruct
 	context := projectResourceAuthoringContext(&podTemplate.Spec)
 	labels, _, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "template", "metadata", "labels")
 	podSpec, _, _ := unstructured.NestedFieldNoCopy(item.Object, "spec", "template", "spec")
-	context.PodTemplateSHA256 = projectkit.Digest(map[string]any{"labels": labels, "spec": podSpec})
+	podTemplateSHA256 := projectkit.Digest(map[string]any{"labels": labels, "spec": podSpec})
 	result[workloadContextAttribute] = canonicalResourceAuthoringContext(context)
-	result["kubernetes/pod-template-sha256"] = context.PodTemplateSHA256
+	result["kubernetes/pod-template-sha256"] = podTemplateSHA256
 	if context.ServiceAccountName != "" {
 		result["kubernetes/service-account-name"] = context.ServiceAccountName
 	}
