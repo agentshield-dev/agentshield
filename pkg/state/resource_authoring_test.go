@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -439,7 +440,7 @@ func TestPostgreSQLResourceRuleRevisionsFollowTheCurrentContext(t *testing.T) {
 func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
-	for index := range 3 {
+	for index := range 4 {
 		name := fmt.Sprintf("deployments-%d", index)
 		if _, err := store.ReplaceContribution(ctx, deploymentContribution(name, 1, name+"-uid", name)); err != nil {
 			t.Fatal(err)
@@ -448,13 +449,13 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	var newest ResourceRuleJob
 	var oldest ResourceRuleJob
 	ruleIDs := map[int64]string{}
-	for range 3 {
+	for index := range 4 {
 		job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0)
 		if err != nil || !claimed {
 			t.Fatalf("claimed=%t err=%v", claimed, err)
 		}
 		rule := detector.Rule{
-			ID: fmt.Sprintf("resource/%d/rule-1", job.ID), Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+			ID: fmt.Sprintf("resource/rule-%d", 4-index), Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
 			Type: "resource", Kind: job.Context.Kind, Expression: "true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
 		}
 		proposal, err := json.Marshal(map[string]any{"rationale": "r", "rules": []map[string]any{{"rule": rule, "rationale": "r"}}})
@@ -476,7 +477,7 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	allRules, err := store.ReadResourceRules(ctx)
-	if err != nil || len(allRules) != 3 {
+	if err != nil || len(allRules) != 4 {
 		t.Fatalf("complete rule inventory=%#v err=%v", allRules, err)
 	}
 	invalidRule := detector.Rule{
@@ -494,7 +495,14 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 2 || rules[0].Mode != detector.RuleModeActive || rules[0].Rule.ID != ruleIDs[newest.ID] {
+	shadowRuleIDs := make([]string, 0, 2)
+	for jobID, ruleID := range ruleIDs {
+		if jobID != oldest.ID && jobID != newest.ID {
+			shadowRuleIDs = append(shadowRuleIDs, ruleID)
+		}
+	}
+	slices.Sort(shadowRuleIDs)
+	if len(rules) != 2 || rules[0].Mode != detector.RuleModeActive || rules[0].Rule.ID != ruleIDs[newest.ID] || rules[1].Rule.ID != shadowRuleIDs[0] {
 		t.Fatalf("bounded rules=%#v, want newest approved rule before shadow overflow", rules)
 	}
 	if err := detector.ValidateResourceRules(rules); err != nil {

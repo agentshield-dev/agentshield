@@ -36,7 +36,7 @@ func (store *fakeRuleStore) ReadResourceRulesForDetector(context.Context) ([]det
 	return store.workload, nil
 }
 
-func (store *fakeRuleStore) ListResourceRuleJobs(_ context.Context, _ int, resourceID string) ([]state.ResourceRuleJobSummary, error) {
+func (store *fakeRuleStore) ListResourceRuleJobs(_ context.Context, limit int, resourceID string) ([]state.ResourceRuleJobSummary, error) {
 	store.listedFor = resourceID
 	var jobs []state.ResourceRuleJobSummary
 	for _, job := range store.jobs {
@@ -44,6 +44,9 @@ func (store *fakeRuleStore) ListResourceRuleJobs(_ context.Context, _ int, resou
 			continue
 		}
 		jobs = append(jobs, job)
+		if len(jobs) == limit {
+			break
+		}
 	}
 	return jobs, nil
 }
@@ -171,6 +174,20 @@ func TestRuleDraftRoutesReturnSummariesAndProposals(t *testing.T) {
 		if response := serveRuleRequest(handler, http.MethodGet, path, ""); response.Code != want {
 			t.Fatalf("%s status = %d, want %d", path, response.Code, want)
 		}
+	}
+}
+
+func TestRuleDraftRouteReportsTruncation(t *testing.T) {
+	store := newRuleStore()
+	store.jobs = make(map[int64]state.ResourceRuleJobSummary, draftListLimit+1)
+	for index := range draftListLimit + 1 {
+		id := int64(index + 1)
+		store.jobs[id] = state.ResourceRuleJobSummary{ID: id, ResourceID: "resource"}
+	}
+	response := serveRuleRequest(ruleTestServer(t, store, false), http.MethodGet, "/api/v1/rule-drafts", "")
+	var body ruleDraftsResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Drafts) != draftListLimit || !body.Truncated {
+		t.Fatalf("drafts=%d truncated=%t err=%v", len(body.Drafts), body.Truncated, err)
 	}
 }
 

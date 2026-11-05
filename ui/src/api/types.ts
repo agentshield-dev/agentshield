@@ -361,6 +361,7 @@ export interface RuleProposal {
 
 export interface RuleDraftsResponse {
 	drafts: List<RuleDraft>;
+	truncated?: boolean;
 }
 
 export interface RuleDraftResponse {

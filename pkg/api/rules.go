@@ -60,7 +60,8 @@ type rulesActivation struct {
 }
 
 type ruleDraftsResponse struct {
-	Drafts []state.ResourceRuleJobSummary `json:"drafts"`
+	Drafts    []state.ResourceRuleJobSummary `json:"drafts"`
+	Truncated bool                           `json:"truncated,omitempty"`
 }
 
 type ruleDraftResponse struct {
@@ -118,7 +119,7 @@ func (server *Server) handleRuleDrafts(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusBadRequest, "list rule drafts", errors.New("resource ID must contain at most 128 bytes"))
 		return
 	}
-	drafts, err := server.rules.ListResourceRuleJobs(request.Context(), draftListLimit, resourceID)
+	drafts, err := server.rules.ListResourceRuleJobs(request.Context(), draftListLimit+1, resourceID)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "list rule drafts", err)
 		return
@@ -126,8 +127,12 @@ func (server *Server) handleRuleDrafts(writer http.ResponseWriter, request *http
 	if drafts == nil {
 		drafts = []state.ResourceRuleJobSummary{}
 	}
+	truncated := len(drafts) > draftListLimit
+	if truncated {
+		drafts = drafts[:draftListLimit]
+	}
 	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusOK, ruleDraftsResponse{Drafts: drafts})
+	writeJSON(writer, http.StatusOK, ruleDraftsResponse{Drafts: drafts, Truncated: truncated})
 }
 
 func (server *Server) handleRuleDraft(writer http.ResponseWriter, request *http.Request) {

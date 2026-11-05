@@ -902,11 +902,25 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 			SELECT DISTINCT ON (resource_id) job_id
 			FROM loadable WHERE review_status = 'approved'
 			ORDER BY resource_id, current_revision DESC, job_id DESC
+		), selected AS (
+			SELECT * FROM loadable
+			WHERE job_id IN (SELECT job_id FROM active) OR (current_revision AND review_status = 'pending')
+		), candidates AS (
+			SELECT selected.*, candidate
+			FROM selected
+			CROSS JOIN LATERAL jsonb_array_elements(
+				CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN proposal->'rules' ELSE '[]'::jsonb END
+			) candidate
+			WHERE NOT EXISTS (
+				SELECT 1 FROM jsonb_array_elements(
+					CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN proposal->'rules' ELSE '[]'::jsonb END
+				) scoped
+				WHERE scoped->'rule'->>'scopeResourceId' IS DISTINCT FROM resource_id::text
+			)
 		)
-		SELECT resource_id::text, review_status, proposal
-		FROM loadable
-		WHERE job_id IN (SELECT job_id FROM active) OR (current_revision AND review_status = 'pending')
-		ORDER BY (review_status = 'approved') DESC, job_id`)
+		SELECT resource_id::text, review_status, proposal->'approvedRuleIds', candidate
+		FROM candidates
+		ORDER BY (review_status = 'approved') DESC, candidate->'rule'->>'id', job_id`)
 	if err != nil {
 		return nil, fmt.Errorf("read resource rules: %w", err)
 	}
@@ -915,59 +929,48 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 	seen := make(map[string]struct{})
 	for rows.Next() {
 		var resourceID, review string
-		var encoded []byte
-		if err := rows.Scan(&resourceID, &review, &encoded); err != nil {
-			return nil, fmt.Errorf("scan resource rule proposal: %w", err)
+		var encodedApproved, encodedCandidate []byte
+		if err := rows.Scan(&resourceID, &review, &encodedApproved, &encodedCandidate); err != nil {
+			return nil, fmt.Errorf("scan resource rule: %w", err)
 		}
-		var proposal struct {
-			ApprovedRuleIDs []string `json:"approvedRuleIds"`
-			Rules           []struct {
-				Rule detector.Rule `json:"rule"`
-			} `json:"rules"`
+		var approvedRuleIDs []string
+		if encodedApproved != nil && json.Unmarshal(encodedApproved, &approvedRuleIDs) != nil {
+			slog.WarnContext(ctx, "skip resource rule with undecodable approval selection", "resourceID", resourceID)
+			continue
 		}
-		if err := json.Unmarshal(encoded, &proposal); err != nil {
-			slog.WarnContext(ctx, "skip undecodable resource rule proposal", "resourceID", resourceID)
+		var candidate struct {
+			Rule detector.Rule `json:"rule"`
+		}
+		if err := json.Unmarshal(encodedCandidate, &candidate); err != nil {
+			slog.WarnContext(ctx, "skip undecodable resource rule", "resourceID", resourceID)
 			continue
 		}
 		mode := detector.RuleModeShadow
 		if review == ResourceRuleReviewApproved {
 			mode = detector.RuleModeActive
 		}
-		approved := make(map[string]struct{}, len(proposal.ApprovedRuleIDs))
-		for _, id := range proposal.ApprovedRuleIDs {
+		approved := make(map[string]struct{}, len(approvedRuleIDs))
+		for _, id := range approvedRuleIDs {
 			approved[id] = struct{}{}
 		}
-		scoped := true
-		for _, candidate := range proposal.Rules {
-			if candidate.Rule.ScopeResourceID != resourceID {
-				scoped = false
-				break
+		if review == ResourceRuleReviewApproved && approvedRuleIDs != nil {
+			if _, found := approved[candidate.Rule.ID]; !found {
+				continue
 			}
 		}
-		if !scoped {
-			slog.WarnContext(ctx, "skip resource rule proposal with a rule scoped to another resource", "resourceID", resourceID)
+		if _, found := seen[candidate.Rule.ID]; found {
+			slog.WarnContext(ctx, "skip duplicate resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
 			continue
 		}
-		for _, candidate := range proposal.Rules {
-			if review == ResourceRuleReviewApproved && proposal.ApprovedRuleIDs != nil {
-				if _, found := approved[candidate.Rule.ID]; !found {
-					continue
-				}
-			}
-			if _, found := seen[candidate.Rule.ID]; found {
-				slog.WarnContext(ctx, "skip duplicate resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
-				continue
-			}
-			resourceRule := detector.ResourceRule{Rule: candidate.Rule, Mode: mode}
-			if err := detector.ValidateResourceRules([]detector.ResourceRule{resourceRule}); err != nil {
-				slog.WarnContext(ctx, "skip invalid resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
-				continue
-			}
-			seen[candidate.Rule.ID] = struct{}{}
-			result = append(result, resourceRule)
-			if limit > 0 && len(result) > limit {
-				return result, nil
-			}
+		resourceRule := detector.ResourceRule{Rule: candidate.Rule, Mode: mode}
+		if err := detector.ValidateResourceRules([]detector.ResourceRule{resourceRule}); err != nil {
+			slog.WarnContext(ctx, "skip invalid resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
+			continue
+		}
+		seen[candidate.Rule.ID] = struct{}{}
+		result = append(result, resourceRule)
+		if limit > 0 && len(result) > limit {
+			return result, nil
 		}
 	}
 	if err := rows.Err(); err != nil {

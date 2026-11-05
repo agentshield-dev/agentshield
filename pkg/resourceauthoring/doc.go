@@ -1,5 +1,5 @@
-// Package resourceauthoring drafts resource-scoped detector rules for newly
-// observed Kubernetes Deployments, StatefulSets, and DaemonSets.
+// Package resourceauthoring drafts resource-scoped detector rules from bounded
+// authoring contexts published by discovery plugins.
 //
 // Graph publication enqueues one durable job, in the same transaction, the
 // first time a bounded resource authoring context appears (see pkg/state). A [Worker] claims

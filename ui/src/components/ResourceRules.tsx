@@ -60,6 +60,9 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 					The detector rule capacity is full; additional authored rules are not loaded.
 				</p>
 			) : null}
+			{drafts.data?.truncated ? (
+				<p className="muted">Showing the 500 newest drafts for this resource.</p>
+			) : null}
 			{error ? (
 				<p className="approval-error">{error.message}</p>
 			) : rules.length ? (

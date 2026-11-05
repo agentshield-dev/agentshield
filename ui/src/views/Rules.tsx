@@ -300,6 +300,9 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					The detector rule capacity is full; additional authored rules are not loaded.
 				</p>
 			) : null}
+			{drafts.data?.truncated ? (
+				<p className="muted">Showing the 500 newest drafts; review totals cover this page.</p>
+			) : null}
 			<div className="toolrow panel catalog-controls">
 				<div className="collection-tabs" role="tablist" aria-label="Rule records">
 					{tabs.map(item => (
