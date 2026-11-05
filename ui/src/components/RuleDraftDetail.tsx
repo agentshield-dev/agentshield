@@ -229,7 +229,8 @@ export function RuleDraftDetail({
 			{!draft.currentRevision ? (
 				<div className="stale-note">
 					<strong>Previous revision.</strong> This draft cannot be newly approved. An earlier
-					approval may remain active while the resource still publishes that authoring context.
+					approval may remain active until the current revision is approved or the resource leaves
+					the graph.
 				</div>
 			) : null}
 			<dl className="finding-meta">

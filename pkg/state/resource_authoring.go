@@ -893,35 +893,48 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 	// is approved, the newest approved rule of another revision stays active and
 	// the current revision's pending draft runs in shadow.
 	rows, err := s.pool.Query(ctx, `
-		WITH loadable AS (
-			SELECT j.job_id, j.resource_id, j.review_status, j.current_revision, j.proposal
+		WITH current AS (
+			SELECT j.job_id, j.resource_id
 			FROM resource_rule_jobs j
 			JOIN current_resources r ON r.resource_id = j.resource_id
-			WHERE j.status = 'completed' AND j.review_status <> 'rejected'
-			  AND EXISTS (SELECT 1 FROM resource_rule_jobs current WHERE current.resource_id=j.resource_id AND current.current_revision)
-		), active AS (
-			SELECT DISTINCT ON (resource_id) job_id
-			FROM loadable WHERE review_status = 'approved'
-			ORDER BY resource_id, current_revision DESC, job_id DESC
+			WHERE j.current_revision
 		), selected AS (
-			SELECT * FROM loadable
-			WHERE job_id IN (SELECT job_id FROM active) OR (current_revision AND review_status = 'pending')
+			SELECT active.*
+			FROM current
+			CROSS JOIN LATERAL (
+				SELECT j.job_id, j.resource_id, j.review_status, j.current_revision, j.proposal
+				FROM resource_rule_jobs j
+				WHERE j.resource_id = current.resource_id
+				  AND j.status = 'completed' AND j.review_status = 'approved'
+				ORDER BY j.current_revision DESC, j.job_id DESC
+				LIMIT 1
+			) active
+			UNION ALL
+			SELECT pending.job_id, pending.resource_id, pending.review_status, pending.current_revision, pending.proposal
+			FROM current
+			JOIN resource_rule_jobs pending ON pending.job_id = current.job_id
+			WHERE pending.status = 'completed' AND pending.review_status = 'pending'
 		), candidates AS (
-			SELECT selected.*, candidate
+			SELECT selected.*, expanded.candidate
 			FROM selected
-			CROSS JOIN LATERAL jsonb_array_elements(
-				CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN proposal->'rules' ELSE '[]'::jsonb END
-			) candidate
-			WHERE NOT EXISTS (
-				SELECT 1 FROM jsonb_array_elements(
+			CROSS JOIN LATERAL (
+				SELECT candidate
+				FROM jsonb_array_elements(
 					CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN proposal->'rules' ELSE '[]'::jsonb END
-				) scoped
-				WHERE scoped->'rule'->>'scopeResourceId' IS DISTINCT FROM resource_id::text
+				) candidate
+				LIMIT 4
+			) expanded
+			WHERE expanded.candidate->'rule'->>'scopeResourceId' = resource_id::text
+			AND (
+				review_status <> 'approved'
+				OR proposal->'approvedRuleIds' IS NULL
+				OR proposal->'approvedRuleIds' ? (expanded.candidate->'rule'->>'id')
 			)
 		)
 		SELECT resource_id::text, review_status, proposal->'approvedRuleIds', candidate
 		FROM candidates
-		ORDER BY (review_status = 'approved') DESC, candidate->'rule'->>'id', job_id`)
+		ORDER BY (review_status = 'approved') DESC, candidate->'rule'->>'id', job_id
+		LIMIT CASE WHEN $1 > 0 THEN (2 * $1) + 1 END`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read resource rules: %w", err)
 	}
