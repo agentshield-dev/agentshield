@@ -845,8 +845,7 @@ func (s *Store) ReadResourceRules(ctx context.Context) ([]detector.ResourceRule,
 		SELECT resource_id::text, review_status, proposal
 		FROM loadable
 		WHERE job_id IN (SELECT job_id FROM active) OR (current_revision AND review_status = 'pending')
-		ORDER BY job_id
-		LIMIT $1`, detector.MaxResourceRules+1)
+		ORDER BY job_id`)
 	if err != nil {
 		return nil, fmt.Errorf("read resource rules: %w", err)
 	}

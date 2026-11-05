@@ -109,6 +109,7 @@ func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
 				map[string]any{"name": "host", "hostPath": map[string]any{"path": "/var/run/containerd.sock", "type": "Socket"}},
 			},
 		}}}})
+	deployment.SetLabels(map[string]string{"security-sha256": "policy-name"})
 	input, err := Project("cluster", "source", []*unstructured.Unstructured{deployment})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +119,13 @@ func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
 		t.Fatalf("workload provenance=%s", resource.RuleID)
 	}
 	encoded := resource.Attributes[graph.ResourceAuthoringContextAttribute]
+	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authoringContext.Attributes["kubernetes/label/security-sha256"] != "policy-name" {
+		t.Fatalf("authoring attributes=%#v", authoringContext.Attributes)
+	}
 	context := projectedWorkloadContext(t, resource)
 	if context.SchemaVersion != "v1" || context.ServiceAccountName != "payments-runtime" || context.AutomountServiceAccountToken == nil || *context.AutomountServiceAccountToken {
 		t.Fatalf("identity context=%#v", context)

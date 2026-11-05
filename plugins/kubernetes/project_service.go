@@ -85,7 +85,7 @@ func addResourceAuthoringContext(attributes map[string]string) error {
 }
 
 func resourceAuthoringAttribute(key string) bool {
-	if strings.HasSuffix(key, "-sha256") {
+	if key == "kubernetes/rbac-subjects-sha256" {
 		return false
 	}
 	switch key {
