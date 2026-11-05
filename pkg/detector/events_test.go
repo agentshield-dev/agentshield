@@ -48,6 +48,15 @@ func TestResourceRuleEvaluatesProjectedClusterRoleBinding(t *testing.T) {
 	}
 }
 
+func TestResourceEventsIgnoreOpaqueSourceRevision(t *testing.T) {
+	attributes := map[string]string{"kubernetes/service-type": "LoadBalancer"}
+	before := resourceWithAuthoringContext(t, "service", "kubernetes/service", attributes, strings.Repeat("a", 64))
+	after := resourceWithAuthoringContext(t, "service", "kubernetes/service", attributes, strings.Repeat("b", 64))
+	if events := Events(graph.Snapshot{Resources: []graph.Resource{before}}, graph.Snapshot{Resources: []graph.Resource{after}}, time.Time{}); len(events) != 0 {
+		t.Fatalf("opaque source revision emitted model-visible events: %#v", events)
+	}
+}
+
 func TestEventsEmitOnlyNewEdgesWithDestinationClassAndRole(t *testing.T) {
 	resource := func(id, kind, key string, attributes map[string]string) graph.Resource {
 		return graph.Resource{ID: id, Kind: kind, Identity: graph.IdentityClaim{ImmutableKey: key}, Assertions: []graph.ResourceAssertion{{Attributes: attributes}}}
@@ -246,11 +255,14 @@ func TestEventsAttachAuthoringControllersToPodActivity(t *testing.T) {
 	}
 }
 
-func resourceWithAuthoringContext(t *testing.T, id, kind string, attributes map[string]string) graph.Resource {
+func resourceWithAuthoringContext(t *testing.T, id, kind string, attributes map[string]string, sourceRevision ...string) graph.Resource {
 	t.Helper()
 	context, err := graph.NewResourceAuthoringContext(map[string]any{}, attributes)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(sourceRevision) > 0 {
+		context.SourceRevisionSHA256 = sourceRevision[0]
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"slices"
@@ -302,7 +303,13 @@ func observedBehaviorKind(kind string) bool {
 func decodeStrict(encoded []byte, result any) error {
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(result)
+	if err := decoder.Decode(result); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("tool arguments must contain one JSON document")
+	}
+	return nil
 }
 
 func modelRuleSchema(selectors []string) map[string]any {

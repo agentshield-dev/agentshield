@@ -148,6 +148,7 @@ func TestFinishRequiresABoundedRationale(t *testing.T) {
 		{`{"rationale":"` + strings.Repeat("x", 2049) + `"}`, false},
 		{`{}`, false},
 		{`{"rationale":"r","rules":[]}`, false},
+		{`{"rationale":"r"}{"extra":true}`, false},
 	} {
 		_, err := finishTool().Execute(context.Background(), json.RawMessage(test.arguments))
 		if (err == nil) != test.valid {

@@ -328,7 +328,7 @@ export function RuleDraftDetail({
 						onClick={() =>
 							act(
 								() => postJSON(`/api/v1/rule-drafts/${draft.id}/review`, { decision: 'rejected' }),
-								'Rejected; the rules are no longer loaded.'
+								'Rejected; this draft’s rules are no longer loaded.'
 							)
 						}
 					>

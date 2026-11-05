@@ -112,6 +112,7 @@ func resourceRuleContext(resource graph.Resource) (string, string, string, map[s
 		if err != nil {
 			continue
 		}
+		context.SourceRevisionSHA256 = ""
 		candidate, err := context.SHA256()
 		if err != nil {
 			continue

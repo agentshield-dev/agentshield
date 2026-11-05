@@ -90,7 +90,7 @@ export const RejectDraft: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[2]), level: 2 }, wait);
 		await userEvent.click(await canvas.findByRole('button', { name: 'Reject' }, wait));
-		await canvas.findByText('Rejected; the rules are no longer loaded.', {}, wait);
+		await canvas.findByText('Rejected; this draft’s rules are no longer loaded.', {}, wait);
 		await canvas.findByText('rejected', { selector: '.finding-title .badge' }, wait);
 		await expect(canvas.getByRole('button', { name: 'Approve' })).toBeEnabled();
 	}
