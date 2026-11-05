@@ -133,7 +133,12 @@ func reconcileFullProjection(ctx context.Context, tx pgx.Tx, compiler *graph.Com
 }
 
 func readFullProjection(ctx context.Context, tx pgx.Tx) (graph.Snapshot, error) {
-	var snapshot graph.Snapshot
+	snapshot := graph.Snapshot{
+		Resources:     []graph.Resource{},
+		Facets:        []graph.Facet{},
+		Relationships: []graph.Relationship{},
+		Telemetry:     []graph.TelemetryEvent{},
+	}
 	rows, err := tx.Query(ctx, `SELECT resource_id::text, kind, assertions FROM current_resources ORDER BY resource_id`)
 	if err != nil {
 		return snapshot, err

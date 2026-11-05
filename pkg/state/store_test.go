@@ -1362,6 +1362,24 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	if resources != 0 || conflicts != 1 {
 		t.Fatalf("projection resources=%d conflicts=%d", resources, conflicts)
 	}
+	var conflictID string
+	if err := store.pool.QueryRow(context.Background(), `SELECT resource_id::text FROM assertion_conflicts`).Scan(&conflictID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := readScopedProjection(context.Background(), tx, projectionScope{resources: map[string]struct{}{conflictID: {}}})
+	if rollbackErr := tx.Rollback(context.Background()); err == nil && rollbackErr != nil {
+		err = rollbackErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped.Conflicts) != 1 || !slices.Equal(scoped.Conflicts[0].Kinds, []string{"machine", "service"}) {
+		t.Fatalf("scoped conflict = %+v", scoped.Conflicts)
+	}
 	if _, err := store.ReplaceContribution(context.Background(), Contribution{
 		PluginID: "inventory", SourceID: "source", Name: "base", Generation: 2, Ready: true, SourceHealth: "healthy",
 		Input: graph.Input{Resources: []graph.ResourceAssertion{{
@@ -1376,6 +1394,32 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	}
 	if len(view.Snapshot.Conflicts) != 1 || !slices.Equal(view.Snapshot.Conflicts[0].Kinds, []string{"machine", "service"}) || len(view.Snapshot.Conflicts[0].Assertions) != 2 || view.Snapshot.Conflicts[0].Assertions[0].PluginID == "" || view.Snapshot.Conflicts[0].Assertions[1].PluginID == "" {
 		t.Fatalf("projected conflict lost assertion provenance: %+v", view.Snapshot.Conflicts)
+	}
+}
+
+func TestPostgreSQLCurrentGraphMatchesCheckpointForSparseGraph(t *testing.T) {
+	store, _ := integrationStore(t)
+	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.CurrentGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := store.ReadGraphCheckpoint(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentJSON, err := json.Marshal(current.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointJSON, err := json.Marshal(checkpoint.View.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentJSON) != string(checkpointJSON) {
+		t.Fatalf("current graph and checkpoint differ:\ncurrent=%s\ncheckpoint=%s", currentJSON, checkpointJSON)
 	}
 }
 
