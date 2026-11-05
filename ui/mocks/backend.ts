@@ -802,6 +802,13 @@ export class FakeBackend {
 		if (job.draft.status !== 'completed') {
 			throw new ApiError(409, 'review rule draft', 'Resource rule job is not a completed proposal');
 		}
+		if (decision === 'approved' && !job.draft.currentRevision) {
+			throw new ApiError(
+				409,
+				'review rule draft',
+				'Resource rule job is not the current resource revision'
+			);
+		}
 		if (decision === 'approved') {
 			const available = new Set(list(job.proposal?.rules).map(item => item.rule.id));
 			if (

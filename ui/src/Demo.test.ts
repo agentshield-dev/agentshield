@@ -9,15 +9,28 @@ describe('demo scenarios', () => {
 		const draft = list(backend.ruleDrafts().drafts).find(
 			item => item.status === 'completed' && item.reviewStatus === 'pending' && item.ruleCount > 0
 		);
-		expect(draft).toBeDefined();
+		if (!draft) throw new Error('expected a pending completed rule draft');
 		let failure: unknown;
 		try {
-			backend.reviewRuleDraft(String(draft?.id), { decision: 'approved' });
+			backend.reviewRuleDraft(String(draft.id), { decision: 'approved' });
 		} catch (error) {
 			failure = error;
 		}
 		expect(failure).toBeInstanceOf(ApiError);
 		expect((failure as ApiError).status).toBe(400);
+		draft.currentRevision = false;
+		const proposal = backend.ruleDraft(String(draft.id)).proposal;
+		failure = undefined;
+		try {
+			backend.reviewRuleDraft(String(draft.id), {
+				decision: 'approved',
+				ruleIds: list(proposal?.rules).map(item => item.rule.id)
+			});
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(ApiError);
+		expect((failure as ApiError).status).toBe(409);
 	});
 
 	it('replaces findings and announces the updated graph', () => {

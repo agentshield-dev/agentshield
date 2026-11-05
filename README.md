@@ -108,7 +108,7 @@ Each campaign generates real traffic in the cluster and waits until the plugin-p
 
 To reproduce, run `make eval-up`, `make eval-check`, and `make eval-run`. The run makes real, billed model calls; the [evaluation guide](https://agent-shield.dev/docs/operations/evals/) has the requirements and the output format.
 
-A separate rule suite (`make eval-rules`) scores detection rules on nine campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Resource rule author drafts. See [rule evals](https://agent-shield.dev/docs/operations/evals/#rule-evals).
+A separate rule suite (`make eval-rules`) scores detection rules on eleven campaigns built for them, each attack paired with benign controls. It scores operator rule policies, which need no model, and the rules the Resource rule author drafts. See [rule evals](https://agent-shield.dev/docs/operations/evals/#rule-evals).
 
 ## Quickstart
 
