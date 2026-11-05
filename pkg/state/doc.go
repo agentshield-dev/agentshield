@@ -5,8 +5,10 @@
 // # Pipeline position
 //
 // Discovery plugins and the telemetry rollup produce complete contributions.
-// [Store.ReplaceContribution] validates each one with the graph compiler and
-// publishes it in one transaction. Publication appends to a transactional
+// [Store.ReplaceContribution] publishes authoritative complete checkpoints;
+// [Store.ApplyContributionDelta] publishes explicit changes between them.
+// Both validate with the graph compiler and commit in one transaction.
+// Publication appends to a transactional
 // outbox that the detection service reads with
 // [Store.ReadContributionChanges] and [Store.ReadGraphCheckpoint]; detection
 // then records [DetectionSignal] values and rule [Finding] values, enqueues
@@ -28,11 +30,10 @@
 //
 // # Publication
 //
-// Publication builds a complete candidate from the revision-validated
-// in-memory graph, then uses a compare-and-swap transaction to persist
-// content-addressed assertions, advance the contribution head, update active
-// membership and affected projection rows, and append at most one outbox
-// event. Readers never see a partially published contribution.
+// Publication locks the graph revision and contribution head, persists new
+// content-addressed assertions, advances the contribution head, updates active
+// membership and the affected projection closure, and appends at most one
+// outbox event. Readers never see a partially published contribution.
 //
 // # Change feed
 //
@@ -43,11 +44,11 @@
 //
 // # Reads
 //
-// [Store.Latest] and [Store.ReadGraphCheckpoint] read the active assertion
-// union inside a repeatable-read transaction and compile it after the
-// transaction ends, so the returned graph and its SHA-256 are coherent with
-// each other and with the checkpoint sequence. [Store.CreateManifest] pins the active contribution versions for
-// reproducible analysis.
+// [Store.Latest] and [Store.ReadGraphCheckpoint] read the current projection
+// inside a repeatable-read transaction, so the returned graph and revision are
+// coherent with each other and with the checkpoint sequence.
+// [Store.CreateManifest] pins the active contribution versions for reproducible
+// analysis.
 //
 // Schema files are embedded and verified by checksum at startup. Until the
 // first release, baseline changes require recreating the database.

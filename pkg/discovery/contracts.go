@@ -78,8 +78,10 @@ func RegisterIdentitySchemes(registry *graph.Registry, descriptors ...Descriptor
 	return nil
 }
 
-// ContributionOutput replaces one complete plugin-owned graph contribution.
-// Its readiness and health are independent of collection readiness.
+// ContributionOutput is one complete current plugin-owned graph contribution.
+// The runtime publishes an authoritative replacement after startup and at
+// checkpoints, and explicit assertion deltas between them. Its readiness and
+// health are independent of collection readiness.
 type ContributionOutput struct {
 	Name             string
 	Generation       uint64
@@ -102,8 +104,8 @@ type Runtime interface {
 	// The channel closes when ctx ends. A subscriber that falls behind
 	// receives coalesced changes instead of every intermediate one.
 	Subscribe(context.Context, string) (<-chan Change, error)
-	// ReplaceContribution durably replaces one named contribution for
-	// (plugin, source). Assertions omitted from the output are retracted.
+	// ReplaceContribution publishes one complete current contribution for
+	// (plugin, source). The runtime chooses a delta or authoritative checkpoint.
 	ReplaceContribution(context.Context, string, string, ContributionOutput) error
 	// ContributionGeneration returns the highest durable generation across
 	// all contributions of (plugin, source), or zero if none exist.

@@ -2,14 +2,13 @@ package state
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/jackc/pgx/v5"
 )
 
 type ResourceQuery struct {
@@ -21,13 +20,13 @@ type ResourceQuery struct {
 }
 
 type ResourcePage struct {
-	GraphSHA256 string
-	Resources   []graph.Resource
-	Next        string
+	GraphRevision uint64
+	Resources     []graph.Resource
+	Next          string
 }
 
 type ResourceDetail struct {
-	GraphSHA256   string
+	GraphRevision uint64
 	Resource      graph.Resource
 	Relationships []graph.Relationship
 	Facets        []graph.Facet
@@ -42,16 +41,16 @@ type RelationshipQuery struct {
 }
 
 type RelationshipPage struct {
-	GraphSHA256   string
+	GraphRevision uint64
 	Relationships []graph.Relationship
 	Next          string
 }
 
 type RelationshipDetail struct {
-	GraphSHA256  string
-	Relationship graph.Relationship
-	Subject      graph.Resource
-	Object       graph.Resource
+	GraphRevision uint64
+	Relationship  graph.Relationship
+	Subject       graph.Resource
+	Object        graph.Resource
 }
 
 func (s *Store) QueryResources(ctx context.Context, query ResourceQuery) (ResourcePage, error) {
@@ -73,7 +72,7 @@ func (s *Store) QueryResources(ctx context.Context, query ResourceQuery) (Resour
 		return ResourcePage{}, fmt.Errorf("query current resources: %w", err)
 	}
 	defer rows.Close()
-	page := ResourcePage{GraphSHA256: digest}
+	page := ResourcePage{GraphRevision: digest}
 	for rows.Next() {
 		resource, err := scanCurrentResource(rows)
 		if err != nil {
@@ -101,7 +100,7 @@ func (s *Store) GetResourceDetail(ctx context.Context, resourceID string) (Resou
 	if err != nil {
 		return ResourceDetail{}, err
 	}
-	detail := ResourceDetail{GraphSHA256: digest, Resource: resource}
+	detail := ResourceDetail{GraphRevision: digest, Resource: resource}
 	rows, err := tx.Query(ctx, `SELECT relationship_id::text, subject_id::text, predicate, object_id::text, qualifier, resolution_status, assertions FROM current_relationships WHERE subject_id=$1 OR object_id=$1 ORDER BY relationship_id`, resourceID)
 	if err != nil {
 		return ResourceDetail{}, err
@@ -156,7 +155,7 @@ func (s *Store) QueryRelationships(ctx context.Context, query RelationshipQuery)
 		return RelationshipPage{}, fmt.Errorf("query current relationships: %w", err)
 	}
 	defer rows.Close()
-	page := RelationshipPage{GraphSHA256: digest}
+	page := RelationshipPage{GraphRevision: digest}
 	for rows.Next() {
 		item, err := scanCurrentRelationship(rows)
 		if err != nil {
@@ -195,24 +194,24 @@ func (s *Store) GetRelationshipDetail(ctx context.Context, relationshipID string
 	if err != nil {
 		return RelationshipDetail{}, err
 	}
-	return RelationshipDetail{GraphSHA256: digest, Relationship: relationship, Subject: subject, Object: object}, tx.Commit(ctx)
+	return RelationshipDetail{GraphRevision: digest, Relationship: relationship, Subject: subject, Object: object}, tx.Commit(ctx)
 }
 
-func (s *Store) projectionRead(ctx context.Context) (pgx.Tx, string, error) {
+func (s *Store) projectionRead(ctx context.Context) (pgx.Tx, uint64, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return nil, "", err
+		return nil, 0, err
 	}
-	var digest []byte
-	if err := tx.QueryRow(ctx, `SELECT digest FROM graph_state WHERE singleton=true`).Scan(&digest); err != nil {
+	var revision int64
+	if err := tx.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, "", err
+		return nil, 0, err
 	}
-	if len(digest) == 0 {
+	if revision == 0 {
 		_ = tx.Rollback(ctx)
-		return nil, "", ErrNotMaterialized
+		return nil, 0, ErrNotMaterialized
 	}
-	return tx, hex.EncodeToString(digest), nil
+	return tx, uint64(revision), nil
 }
 
 func queryCurrentResource(ctx context.Context, tx pgx.Tx, id string) (graph.Resource, error) {

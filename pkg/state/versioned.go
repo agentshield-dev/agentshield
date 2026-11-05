@@ -11,11 +11,12 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
 // Contribution head statuses, derived from Retired, Ready, and SourceHealth by
@@ -43,9 +44,21 @@ type assertionRef struct {
 }
 
 type contributionPublication struct {
-	VersionID int64
-	View      GraphView
-	HasView   bool
+	VersionID   int64
+	Revision    uint64
+	GeneratedAt time.Time
+}
+
+type checkpointTimings struct {
+	applied          bool
+	compile          time.Duration
+	queue            time.Duration
+	transactionSetup time.Duration
+	prepare          time.Duration
+	membership       time.Duration
+	persistence      time.Duration
+	projection       time.Duration
+	commit           time.Duration
 }
 
 // ManifestContribution is one contribution version pinned by a manifest.
@@ -87,50 +100,204 @@ type AnalysisViewToken struct {
 	EvaluationTime time.Time `json:"evaluationTime"`
 }
 
-// publishContribution compiles a candidate graph before opening its write
-// transaction. A revision compare-and-swap rejects candidates based on stale
-// state, including candidates built by another process.
-func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, error) {
+func (s *Store) publishContribution(ctx context.Context, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot, timings *checkpointTimings) (Publication, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
+	defer cancel()
+	queueStarted := time.Now()
+	s.materializerMu.Lock()
+	defer s.materializerMu.Unlock()
+	timings.queue = time.Since(queueStarted)
+	transactionStarted := time.Now()
+	tx, err := s.beginPublication(ctx)
+	if err != nil {
+		return Publication{}, err
+	}
+	timings.transactionSetup = time.Since(transactionStarted)
+	publication, err := s.commitCandidate(ctx, tx, contribution, inputDigest, compiled, timings)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return Publication{}, err
+	}
+	commitStarted := time.Now()
+	if err := tx.Commit(ctx); err != nil {
+		return Publication{}, fmt.Errorf("commit contribution publication: %w", err)
+	}
+	timings.commit = time.Since(commitStarted)
+	s.materialized = nil
+	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
+}
+
+func (s *Store) publishContributionDelta(ctx context.Context, contribution Contribution, baseGeneration uint64, inputDigest [32]byte, added, retracted graph.Snapshot) (Publication, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.publication.timeout)
 	defer cancel()
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
-	key := contributionKey{pluginID: contribution.PluginID, sourceID: contribution.SourceID, name: contribution.Name}
-	for {
-		current, err := s.currentMaterializedGraph(ctx)
-		if err != nil {
-			return contributionPublication{}, err
-		}
-		next, input, err := current.candidate(key, compiled, contribution.Input, contribution.UpdatedAt)
-		if err != nil {
-			return contributionPublication{}, fmt.Errorf("build candidate graph: %w", err)
-		}
-		next.view, err = s.compileGraphView(activeGraph{generatedAt: contribution.UpdatedAt, input: input})
-		if err != nil {
-			return contributionPublication{}, fmt.Errorf("compile candidate graph: %w", err)
-		}
-		tx, err := s.beginPublication(ctx)
-		if err != nil {
-			return contributionPublication{}, err
-		}
-		publication, stale, err := s.commitCandidate(ctx, tx, current, next, contribution, inputDigest, compiled)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return contributionPublication{}, err
-		}
-		if stale {
-			_ = tx.Rollback(ctx)
-			s.materialized = nil
-			continue
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return contributionPublication{}, fmt.Errorf("commit contribution publication: %w", err)
-		}
-		if publication.HasView {
-			s.materialized = &next
-		}
-		return publication, nil
+	tx, err := s.beginPublication(ctx)
+	if err != nil {
+		return Publication{}, err
 	}
+	publication, err := s.commitDeltaCandidate(ctx, tx, contribution, baseGeneration, inputDigest, added, retracted)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return Publication{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Publication{}, fmt.Errorf("commit contribution delta: %w", err)
+	}
+	s.materialized = nil
+	return Publication{Revision: publication.Revision, GeneratedAt: publication.GeneratedAt}, nil
+}
+
+func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, baseGeneration uint64, inputDigest [32]byte, added, retracted graph.Snapshot) (contributionPublication, error) {
+	var revision int64
+	var generatedAt *time.Time
+	if err := tx.QueryRow(ctx, `SELECT revision, generated_at FROM graph_state WHERE singleton=true FOR UPDATE`).Scan(&revision, &generatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("lock graph revision: %w", err)
+	}
+	contributionID, err := resolveContribution(ctx, tx, contribution)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	head, hasHead, err := readContributionHead(ctx, tx, contributionID)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	if hasHead && int64(contribution.Generation) == head.generation {
+		if !equalBytes(head.inputDigest, inputDigest[:]) {
+			return contributionPublication{}, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
+		}
+		publicationTime := contribution.UpdatedAt
+		if generatedAt != nil {
+			publicationTime = *generatedAt
+		}
+		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
+	}
+	if !hasHead || head.generation != int64(baseGeneration) {
+		return contributionPublication{}, fmt.Errorf("%w: base %d", ErrContributionDeltaBaseMismatch, baseGeneration)
+	}
+	preparedAdded, err := prepareCompiledAssertions(added)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	preparedRetracted, err := prepareCompiledAssertions(retracted)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	delta := membershipDelta{added: preparedAdded.refs, retracted: preparedRetracted.refs}
+	if ref, overlaps := overlappingAssertionRef(delta.added, delta.retracted); overlaps {
+		return contributionPublication{}, fmt.Errorf("%w: assertion %s/%s is both added and retracted", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
+	if err := applyMembershipDelta(ctx, tx, contributionID, delta); err != nil {
+		return contributionPublication{}, err
+	}
+	if err := persistCompiledAssertions(ctx, tx, preparedAdded, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
+		return contributionPublication{}, err
+	}
+	status := contributionStatus(contribution)
+	versionID, err := recordContributionVersion(ctx, tx, contributionID, contribution, inputDigest, status)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	changedResources, err := reconcileProjectionDelta(ctx, tx, s.compiler, delta, contribution.UpdatedAt, s.unresolvedRetention)
+	if err != nil {
+		return contributionPublication{}, err
+	}
+	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
+		return contributionPublication{}, err
+	}
+	metadataChanged := head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status
+	if !telemetryOnlyChanges(delta.added, delta.retracted) || metadataChanged {
+		if err := appendChangeEvent(ctx, tx, versionID, contribution, status, delta); err != nil {
+			return contributionPublication{}, err
+		}
+	}
+	revision++
+	if _, err := tx.Exec(ctx, `UPDATE graph_state SET revision=$1, generated_at=$2 WHERE singleton=true`, revision, contribution.UpdatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("advance graph revision: %w", err)
+	}
+	return contributionPublication{VersionID: versionID, Revision: uint64(revision), GeneratedAt: contribution.UpdatedAt}, nil
+}
+
+func applyMembershipDelta(ctx context.Context, tx pgx.Tx, contributionID int64, delta membershipDelta) error {
+	for _, table := range []string{"added_contribution_assertions", "retracted_contribution_assertions"} {
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE `+table+` (assertion_type text NOT NULL, assertion_id text NOT NULL, PRIMARY KEY (assertion_type, assertion_id)) ON COMMIT DROP`); err != nil {
+			return fmt.Errorf("create contribution delta membership: %w", err)
+		}
+	}
+	for table, refs := range map[string][]assertionRef{
+		"added_contribution_assertions": delta.added, "retracted_contribution_assertions": delta.retracted,
+	} {
+		rows := make([][]any, len(refs))
+		for index, ref := range refs {
+			rows[index] = []any{ref.Type, ref.ID}
+		}
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{table}, []string{"assertion_type", "assertion_id"}, pgx.CopyFromRows(rows)); err != nil {
+			return fmt.Errorf("stage contribution delta membership: %w", err)
+		}
+	}
+	var ref assertionRef
+	err := tx.QueryRow(ctx, `
+		SELECT delta.assertion_type, delta.assertion_id
+		FROM retracted_contribution_assertions delta
+		LEFT JOIN contribution_current_assertions membership
+		  ON membership.contribution_id=$1
+		 AND membership.assertion_type=delta.assertion_type
+		 AND membership.assertion_id=delta.assertion_id
+		WHERE membership.contribution_id IS NULL
+		LIMIT 1`, contributionID).Scan(&ref.Type, &ref.ID)
+	if err == nil {
+		return fmt.Errorf("%w: cannot retract unowned %s assertion %s", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("validate contribution retractions: %w", err)
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT delta.assertion_type, delta.assertion_id
+		FROM added_contribution_assertions delta
+		JOIN contribution_current_assertions membership
+		  ON membership.contribution_id=$1
+		 AND membership.assertion_type=delta.assertion_type
+		 AND membership.assertion_id=delta.assertion_id
+		LIMIT 1`, contributionID).Scan(&ref.Type, &ref.ID)
+	if err == nil {
+		return fmt.Errorf("%w: cannot add already owned %s assertion %s", ErrContributionDeltaMembershipMismatch, ref.Type, ref.ID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("validate contribution additions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM contribution_current_assertions membership
+		USING retracted_contribution_assertions delta
+		WHERE membership.contribution_id=$1
+		  AND membership.assertion_type=delta.assertion_type
+		  AND membership.assertion_id=delta.assertion_id`, contributionID); err != nil {
+		return fmt.Errorf("retract contribution assertions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id)
+		SELECT $1, assertion_type, assertion_id FROM added_contribution_assertions`, contributionID); err != nil {
+		return fmt.Errorf("add contribution assertions: %w", err)
+	}
+	return nil
+}
+
+func overlappingAssertionRef(added, retracted []assertionRef) (assertionRef, bool) {
+	retractedSet := make(map[assertionRef]struct{}, len(retracted))
+	for _, ref := range retracted {
+		retractedSet[ref] = struct{}{}
+	}
+	for _, ref := range added {
+		if _, exists := retractedSet[ref]; exists {
+			return ref, true
+		}
+	}
+	return assertionRef{}, false
 }
 
 func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph, error) {
@@ -149,62 +316,95 @@ func (s *Store) currentMaterializedGraph(ctx context.Context) (materializedGraph
 	return loaded, nil
 }
 
-func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, current, next materializedGraph, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot) (contributionPublication, bool, error) {
+func (s *Store) commitCandidate(ctx context.Context, tx pgx.Tx, contribution Contribution, inputDigest [32]byte, compiled graph.Snapshot, timings *checkpointTimings) (contributionPublication, error) {
+	var revision int64
+	var generatedAt *time.Time
+	var graphExists bool
+	if err := tx.QueryRow(ctx, `SELECT revision, generated_at, EXISTS(SELECT 1 FROM contribution_heads) FROM graph_state WHERE singleton=true FOR UPDATE`).Scan(&revision, &generatedAt, &graphExists); err != nil {
+		return contributionPublication{}, fmt.Errorf("lock graph revision: %w", err)
+	}
 	contributionID, err := resolveContribution(ctx, tx, contribution)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	head, hasHead, err := readContributionHead(ctx, tx, contributionID)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	if hasHead && int64(contribution.Generation) < head.generation {
-		return contributionPublication{}, false, fmt.Errorf("contribution generation %d is older than current generation %d", contribution.Generation, head.generation)
+		return contributionPublication{}, fmt.Errorf("contribution generation %d is older than current generation %d", contribution.Generation, head.generation)
 	}
 	if hasHead && int64(contribution.Generation) == head.generation {
 		if !equalBytes(head.inputDigest, inputDigest[:]) {
-			return contributionPublication{}, false, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
+			return contributionPublication{}, fmt.Errorf("contribution generation %d conflicts with the current generation", contribution.Generation)
 		}
-		return contributionPublication{VersionID: head.versionID}, false, nil
+		publicationTime := contribution.UpdatedAt
+		if generatedAt != nil {
+			publicationTime = *generatedAt
+		}
+		return contributionPublication{VersionID: head.versionID, Revision: uint64(revision), GeneratedAt: publicationTime}, nil
 	}
-	digest, err := hex.DecodeString(next.view.SHA256)
+	timings.applied = true
+	phaseStarted := time.Now()
+	prepared, err := prepareCompiledAssertions(compiled)
+	timings.prepare = time.Since(phaseStarted)
 	if err != nil {
-		return contributionPublication{}, false, fmt.Errorf("decode candidate graph digest: %w", err)
-	}
-	command, err := tx.Exec(ctx, `UPDATE graph_state SET revision=revision+1, digest=$2, generated_at=$3 WHERE singleton=true AND revision=$1`, current.revision, digest, next.view.GeneratedAt)
-	if err != nil {
-		return contributionPublication{}, false, fmt.Errorf("advance graph revision: %w", err)
-	}
-	if command.RowsAffected() == 0 {
-		return contributionPublication{}, true, nil
-	}
-	newRefs, err := persistCompiledAssertions(ctx, tx, compiled)
-	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	status := contributionStatus(contribution)
 	versionID, err := recordContributionVersion(ctx, tx, contributionID, contribution, inputDigest, status)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
-	delta, err := replaceMembership(ctx, tx, contributionID, newRefs)
+	phaseStarted = time.Now()
+	delta, err := replaceMembership(ctx, tx, contributionID, prepared.refs)
+	timings.membership = time.Since(phaseStarted)
 	if err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
-	changedResources, _ := projectionChanges(current.view.Snapshot.Resources, next.view.Snapshot.Resources, func(item graph.Resource) string { return item.ID })
+	phaseStarted = time.Now()
+	if err := persistCompiledAssertions(ctx, tx, prepared, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
+		return contributionPublication{}, err
+	}
+	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
+		return contributionPublication{}, err
+	}
+	timings.persistence = time.Since(phaseStarted)
+	phaseStarted = time.Now()
+	var changedResources []graph.Resource
+	if !graphExists {
+		initial, err := s.compiler.Compile(contribution.Input)
+		if err != nil {
+			return contributionPublication{}, fmt.Errorf("compile initial graph: %w", err)
+		}
+		if err := replaceCurrentProjection(ctx, tx, graph.Snapshot{}, initial, contribution.UpdatedAt, s.unresolvedRetention); err != nil {
+			return contributionPublication{}, err
+		}
+		changedResources = initial.Resources
+	} else {
+		changedResources, err = reconcileProjectionDelta(ctx, tx, s.compiler, delta, contribution.UpdatedAt, s.unresolvedRetention)
+		if err != nil {
+			return contributionPublication{}, err
+		}
+	}
+	timings.projection = time.Since(phaseStarted)
 	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
-		return contributionPublication{}, false, err
-	}
-	if err := replaceCurrentProjection(ctx, tx, current.view.Snapshot, next.view.Snapshot, contribution.UpdatedAt, s.unresolvedRetention); err != nil {
-		return contributionPublication{}, false, err
+		return contributionPublication{}, err
 	}
 	metadataChanged := hasHead && (head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status)
 	if !telemetryOnlyChanges(delta.added, delta.retracted) || metadataChanged {
 		if err := appendChangeEvent(ctx, tx, versionID, contribution, status, delta); err != nil {
-			return contributionPublication{}, false, err
+			return contributionPublication{}, err
 		}
 	}
-	return contributionPublication{VersionID: versionID, View: next.view, HasView: true}, false, nil
+	revision++
+	if _, err := tx.Exec(ctx, `UPDATE graph_state SET revision=$1, generated_at=$2 WHERE singleton=true`, revision, contribution.UpdatedAt); err != nil {
+		return contributionPublication{}, fmt.Errorf("advance graph revision: %w", err)
+	}
+	return contributionPublication{VersionID: versionID, Revision: uint64(revision), GeneratedAt: contribution.UpdatedAt}, nil
 }
 
 // beginPublication opens a publication transaction with bounded lock and statement waits.
@@ -312,14 +512,22 @@ func replaceMembership(ctx context.Context, tx pgx.Tx, contributionID int64, new
 		return membershipDelta{}, fmt.Errorf("stage incoming contribution membership: %w", err)
 	}
 	changed, err := tx.Query(ctx, `
-		WITH additions AS (
-			SELECT assertion_type, assertion_id FROM incoming_contribution_assertions
-			EXCEPT
-			SELECT assertion_type, assertion_id FROM contribution_current_assertions WHERE contribution_id=$1
-		), retractions AS (
-			SELECT assertion_type, assertion_id FROM contribution_current_assertions WHERE contribution_id=$1
-			EXCEPT
-			SELECT assertion_type, assertion_id FROM incoming_contribution_assertions
+		WITH additions AS MATERIALIZED (
+			SELECT incoming.assertion_type, incoming.assertion_id
+			FROM incoming_contribution_assertions incoming
+			WHERE NOT EXISTS (
+				SELECT 1 FROM contribution_current_assertions membership
+				WHERE membership.contribution_id=$1
+				  AND membership.assertion_type=incoming.assertion_type
+				  AND membership.assertion_id=incoming.assertion_id)
+		), retractions AS MATERIALIZED (
+			SELECT membership.assertion_type, membership.assertion_id
+			FROM contribution_current_assertions membership
+			WHERE membership.contribution_id=$1
+			  AND NOT EXISTS (
+				SELECT 1 FROM incoming_contribution_assertions incoming
+				WHERE incoming.assertion_type=membership.assertion_type
+				  AND incoming.assertion_id=membership.assertion_id)
 		), inserted AS (
 			INSERT INTO contribution_current_assertions (contribution_id, assertion_type, assertion_id)
 			SELECT $1, assertion_type, assertion_id FROM additions
@@ -359,12 +567,6 @@ func replaceMembership(ctx context.Context, tx pgx.Tx, contributionID int64, new
 	sortAssertionRefs(delta.added)
 	sortAssertionRefs(delta.retracted)
 	changed.Close()
-	if delta.addedChanges, err = loadAssertionChanges(ctx, tx, delta.added); err != nil {
-		return membershipDelta{}, err
-	}
-	if delta.retractedChanges, err = loadAssertionChanges(ctx, tx, delta.retracted); err != nil {
-		return membershipDelta{}, err
-	}
 	return delta, nil
 }
 
@@ -452,9 +654,9 @@ func contributionStatus(contribution Contribution) string {
 // as compiler input of type T.
 type assertionTable[T any] struct {
 	assertionType string
-	// insert takes assertion_id and content_digest as $1 and $2, then the
-	// type's own columns.
-	insert string
+	table         string
+	columns       []string
+	insert        string
 	// active selects the DISTINCT active rows in a stable order, and scan
 	// decodes one of them.
 	active string
@@ -462,19 +664,22 @@ type assertionTable[T any] struct {
 }
 
 type assertionInsert struct {
-	ref   assertionRef
-	query string
-	args  []any
+	ref         assertionRef
+	identityIDs []string
+	table       string
+	columns     []string
+	query       string
+	args        []any
 }
 
-func (table assertionTable[T]) prepare(content any, values ...any) (assertionInsert, error) {
+func (table assertionTable[T]) prepare(content any, identityIDs []string, values ...any) (assertionInsert, error) {
 	id, digest, err := contentAddress(table.assertionType, content)
 	if err != nil {
 		return assertionInsert{}, err
 	}
 	return assertionInsert{
-		ref: assertionRef{Type: table.assertionType, ID: id}, query: table.insert,
-		args: append([]any{id, digest[:]}, values...),
+		ref: assertionRef{Type: table.assertionType, ID: id}, identityIDs: identityIDs,
+		table: table.table, columns: table.columns, query: table.insert, args: append([]any{id, digest[:]}, values...),
 	}, nil
 }
 
@@ -498,6 +703,8 @@ func (table assertionTable[T]) collect(ctx context.Context, tx pgx.Tx) ([]T, err
 
 var resourceAssertions = assertionTable[graph.ResourceAssertion]{
 	assertionType: assertionResource,
+	table:         "resource_assertions",
+	columns:       []string{"assertion_id", "content_digest", "resource_id", "kind", "display_name", "attributes", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO resource_assertions (assertion_id, content_digest, resource_id, kind, display_name, attributes, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.display_name, a.attributes, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN resource_assertions a ON m.assertion_type='resource' AND a.assertion_id=m.assertion_id JOIN resource_identities i ON i.resource_id=a.resource_id ORDER BY i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.ResourceAssertion, error) {
@@ -512,6 +719,8 @@ var resourceAssertions = assertionTable[graph.ResourceAssertion]{
 
 var facetAssertions = assertionTable[graph.FacetAssertion]{
 	assertionType: assertionFacet,
+	table:         "facet_assertions",
+	columns:       []string{"assertion_id", "content_digest", "facet_id", "resource_id", "kind", "facet_key", "attributes", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO facet_assertions (assertion_id, content_digest, facet_id, resource_id, kind, facet_key, attributes, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.facet_key, a.attributes, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN facet_assertions a ON m.assertion_type='facet' AND a.assertion_id=m.assertion_id JOIN resource_identities i ON i.resource_id=a.resource_id ORDER BY i.scheme_group, i.scheme_version, i.scheme_kind, i.authority_id, i.immutable_key, a.kind, a.facet_key, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.FacetAssertion, error) {
@@ -526,6 +735,8 @@ var facetAssertions = assertionTable[graph.FacetAssertion]{
 
 var relationshipAssertions = assertionTable[graph.RelationshipAssertion]{
 	assertionType: assertionRelationship,
+	table:         "relationship_assertions",
+	columns:       []string{"assertion_id", "content_digest", "relationship_id", "subject_id", "object_id", "predicate", "qualifier", "properties", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO relationship_assertions (assertion_id, content_digest, relationship_id, subject_id, object_id, predicate, qualifier, properties, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, a.predicate, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.qualifier, a.properties, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN relationship_assertions a ON m.assertion_type='relationship' AND a.assertion_id=m.assertion_id JOIN resource_identities si ON si.resource_id=a.subject_id JOIN resource_identities oi ON oi.resource_id=a.object_id ORDER BY si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, a.predicate, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.qualifier, a.plugin_id, a.source_id, a.rule_id`,
 	scan: func(rows pgx.Rows) (graph.RelationshipAssertion, error) {
@@ -544,6 +755,8 @@ var relationshipAssertions = assertionTable[graph.RelationshipAssertion]{
 // them back as graph.TelemetryAssertion input.
 var telemetryAssertions = assertionTable[graph.TelemetryAssertion]{
 	assertionType: assertionTelemetry,
+	table:         "telemetry_assertions",
+	columns:       []string{"assertion_id", "content_digest", "telemetry_id", "event_id", "kind", "subject_id", "object_id", "operation", "outcome", "coverage", "event_count", "properties", "plugin_id", "source_id", "rule_id", "evidence_ids"},
 	insert:        `INSERT INTO telemetry_assertions (assertion_id, content_digest, telemetry_id, event_id, kind, subject_id, object_id, operation, outcome, coverage, event_count, properties, plugin_id, source_id, rule_id, evidence_ids) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (assertion_id) DO NOTHING`,
 	active:        `SELECT DISTINCT a.event_id, a.kind, si.scheme_group, si.scheme_version, si.scheme_kind, si.authority_id, si.immutable_key, oi.scheme_group, oi.scheme_version, oi.scheme_kind, oi.authority_id, oi.immutable_key, a.operation, a.outcome, a.coverage, a.event_count, a.properties, a.plugin_id, a.source_id, a.rule_id, a.evidence_ids FROM contribution_current_assertions m JOIN telemetry_assertions a ON m.assertion_type='telemetry' AND a.assertion_id=m.assertion_id JOIN resource_identities si ON si.resource_id=a.subject_id JOIN resource_identities oi ON oi.resource_id=a.object_id ORDER BY a.plugin_id, a.source_id, a.event_id`,
 	scan: func(rows pgx.Rows) (graph.TelemetryAssertion, error) {
@@ -561,9 +774,15 @@ var telemetryAssertions = assertionTable[graph.TelemetryAssertion]{
 // persistCompiledAssertions stores every assertion in a compiled contribution
 // snapshot, including the competing assertions of identity conflicts, and
 // returns their sorted references.
-func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, compiled graph.Snapshot) ([]assertionRef, error) {
+type preparedAssertions struct {
+	identities map[string]graph.IdentityClaim
+	inserts    map[assertionRef]assertionInsert
+	refs       []assertionRef
+}
+
+func prepareCompiledAssertions(compiled graph.Snapshot) (preparedAssertions, error) {
 	identities := make(map[string]graph.IdentityClaim)
-	var inserts []assertionInsert
+	inserts := make(map[assertionRef]assertionInsert)
 	addIdentity := func(resourceID string, claim graph.IdentityClaim) error {
 		if current, exists := identities[resourceID]; exists && current != claim {
 			return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
@@ -575,108 +794,187 @@ func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, compiled graph.Sn
 		if err != nil {
 			return err
 		}
-		inserts = append(inserts, insert)
+		inserts[insert.ref] = insert
 		return nil
 	}
 	for _, resource := range compiled.Resources {
 		if err := addIdentity(resource.ID, resource.Identity); err != nil {
-			return nil, err
+			return preparedAssertions{}, err
 		}
 		for _, assertion := range resource.Assertions {
-			if err := addAssertion(resourceAssertions.prepare(assertion, resource.ID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(resourceAssertions.prepare(assertion, []string{resource.ID}, resource.ID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, conflict := range compiled.Conflicts {
 		for _, assertion := range conflict.Assertions {
 			if err := addIdentity(conflict.ResourceID, assertion.Claim); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(resourceAssertions.prepare(assertion, conflict.ResourceID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(resourceAssertions.prepare(assertion, []string{conflict.ResourceID}, conflict.ResourceID, assertion.Kind, assertion.DisplayName, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, facet := range compiled.Facets {
 		for _, assertion := range facet.Assertions {
 			if err := addIdentity(facet.ResourceID, assertion.Resource); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(facetAssertions.prepare(assertion, facet.ID, facet.ResourceID, facet.Kind, facet.Key, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(facetAssertions.prepare(assertion, []string{facet.ResourceID}, facet.ID, facet.ResourceID, facet.Kind, facet.Key, objectJSON(assertion.Attributes), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, relationship := range compiled.Relationships {
 		for _, assertion := range relationship.Assertions {
 			if err := addIdentity(relationship.SubjectID, assertion.Subject); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
 			if err := addIdentity(relationship.ObjectID, assertion.Object); err != nil {
-				return nil, err
+				return preparedAssertions{}, err
 			}
-			if err := addAssertion(relationshipAssertions.prepare(assertion, relationship.ID, relationship.SubjectID, relationship.ObjectID, relationship.Predicate, relationship.Qualifier, objectJSON(assertion.Properties), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
-				return nil, err
+			if err := addAssertion(relationshipAssertions.prepare(assertion, []string{relationship.SubjectID, relationship.ObjectID}, relationship.ID, relationship.SubjectID, relationship.ObjectID, relationship.Predicate, relationship.Qualifier, objectJSON(assertion.Properties), assertion.PluginID, assertion.SourceID, assertion.RuleID, stringSliceJSON(assertion.EvidenceIDs))); err != nil {
+				return preparedAssertions{}, err
 			}
 		}
 	}
 	for _, event := range compiled.Telemetry {
-		if err := addAssertion(telemetryAssertions.prepare(event, event.ID, event.EventID, event.Kind, event.SubjectID, event.ObjectID, event.Operation, event.Outcome, event.Coverage, int64(event.Count), objectJSON(event.Properties), event.PluginID, event.SourceID, event.RuleID, stringSliceJSON(event.EvidenceIDs))); err != nil {
-			return nil, err
+		if err := addAssertion(telemetryAssertions.prepare(event, nil, event.ID, event.EventID, event.Kind, event.SubjectID, event.ObjectID, event.Operation, event.Outcome, event.Coverage, int64(event.Count), objectJSON(event.Properties), event.PluginID, event.SourceID, event.RuleID, stringSliceJSON(event.EvidenceIDs))); err != nil {
+			return preparedAssertions{}, err
 		}
 	}
-	identityIDs := make([]string, 0, len(identities))
-	for resourceID := range identities {
+	refs := make([]assertionRef, 0, len(inserts))
+	for ref := range inserts {
+		refs = append(refs, ref)
+	}
+	sortAssertionRefs(refs)
+	return preparedAssertions{identities: identities, inserts: inserts, refs: refs}, nil
+}
+
+func persistCompiledAssertions(ctx context.Context, tx pgx.Tx, prepared preparedAssertions, added []assertionRef) error {
+	identitySet := make(map[string]struct{})
+	for _, ref := range added {
+		for _, resourceID := range prepared.inserts[ref].identityIDs {
+			identitySet[resourceID] = struct{}{}
+		}
+	}
+	identityIDs := make([]string, 0, len(identitySet))
+	for resourceID := range identitySet {
 		identityIDs = append(identityIDs, resourceID)
 	}
 	slices.Sort(identityIDs)
-	var identityBatch pgx.Batch
-	for _, resourceID := range identityIDs {
-		claim := identities[resourceID]
-		identityBatch.Queue(`
-			INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
-			VALUES ($1,$2,$3,$4,$5,$6)
-			ON CONFLICT (resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
-			WHERE resource_identities.scheme_group=EXCLUDED.scheme_group
-			  AND resource_identities.scheme_version=EXCLUDED.scheme_version
-			  AND resource_identities.scheme_kind=EXCLUDED.scheme_kind
-			  AND resource_identities.authority_id=EXCLUDED.authority_id
-			  AND resource_identities.immutable_key=EXCLUDED.immutable_key
-			RETURNING resource_id::text`, resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey)
-	}
-	identityResults := tx.SendBatch(ctx, &identityBatch)
-	for _, resourceID := range identityIDs {
-		var storedID string
-		if err := identityResults.QueryRow().Scan(&storedID); err != nil {
-			_ = identityResults.Close()
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
+	if len(prepared.identities) > 0 {
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE incoming_resource_identities (resource_id uuid PRIMARY KEY, scheme_group text NOT NULL, scheme_version text NOT NULL, scheme_kind text NOT NULL, authority_id text NOT NULL, immutable_key text NOT NULL) ON COMMIT DROP`); err != nil {
+			return fmt.Errorf("create incoming resource identities: %w", err)
+		}
+		rows := make([][]any, 0, len(prepared.identities))
+		for resourceID, claim := range prepared.identities {
+			rows = append(rows, []any{resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey})
+		}
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_resource_identities"}, []string{"resource_id", "scheme_group", "scheme_version", "scheme_kind", "authority_id", "immutable_key"}, pgx.CopyFromRows(rows)); err != nil {
+			return fmt.Errorf("stage incoming resource identities: %w", err)
+		}
+		var collision string
+		err := tx.QueryRow(ctx, `
+			SELECT incoming.resource_id
+			FROM incoming_resource_identities incoming
+			JOIN resource_identities stored USING (resource_id)
+			WHERE (stored.scheme_group, stored.scheme_version, stored.scheme_kind, stored.authority_id, stored.immutable_key)
+			   IS DISTINCT FROM
+			      (incoming.scheme_group, incoming.scheme_version, incoming.scheme_kind, incoming.authority_id, incoming.immutable_key)
+			LIMIT 1`).Scan(&collision)
+		if err == nil {
+			return fmt.Errorf("resource ID %s collides with a different identity claim", collision)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("validate resource identities: %w", err)
+		}
+		if len(identityIDs) == 1 {
+			resourceID := identityIDs[0]
+			claim := prepared.identities[resourceID]
+			var storedID string
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
+				VALUES ($1,$2,$3,$4,$5,$6)
+				ON CONFLICT (resource_id) DO UPDATE SET resource_id=EXCLUDED.resource_id
+				WHERE resource_identities.scheme_group=EXCLUDED.scheme_group
+				  AND resource_identities.scheme_version=EXCLUDED.scheme_version
+				  AND resource_identities.scheme_kind=EXCLUDED.scheme_kind
+				  AND resource_identities.authority_id=EXCLUDED.authority_id
+				  AND resource_identities.immutable_key=EXCLUDED.immutable_key
+				RETURNING resource_id::text`, resourceID, claim.Scheme.Group, claim.Scheme.Version, claim.Scheme.Kind, claim.AuthorityID, claim.ImmutableKey).Scan(&storedID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return fmt.Errorf("resource ID %s collides with a different identity claim", resourceID)
+				}
+				return fmt.Errorf("persist resource identity %s: %w", resourceID, err)
 			}
-			return nil, fmt.Errorf("persist resource identity %s: %w", resourceID, err)
+		} else if len(identityIDs) > 0 {
+			ids, err := projectionUUIDs(identityIDs)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO resource_identities (resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key)
+				SELECT resource_id, scheme_group, scheme_version, scheme_kind, authority_id, immutable_key
+				FROM incoming_resource_identities
+				WHERE resource_id=ANY($1)
+				ON CONFLICT (resource_id) DO NOTHING`, ids); err != nil {
+				return fmt.Errorf("persist resource identities: %w", err)
+			}
 		}
 	}
-	if err := identityResults.Close(); err != nil {
-		return nil, fmt.Errorf("persist resource identities: %w", err)
+	type assertionStage struct {
+		columns []string
+		rows    [][]any
 	}
-	refs := make([]assertionRef, 0, len(inserts))
-	var assertionBatch pgx.Batch
-	for _, insert := range inserts {
-		assertionBatch.Queue(insert.query, insert.args...)
-		refs = append(refs, insert.ref)
+	if len(added) == 1 {
+		insert := prepared.inserts[added[0]]
+		if _, err := tx.Exec(ctx, insert.query, insert.args...); err != nil {
+			return fmt.Errorf("persist %s assertion: %w", insert.ref.Type, err)
+		}
+		return nil
 	}
-	assertionResults := tx.SendBatch(ctx, &assertionBatch)
-	for _, insert := range inserts {
-		if _, err := assertionResults.Exec(); err != nil {
-			_ = assertionResults.Close()
-			return nil, fmt.Errorf("persist %s assertion: %w", insert.ref.Type, err)
+	stages := make(map[string]assertionStage)
+	for _, ref := range added {
+		insert := prepared.inserts[ref]
+		stage := stages[insert.table]
+		stage.columns = insert.columns
+		stage.rows = append(stage.rows, insert.args)
+		stages[insert.table] = stage
+	}
+	for _, table := range []string{resourceAssertions.table, facetAssertions.table, relationshipAssertions.table, telemetryAssertions.table} {
+		stage, exists := stages[table]
+		if !exists {
+			continue
+		}
+		if err := persistAssertionStage(ctx, tx, table, stage.columns, stage.rows); err != nil {
+			return err
 		}
 	}
-	if err := assertionResults.Close(); err != nil {
-		return nil, fmt.Errorf("persist assertions: %w", err)
+	return nil
+}
+
+func persistAssertionStage(ctx context.Context, tx pgx.Tx, table string, columns []string, rows [][]any) error {
+	stagingTable := "incoming_" + table
+	targetIdentifier := pgx.Identifier{table}.Sanitize()
+	stagingIdentifier := pgx.Identifier{stagingTable}.Sanitize()
+	quotedColumns := make([]string, len(columns))
+	for index, column := range columns {
+		quotedColumns[index] = pgx.Identifier{column}.Sanitize()
 	}
-	sortAssertionRefs(refs)
-	return refs, nil
+	columnList := strings.Join(quotedColumns, ",")
+	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE `+stagingIdentifier+` (LIKE `+targetIdentifier+` INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
+		return fmt.Errorf("create incoming %s: %w", table, err)
+	}
+	if _, err := tx.CopyFrom(ctx, pgx.Identifier{stagingTable}, columns, pgx.CopyFromRows(rows)); err != nil {
+		return fmt.Errorf("stage incoming %s: %w", table, err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO `+targetIdentifier+` (`+columnList+`) SELECT `+columnList+` FROM `+stagingIdentifier+` ON CONFLICT (assertion_id) DO NOTHING`); err != nil {
+		return fmt.Errorf("persist %s: %w", table, err)
+	}
+	return nil
 }
 
 // contentAddress hashes the assertion type and its JSON encoding. The compiler
@@ -756,13 +1054,9 @@ func loadAssertionChanges(ctx context.Context, tx pgx.Tx, refs []assertionRef) (
 
 // collectActiveInput rebuilds a graph.Input from the active membership of all
 // contributions. DISTINCT collapses assertions shared by contributions, and
-// ORDER BY keeps the input order stable. Provenance is verified first so a
-// tampered or legacy membership row cannot enter compilation.
+// ORDER BY keeps the input order stable.
 func collectActiveInput(ctx context.Context, tx pgx.Tx) (graph.Input, error) {
 	var input graph.Input
-	if err := verifyActiveAssertionProvenance(ctx, tx); err != nil {
-		return input, err
-	}
 	var err error
 	if input.Resources, err = resourceAssertions.collect(ctx, tx); err != nil {
 		return input, err
@@ -777,42 +1071,6 @@ func collectActiveInput(ctx context.Context, tx pgx.Tx) (graph.Input, error) {
 		return input, err
 	}
 	return input, nil
-}
-
-// verifyActiveAssertionProvenance fails if any active assertion's plugin or
-// source differs from its owning contribution. It re-checks at read time what
-// ReplaceContribution enforces at write time.
-type rowQuerier interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func verifyActiveAssertionProvenance(ctx context.Context, tx rowQuerier) error {
-	var assertionType, assertionID, ownerPlugin, ownerSource, assertionPlugin, assertionSource string
-	err := tx.QueryRow(ctx, `
-		SELECT assertion_type, assertion_id, owner_plugin, owner_source, assertion_plugin, assertion_source
-		FROM (
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id owner_plugin, c.source_id owner_source, a.plugin_id assertion_plugin, a.source_id assertion_source
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN resource_assertions a ON m.assertion_type='resource' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN facet_assertions a ON m.assertion_type='facet' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN relationship_assertions a ON m.assertion_type='relationship' AND a.assertion_id=m.assertion_id
-			UNION ALL
-			SELECT m.assertion_type, m.assertion_id, c.plugin_id, c.source_id, a.plugin_id, a.source_id
-			FROM contribution_current_assertions m JOIN contributions c USING (contribution_id) JOIN telemetry_assertions a ON m.assertion_type='telemetry' AND a.assertion_id=m.assertion_id
-		) active_assertions
-		WHERE assertion_plugin IS DISTINCT FROM owner_plugin OR assertion_source IS DISTINCT FROM owner_source
-		ORDER BY assertion_type, assertion_id
-		LIMIT 1`).Scan(&assertionType, &assertionID, &ownerPlugin, &ownerSource, &assertionPlugin, &assertionSource)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("verify active assertion provenance: %w", err)
-	}
-	return fmt.Errorf("stored %s assertion %s provenance %q/%q does not match active contribution owner %q/%q", assertionType, assertionID, assertionPlugin, assertionSource, ownerPlugin, ownerSource)
 }
 
 func decodeJSONColumns(first []byte, firstValue any, second []byte, secondValue any) error {
@@ -857,13 +1115,13 @@ func replaceCurrentProjection(ctx context.Context, tx pgx.Tx, before, after grap
 		if err != nil {
 			return fmt.Errorf("encode conflict kinds: %w", err)
 		}
-		conflictRows = append(conflictRows, []any{conflict.ResourceID, encoded, now})
+		conflictRows = append(conflictRows, []any{conflict.ResourceID, encoded, jsonValue(conflict.Assertions), now})
 	}
 	if len(conflictRows) > 0 {
 		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE incoming_assertion_conflicts (LIKE assertion_conflicts INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
 			return fmt.Errorf("create assertion conflict staging table: %w", err)
 		}
-		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_assertion_conflicts"}, []string{"resource_id", "kinds", "updated_at"}, pgx.CopyFromRows(conflictRows)); err != nil {
+		if _, err := tx.CopyFrom(ctx, pgx.Identifier{"incoming_assertion_conflicts"}, []string{"resource_id", "kinds", "assertions", "updated_at"}, pgx.CopyFromRows(conflictRows)); err != nil {
 			return fmt.Errorf("stage assertion conflicts: %w", err)
 		}
 	}
@@ -918,8 +1176,8 @@ func replaceCurrentProjection(ctx context.Context, tx pgx.Tx, before, after grap
 	}
 	if len(conflictRows) > 0 {
 		batch.Queue(`INSERT INTO assertion_conflicts SELECT * FROM incoming_assertion_conflicts
-		ON CONFLICT (resource_id) DO UPDATE SET kinds=EXCLUDED.kinds, updated_at=EXCLUDED.updated_at
-		WHERE assertion_conflicts.kinds IS DISTINCT FROM EXCLUDED.kinds`)
+		ON CONFLICT (resource_id) DO UPDATE SET kinds=EXCLUDED.kinds, assertions=EXCLUDED.assertions, updated_at=EXCLUDED.updated_at
+		WHERE (assertion_conflicts.kinds, assertion_conflicts.assertions) IS DISTINCT FROM (EXCLUDED.kinds, EXCLUDED.assertions)`)
 	}
 	if len(facetRows) > 0 {
 		batch.Queue(`INSERT INTO current_facets SELECT * FROM incoming_current_facets
@@ -1022,9 +1280,6 @@ func resolutionText(status graph.ResolutionStatus) string {
 
 // Latest returns the compiled graph cached for the current database revision.
 func (s *Store) Latest(ctx context.Context) (GraphView, error) {
-	if err := verifyActiveAssertionProvenance(ctx, s.pool); err != nil {
-		return GraphView{}, err
-	}
 	s.materializerMu.Lock()
 	defer s.materializerMu.Unlock()
 	current, err := s.currentMaterializedGraph(ctx)
@@ -1044,12 +1299,12 @@ func (s *Store) CurrentGraph(ctx context.Context) (GraphView, error) {
 }
 
 // GraphRevision returns the compare-and-swap revision of the materialized graph.
-func (s *Store) GraphRevision(ctx context.Context) (string, error) {
+func (s *Store) GraphRevision(ctx context.Context) (uint64, error) {
 	var revision int64
 	if err := s.pool.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {
-		return "", fmt.Errorf("read graph revision: %w", err)
+		return 0, fmt.Errorf("read graph revision: %w", err)
 	}
-	return strconv.FormatInt(revision, 10), nil
+	return uint64(revision), nil
 }
 
 // ReadGraphCheckpoint returns the latest outbox sequence and the graph
@@ -1084,6 +1339,7 @@ func (s *Store) ReadGraphCheckpoint(ctx context.Context) (GraphCheckpoint, error
 // activeGraph is the active assertion union read from one snapshot, before
 // compilation.
 type activeGraph struct {
+	revision    int64
 	generatedAt time.Time
 	input       graph.Input
 }
@@ -1091,6 +1347,10 @@ type activeGraph struct {
 // readActiveGraph reads the active assertion union inside tx. Compilation is
 // left to compileGraphView so callers can end the transaction first.
 func readActiveGraph(ctx context.Context, tx pgx.Tx) (activeGraph, error) {
+	var revision int64
+	if err := tx.QueryRow(ctx, `SELECT revision FROM graph_state WHERE singleton=true`).Scan(&revision); err != nil {
+		return activeGraph{}, fmt.Errorf("read graph revision: %w", err)
+	}
 	var generatedAt *time.Time
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT max(updated_at), count(*) FROM contribution_heads`).Scan(&generatedAt, &count); err != nil {
@@ -1103,7 +1363,7 @@ func readActiveGraph(ctx context.Context, tx pgx.Tx) (activeGraph, error) {
 	if err != nil {
 		return activeGraph{}, fmt.Errorf("collect active assertions: %w", err)
 	}
-	return activeGraph{generatedAt: *generatedAt, input: input}, nil
+	return activeGraph{revision: revision, generatedAt: *generatedAt, input: input}, nil
 }
 
 func (s *Store) compileGraphView(active activeGraph) (GraphView, error) {
@@ -1111,12 +1371,7 @@ func (s *Store) compileGraphView(active activeGraph) (GraphView, error) {
 	if err != nil {
 		return GraphView{}, fmt.Errorf("compile current graph: %w", err)
 	}
-	canonical, err := snapshot.CanonicalJSON()
-	if err != nil {
-		return GraphView{}, err
-	}
-	digest := sha256.Sum256(canonical)
-	return GraphView{GeneratedAt: active.generatedAt, SHA256: hex.EncodeToString(digest[:]), Snapshot: snapshot}, nil
+	return GraphView{Revision: uint64(active.revision), GeneratedAt: active.generatedAt, Snapshot: snapshot}, nil
 }
 
 // Neighborhood returns resolved edges reachable from resourceID within depth
@@ -1166,7 +1421,7 @@ func (s *Store) Neighborhood(ctx context.Context, resourceID string, depth int, 
 		}
 		frontier = next
 	}
-	result := Neighborhood{SHA256: view.SHA256, Resources: []graph.Resource{}, Relationships: []graph.Relationship{}}
+	result := Neighborhood{Revision: view.Revision, Resources: []graph.Resource{}, Relationships: []graph.Relationship{}}
 	for id := range selectedNodes {
 		if resource, ok := resources[id]; ok {
 			result.Resources = append(result.Resources, resource)

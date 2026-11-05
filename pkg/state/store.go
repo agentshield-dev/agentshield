@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
 // ErrNotMaterialized is returned by graph reads before any contribution has
@@ -27,6 +27,14 @@ var ErrNotMaterialized = errors.New("graph is not materialized")
 
 // ErrGraphEntityNotFound is returned by current-projection detail reads.
 var ErrGraphEntityNotFound = errors.New("graph entity not found")
+
+// ErrContributionDeltaBaseMismatch requires the publisher to recover with a
+// complete contribution replacement based on the current durable generation.
+var ErrContributionDeltaBaseMismatch = errors.New("contribution delta base generation does not match current generation")
+
+// ErrContributionDeltaMembershipMismatch requires the publisher to recover
+// with a complete contribution replacement.
+var ErrContributionDeltaMembershipMismatch = errors.New("contribution delta does not match current membership")
 
 // Source health values accepted on a Contribution. They describe the upstream
 // source, independently of contribution readiness.
@@ -159,12 +167,32 @@ type Contribution struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// GraphView is a compiled canonical graph with its SHA-256 digest.
+// ContributionDelta advances one existing contribution by explicitly adding
+// and retracting assertions relative to BaseGeneration.
+type ContributionDelta struct {
+	PluginID         string      `json:"pluginId"`
+	SourceID         string      `json:"sourceId"`
+	Name             string      `json:"name"`
+	BaseGeneration   uint64      `json:"baseGeneration"`
+	Generation       uint64      `json:"generation"`
+	Added            graph.Input `json:"added"`
+	Retracted        graph.Input `json:"retracted"`
+	SourceObservedAt time.Time   `json:"sourceObservedAt"`
+	Ready            bool        `json:"ready"`
+	SourceHealth     string      `json:"sourceHealth"`
+}
+
+// GraphView is a compiled graph at one committed publication revision.
 // GeneratedAt is the most recent contribution head update.
 type GraphView struct {
 	GeneratedAt time.Time      `json:"generatedAt"`
-	SHA256      string         `json:"sha256"`
+	Revision    uint64         `json:"revision"`
 	Snapshot    graph.Snapshot `json:"snapshot"`
+}
+
+type Publication struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+	Revision    uint64    `json:"revision"`
 }
 
 // NativeEvent is one provider observation delivered through the discovery hub.
@@ -185,7 +213,7 @@ type NativeEvent struct {
 
 // Neighborhood is a bounded subgraph around one resource.
 type Neighborhood struct {
-	SHA256        string               `json:"sha256"`
+	Revision      uint64               `json:"revision"`
 	Resources     []graph.Resource     `json:"resources"`
 	Relationships []graph.Relationship `json:"relationships"`
 }
@@ -342,6 +370,10 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) NormalizeIdentityClaim(claim graph.IdentityClaim) (graph.IdentityClaim, error) {
+	return s.compiler.NormalizeIdentityClaim(claim)
+}
+
 // ReplaceContribution publishes contribution as the complete current output of
 // its (plugin, source, name) tuple. Replacement semantics: any assertion the
 // tuple owned before and that is absent now is retracted, so a plugin removes
@@ -351,16 +383,13 @@ func (s *Store) Ping(ctx context.Context) error {
 // Validation and compilation happen before the transaction so malformed input
 // never enters the commit path. Assertion provenance must match the
 // contribution owner; it is rejected, not rewritten.
-//
-// The returned view is the graph compiled and committed by this publication.
-// An idempotent retry reads the latest committed view because it performs no
-// compilation of its own.
-func (s *Store) ReplaceContribution(ctx context.Context, contribution Contribution) (GraphView, error) {
+func (s *Store) ReplaceContribution(ctx context.Context, contribution Contribution) (Publication, error) {
+	started := time.Now()
 	if err := validateContribution(contribution); err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
 	if contribution.Generation > math.MaxInt64 {
-		return GraphView{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
+		return Publication{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
 	}
 	contribution.UpdatedAt = time.Now().UTC()
 	if contribution.SourceObservedAt.IsZero() {
@@ -373,27 +402,78 @@ func (s *Store) ReplaceContribution(ctx context.Context, contribution Contributi
 	}
 	inputDigest, err := contributionInputDigest(contribution.Input)
 	if err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
+	compileStarted := time.Now()
 	compiled, err := s.compiler.CompileContribution(contribution.Input)
 	if err != nil {
-		return GraphView{}, fmt.Errorf("compile contribution: %w", err)
+		return Publication{}, fmt.Errorf("compile contribution: %w", err)
 	}
-	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled)
+	timings := checkpointTimings{compile: time.Since(compileStarted)}
+	publication, err := s.publishContribution(ctx, contribution, inputDigest, compiled, &timings)
+	slog.DebugContext(ctx, "contribution checkpoint completed",
+		"success", err == nil,
+		"applied", timings.applied,
+		"compile", timings.compile,
+		"queue", timings.queue,
+		"transaction_setup", timings.transactionSetup,
+		"prepare", timings.prepare,
+		"membership", timings.membership,
+		"persistence", timings.persistence,
+		"projection", timings.projection,
+		"commit", timings.commit,
+		"total", time.Since(started))
 	if err != nil {
-		return GraphView{}, err
+		return Publication{}, err
 	}
-	if publication.HasView {
-		return publication.View, nil
+	return publication, nil
+}
+
+func (s *Store) ApplyContributionDelta(ctx context.Context, delta ContributionDelta) (Publication, error) {
+	if delta.BaseGeneration == 0 || delta.Generation <= delta.BaseGeneration {
+		return Publication{}, errors.New("contribution delta generation must be newer than its positive base generation")
 	}
-	view, err := s.Latest(ctx)
+	contribution := Contribution{
+		PluginID: delta.PluginID, SourceID: delta.SourceID, Name: delta.Name, Generation: delta.Generation,
+		Input: delta.Added, SourceObservedAt: delta.SourceObservedAt, Ready: delta.Ready, SourceHealth: delta.SourceHealth,
+	}
+	if err := validateContribution(contribution); err != nil {
+		return Publication{}, err
+	}
+	retracted := contribution
+	retracted.Input = delta.Retracted
+	if err := validateContribution(retracted); err != nil {
+		return Publication{}, err
+	}
+	if delta.Generation > math.MaxInt64 {
+		return Publication{}, errors.New("contribution generation exceeds PostgreSQL bigint range")
+	}
+	contribution.UpdatedAt = time.Now().UTC()
+	if contribution.SourceObservedAt.IsZero() {
+		contribution.SourceObservedAt = contribution.UpdatedAt
+	} else {
+		contribution.SourceObservedAt = contribution.SourceObservedAt.UTC()
+	}
+	if contribution.SourceHealth == "" {
+		contribution.SourceHealth = SourceHealthHealthy
+	}
+	encoded, err := json.Marshal(struct {
+		Added     graph.Input `json:"added"`
+		Retracted graph.Input `json:"retracted"`
+	}{Added: delta.Added, Retracted: delta.Retracted})
 	if err != nil {
-		slog.WarnContext(ctx, "read graph after committed contribution publication",
-			"plugin", contribution.PluginID, "source", contribution.SourceID, "contribution", contribution.Name,
-			"generation", contribution.Generation, "error", err)
-		return GraphView{}, nil
+		return Publication{}, fmt.Errorf("encode contribution delta: %w", err)
 	}
-	return view, nil
+	digest := sha256.Sum256(encoded)
+	added, err := s.compiler.CompileContribution(delta.Added)
+	if err != nil {
+		return Publication{}, fmt.Errorf("compile contribution additions: %w", err)
+	}
+	retractedSnapshot, err := s.compiler.CompileContribution(delta.Retracted)
+	if err != nil {
+		return Publication{}, fmt.Errorf("compile contribution retractions: %w", err)
+	}
+	return s.publishContributionDelta(ctx, contribution, delta.BaseGeneration, digest, added, retractedSnapshot)
 }
 
 // contributionInputDigest identifies the submitted input for same-generation
@@ -423,7 +503,7 @@ func contributionInputDigest(input graph.Input) ([32]byte, error) {
 // RetireContribution publishes an empty terminal generation, retracting every
 // active assertion of the tuple and marking its head retired. generation must
 // be newer than the current one.
-func (s *Store) RetireContribution(ctx context.Context, pluginID, sourceID, name string, generation uint64, observedAt time.Time) (GraphView, error) {
+func (s *Store) RetireContribution(ctx context.Context, pluginID, sourceID, name string, generation uint64, observedAt time.Time) (Publication, error) {
 	return s.ReplaceContribution(ctx, Contribution{
 		PluginID: pluginID, SourceID: sourceID, Name: name, Generation: generation,
 		SourceObservedAt: observedAt, SourceHealth: SourceHealthUnknown, Retired: true,

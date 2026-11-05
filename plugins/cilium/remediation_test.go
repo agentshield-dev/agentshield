@@ -21,7 +21,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-const remediationTestGraphSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const remediationTestGraphRevision uint64 = 1
 
 func TestCiliumRemediationLifecycleDeclaresIsolation(t *testing.T) {
 	pod := ciliumTestPod("target-uid", map[string]string{"app": "target"})
@@ -468,7 +468,7 @@ func ciliumKubeNetworkPolicy(name string, selector metav1.LabelSelector) *unstru
 
 func ciliumProposal(t *testing.T, uid string) remediation.Proposal {
 	t.Helper()
-	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphSHA256,
+	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphRevision,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: kubernetesplugin.ClaimForUID("cluster", "v1", "Pod", uid)}, []string{"evidence"})
 	if err != nil {
@@ -479,6 +479,6 @@ func ciliumProposal(t *testing.T, uid string) remediation.Proposal {
 
 func ciliumGraphSource(proposal remediation.Proposal) remediation.GraphSourceFunc {
 	return func(context.Context) (remediation.GraphView, error) {
-		return remediation.GraphView{SHA256: proposal.GraphSHA256, Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: proposal.Target.Kind, Identity: proposal.Target.Identity}}}}, nil
+		return remediation.GraphView{Revision: proposal.GraphRevision, Snapshot: graph.Snapshot{Resources: []graph.Resource{{ID: proposal.Target.EntityID, Kind: proposal.Target.Kind, Identity: proposal.Target.Identity}}}}, nil
 	}
 }

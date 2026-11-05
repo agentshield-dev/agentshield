@@ -15,7 +15,7 @@ import (
 
 func TestFindingSinkPersistsPromotedFindingRemediations(t *testing.T) {
 	packet := Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: remediationTestGraphSHA256,
+		AnalysisID: "analysis", HydratedGraphRevision: remediationTestGraphRevision,
 		Resources: []Resource{{
 			ID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 				Scheme: graph.IdentityScheme{Group: "kubernetes.io", Version: "v1", Kind: "Object"}, AuthorityID: "cluster", ImmutableKey: "v1/pod/uid",
@@ -56,7 +56,7 @@ func TestFindingSinkPersistsPromotedFindingRemediations(t *testing.T) {
 
 func TestFindingSinkPersistsPromotedFindingWithoutRemediations(t *testing.T) {
 	packet := Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: remediationTestGraphSHA256,
+		AnalysisID: "analysis", HydratedGraphRevision: remediationTestGraphRevision,
 		Resources: []Resource{{ID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 			Scheme: graph.IdentityScheme{Group: "kubernetes.io", Version: "v1", Kind: "Object"}, AuthorityID: "cluster", ImmutableKey: "v1/pod/uid",
 		}}},
@@ -93,7 +93,7 @@ func TestFindingSinkInvalidatesFindingsTouchedByContribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	evaluation := Evaluation{Window: ChangeWindow{
-		Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{SHA256: remediationTestGraphSHA256}},
+		Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{Revision: remediationTestGraphRevision}},
 		Events: []state.ContributionChangeEvent{{Added: []state.AssertionChange{{Entity: state.EntityLocator{
 			EntityType: "relationship", SubjectID: "target", ObjectID: "policy",
 		}}}}},
@@ -101,7 +101,7 @@ func TestFindingSinkInvalidatesFindingsTouchedByContribution(t *testing.T) {
 	if err := sink.RecordReasoningEvaluation(context.Background(), evaluation); err != nil {
 		t.Fatal(err)
 	}
-	if store.invalidationCalls != 1 || store.invalidationSequence != 9 || store.invalidationGraphSHA256 != remediationTestGraphSHA256 || store.invalidatedAt != invalidatedAt || len(store.invalidatedEntityIDs) != 2 || store.invalidatedEntityIDs[0] != "policy" || store.invalidatedEntityIDs[1] != "target" {
+	if store.invalidationCalls != 1 || store.invalidationSequence != 9 || store.invalidationGraphRevision != remediationTestGraphRevision || store.invalidatedAt != invalidatedAt || len(store.invalidatedEntityIDs) != 2 || store.invalidatedEntityIDs[0] != "policy" || store.invalidatedEntityIDs[1] != "target" {
 		t.Fatalf("invalidation = %#v", store)
 	}
 }
@@ -114,13 +114,13 @@ func TestFindingSinkInvalidatesAllFindingsAfterRebase(t *testing.T) {
 		t.Fatal(err)
 	}
 	evaluation := Evaluation{
-		Window:  ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{SHA256: remediationTestGraphSHA256}}},
+		Window:  ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{Revision: remediationTestGraphRevision}}},
 		Rebased: true,
 	}
 	if err := sink.RecordReasoningEvaluation(context.Background(), evaluation); err != nil {
 		t.Fatal(err)
 	}
-	if store.invalidationCalls != 1 || store.invalidationSequence != 9 || store.invalidationGraphSHA256 != remediationTestGraphSHA256 || store.invalidatedAt != invalidatedAt || store.invalidatedEntityIDs != nil {
+	if store.invalidationCalls != 1 || store.invalidationSequence != 9 || store.invalidationGraphRevision != remediationTestGraphRevision || store.invalidatedAt != invalidatedAt || store.invalidatedEntityIDs != nil {
 		t.Fatalf("invalidation = %#v", store)
 	}
 }
@@ -136,7 +136,7 @@ func TestFindingSinkPersistsActiveRuleMatchesWithoutAgent(t *testing.T) {
 		return detector.InvestigationSignal{ID: id, Risk: risk, Reasons: []string{"workload_rule_match"}, AnchorIDs: anchors, RuleID: ruleID, RuleRevision: 2}
 	}
 	evaluation := Evaluation{
-		Window: ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{SHA256: remediationTestGraphSHA256}}},
+		Window: ChangeWindow{Checkpoint: state.GraphCheckpoint{ThroughSequence: 9, View: state.GraphView{Revision: remediationTestGraphRevision}}},
 		RuleSignals: []detector.InvestigationSignal{
 			rule("signal-b", "deployment/checkout/rule-1", detector.RiskMedium, "checkout", "secrets"),
 			rule("signal-a", "deployment/checkout/rule-1", detector.RiskHigh, "checkout", "orders"),
@@ -168,13 +168,13 @@ func TestFindingSinkPersistsActiveRuleMatchesWithoutAgent(t *testing.T) {
 }
 
 type recordingFindingStore struct {
-	finding                 state.Finding
-	calls                   int
-	invalidationCalls       int
-	invalidationGraphSHA256 string
-	invalidationSequence    uint64
-	invalidatedEntityIDs    []string
-	invalidatedAt           time.Time
+	finding                   state.Finding
+	calls                     int
+	invalidationCalls         int
+	invalidationGraphRevision uint64
+	invalidationSequence      uint64
+	invalidatedEntityIDs      []string
+	invalidatedAt             time.Time
 }
 
 func (store *recordingFindingStore) PutFinding(_ context.Context, finding state.Finding) error {
@@ -183,9 +183,9 @@ func (store *recordingFindingStore) PutFinding(_ context.Context, finding state.
 	return nil
 }
 
-func (store *recordingFindingStore) InvalidateFindings(_ context.Context, graphSHA256 string, sequence uint64, entityIDs []string, invalidatedAt time.Time) error {
+func (store *recordingFindingStore) InvalidateFindings(_ context.Context, graphRevision uint64, sequence uint64, entityIDs []string, invalidatedAt time.Time) error {
 	store.invalidationCalls++
-	store.invalidationGraphSHA256 = graphSHA256
+	store.invalidationGraphRevision = graphRevision
 	store.invalidationSequence = sequence
 	store.invalidatedEntityIDs = append([]string(nil), entityIDs...)
 	store.invalidatedAt = invalidatedAt

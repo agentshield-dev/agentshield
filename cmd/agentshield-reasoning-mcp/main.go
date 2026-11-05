@@ -58,7 +58,7 @@ func run() error {
 		return fmt.Errorf("decode packet: %w", err)
 	}
 	deferred := reasoning.PinnedTelemetryContext{
-		Token:           reasoning.AnalysisToken{AnalysisID: packet.AnalysisID, GraphSHA256: packet.HydratedGraphSHA256},
+		Token:           reasoning.AnalysisToken{AnalysisID: packet.AnalysisID, GraphRevision: packet.HydratedGraphRevision},
 		TelemetryWindow: packet.TelemetryWindow,
 	}
 	if *telemetryContextPath != "" {

@@ -155,6 +155,7 @@ func (p *Plugin) Run(ctx context.Context, runtime agentshield.Runtime) error {
 		return err
 	}
 	factory := dynamicinformer.NewDynamicSharedInformerFactory(p.config.Dynamic, p.config.Resync)
+	// client-go relists expired watches internally, so cursor loss does not restart the plugin or immediately force an authoritative contribution checkpoint.
 	watchedResources := make([]watchedResource, 0, len(plan.resources))
 	changes := make(chan struct{}, 1)
 	errorsChannel := make(chan error, 1)

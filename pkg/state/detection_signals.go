@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/agentshield-dev/agentshield/pkg/detector"
+	"github.com/jackc/pgx/v5"
 )
 
 // Detection signal investigation states.
@@ -35,7 +35,7 @@ const maxDetectionSignalBatch = 1000
 type DetectionSignal struct {
 	Signal          detector.InvestigationSignal `json:"signal"`
 	ThroughSequence uint64                       `json:"throughSequence"`
-	GraphSHA256     string                       `json:"graphSha256"`
+	GraphRevision   uint64                       `json:"graphRevision"`
 	Investigation   string                       `json:"investigation"`
 	RecordedAt      time.Time                    `json:"recordedAt"`
 }
@@ -65,7 +65,7 @@ func (s *Store) RecordDetectionSignals(ctx context.Context, signals []DetectionS
 	batch := &pgx.Batch{}
 	for _, record := range signals {
 		signal := record.Signal
-		if signal.ID == "" || !validInvestigation(record.Investigation) || record.ThroughSequence > 1<<63-1 {
+		if signal.ID == "" || !validInvestigation(record.Investigation) || record.ThroughSequence > 1<<63-1 || record.GraphRevision == 0 || record.GraphRevision > 1<<63-1 {
 			return errors.New("detection signal requires an ID, investigation state, and bounded sequence")
 		}
 		if record.Investigation == InvestigationShadow && signal.RuleMode != detector.RuleModeShadow {
@@ -89,11 +89,11 @@ func (s *Store) RecordDetectionSignals(ctx context.Context, signals []DetectionS
 		}
 		batch.Queue(`
 			INSERT INTO detection_signals (
-				signal_id, through_sequence, graph_sha256, risk, reasons, anchor_ids,
+				signal_id, through_sequence, graph_revision, risk, reasons, anchor_ids,
 				window_start, window_end, rule_id, rule_revision, ruleset_digest, investigation
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 			ON CONFLICT (signal_id) DO NOTHING`,
-			signal.ID, int64(record.ThroughSequence), record.GraphSHA256, string(signal.Risk), reasons, anchors,
+			signal.ID, int64(record.ThroughSequence), record.GraphRevision, string(signal.Risk), reasons, anchors,
 			signal.Window.Start, signal.Window.End, ruleID, ruleRevision, rulesetDigest, record.Investigation)
 	}
 	if err := s.pool.SendBatch(ctx, batch).Close(); err != nil {
@@ -120,7 +120,7 @@ func (s *Store) ListDetectionSignals(ctx context.Context, query DetectionSignalQ
 		return nil, errors.New("detection signal investigation filter is invalid")
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT signal_id, through_sequence, graph_sha256, risk, reasons, anchor_ids, window_start, window_end,
+		SELECT signal_id, through_sequence, graph_revision, risk, reasons, anchor_ids, window_start, window_end,
 		       COALESCE(rule_id, ''), COALESCE(rule_revision, 0), COALESCE(ruleset_digest, ''), investigation, recorded_at
 		FROM detection_signals
 		WHERE ($1 = '' OR rule_id = $1) AND ($2 = '' OR investigation = $2)
@@ -137,7 +137,7 @@ func (s *Store) ListDetectionSignals(ctx context.Context, query DetectionSignalQ
 		var risk string
 		var reasons, anchors []byte
 		signal := &record.Signal
-		if err := rows.Scan(&signal.ID, &sequence, &record.GraphSHA256, &risk, &reasons, &anchors, &signal.Window.Start, &signal.Window.End,
+		if err := rows.Scan(&signal.ID, &sequence, &record.GraphRevision, &risk, &reasons, &anchors, &signal.Window.Start, &signal.Window.End,
 			&signal.RuleID, &revision, &signal.RulesetDigest, &record.Investigation, &record.RecordedAt); err != nil {
 			return nil, fmt.Errorf("scan detection signal: %w", err)
 		}

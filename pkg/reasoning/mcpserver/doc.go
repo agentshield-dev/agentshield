@@ -4,7 +4,7 @@
 // Each tool maps to one context template and accepts only resource IDs the
 // provider knows. Every call is answered from the provider's immutable graph
 // copy and pinned telemetry for one analysis token; tools cannot read live
-// state, write anything, or reach a different graph digest. Results are bounded
+// state, write anything, or reach a different graph revision. Results are bounded
 // and report whether any collection was truncated.
 //
 // Tools:

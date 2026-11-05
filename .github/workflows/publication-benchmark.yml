@@ -1,0 +1,94 @@
+name: Publication benchmark
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "pkg/state/migrations/**"
+      - "scripts/benchmark-postgres.sh"
+      - "scripts/benchmark-delta.sh"
+      - ".github/workflows/publication-benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publication-benchmark:
+    name: Publication benchmark
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    services:
+      postgres-base:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: agentshield
+          POSTGRES_PASSWORD: agentshield
+          POSTGRES_DB: agentshield_base
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw
+          --health-cmd "pg_isready --username agentshield --dbname agentshield_base"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      postgres-current:
+        image: postgres:16-alpine
+        ports:
+          - 5433:5432
+        env:
+          POSTGRES_USER: agentshield
+          POSTGRES_PASSWORD: agentshield
+          POSTGRES_DB: agentshield_current
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw
+          --health-cmd "pg_isready --username agentshield --dbname agentshield_current"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Benchmark base
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          AGENTSHIELD_BENCHMARK_COUNT: 1
+          AGENTSHIELD_BENCHMARK_TIME: 1x
+          AGENTSHIELD_TEST_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5432/agentshield_base?sslmode=disable
+        run: |
+          set -o pipefail
+          CURRENT_MODULE=$(go list -m)
+          git worktree add "$RUNNER_TEMP/agentshield-base" "$BASE_SHA"
+          cp pkg/state/publication_benchmark_test.go "$RUNNER_TEMP/agentshield-base/pkg/state/"
+          cp scripts/benchmark-postgres.sh "$RUNNER_TEMP/agentshield-base/scripts/"
+          chmod +x "$RUNNER_TEMP/agentshield-base/scripts/benchmark-postgres.sh"
+          cd "$RUNNER_TEMP/agentshield-base"
+          BASE_MODULE=$(go list -m)
+          sed -i "s|\"$CURRENT_MODULE/|\"$BASE_MODULE/|g" pkg/state/publication_benchmark_test.go
+          ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-base.txt"
+      - name: Benchmark current commit
+        env:
+          AGENTSHIELD_BENCHMARK_COUNT: 1
+          AGENTSHIELD_BENCHMARK_TIME: 1x
+          AGENTSHIELD_TEST_DATABASE_URL: postgres://agentshield:agentshield@127.0.0.1:5433/agentshield_current?sslmode=disable
+        run: |
+          set -o pipefail
+          ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-current.txt"
+      - name: Report benchmark delta
+        run: |
+          {
+            printf '## Publication benchmark delta\n\n'
+            printf 'One CI sample per scale. Negative deltas are improvements. This check is informational.\n\n'
+            ./scripts/benchmark-delta.sh "$RUNNER_TEMP/benchmark-base.txt" "$RUNNER_TEMP/benchmark-current.txt"
+          } >> "$GITHUB_STEP_SUMMARY"

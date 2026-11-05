@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/agentshield-dev/agentshield/ui"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // StateStore is the read model the API serves. *state.Store implements it.
@@ -27,7 +27,7 @@ import (
 type StateStore interface {
 	Ping(context.Context) error
 	CurrentGraph(context.Context) (state.GraphView, error)
-	GraphRevision(context.Context) (string, error)
+	GraphRevision(context.Context) (uint64, error)
 	QueryResources(context.Context, state.ResourceQuery) (state.ResourcePage, error)
 	GetResourceDetail(context.Context, string) (state.ResourceDetail, error)
 	QueryRelationships(context.Context, state.RelationshipQuery) (state.RelationshipPage, error)
@@ -238,7 +238,7 @@ func (server *Server) handleGraph(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, status, "load graph", err)
 		return
 	}
-	writer.Header().Set("ETag", fmt.Sprintf(`"%s"`, record.SHA256))
+	writer.Header().Set("ETag", fmt.Sprintf(`"%d"`, record.Revision))
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, record)
 }
@@ -310,7 +310,7 @@ func (server *Server) handleNeighborhood(writer http.ResponseWriter, request *ht
 	writeJSON(writer, http.StatusOK, result)
 }
 
-// handleEvents streams a "graph" event with the graph digest on connect and
+// handleEvents streams a "graph" event with the graph revision on connect and
 // whenever the digest changes, and a comment line as a keepalive so proxies do
 // not close an idle stream. EventSource ignores comments.
 //
@@ -338,7 +338,7 @@ func (server *Server) handleEvents(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, "stream graph changes", errStreamingUnsupported)
 		return
 	}
-	var lastRevision, lastHash string
+	var lastRevision uint64
 	check := func() bool {
 		revision, err := server.store.GraphRevision(ctx)
 		if err != nil || revision == lastRevision {
@@ -349,15 +349,11 @@ func (server *Server) handleEvents(writer http.ResponseWriter, request *http.Req
 			return true
 		}
 		lastRevision = revision
-		if err != nil || record.SHA256 == lastHash {
+		if err != nil {
 			return true
 		}
-		payload, _ := json.Marshal(map[string]any{"sha256": record.SHA256, "generatedAt": record.GeneratedAt})
-		if !send("event: graph\ndata: " + string(payload) + "\n\n") {
-			return false
-		}
-		lastHash = record.SHA256
-		return true
+		payload, _ := json.Marshal(map[string]any{"revision": record.Revision, "generatedAt": record.GeneratedAt})
+		return send("event: graph\ndata: " + string(payload) + "\n\n")
 	}
 	poll := time.NewTicker(server.eventPollInterval)
 	defer poll.Stop()

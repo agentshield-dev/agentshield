@@ -13,12 +13,12 @@ import (
 
 func TestContextProviderPinsTokenAndReturnsBoundedTemplate(t *testing.T) {
 	packet := Packet{
-		AnalysisID: "analysis", HydratedGraphSHA256: "graph",
+		AnalysisID: "analysis", HydratedGraphRevision: 1,
 		Resources:     []Resource{{ID: "a"}, {ID: "b"}, {ID: "c"}},
 		Relationships: []Relationship{{ID: "ab", SubjectID: "a", ObjectID: "b"}, {ID: "bc", SubjectID: "b", ObjectID: "c"}},
 	}
 	provider, err := NewContextProviderWithTelemetry(packet, PinnedTelemetryContext{
-		Token: AnalysisToken{AnalysisID: "analysis", GraphSHA256: "graph"},
+		Token: AnalysisToken{AnalysisID: "analysis", GraphRevision: 1},
 		Telemetry: []Telemetry{
 			{ID: "ab-flow", SubjectID: "a", ObjectID: "b", EvidenceIDs: []string{"e-ab"}},
 			{ID: "bc-flow", SubjectID: "b", ObjectID: "c", EvidenceIDs: []string{"e-bc"}},
@@ -34,14 +34,14 @@ func TestContextProviderPinsTokenAndReturnsBoundedTemplate(t *testing.T) {
 	if result.Closure != "untruncated" || len(result.Resources) != 2 || len(result.Telemetry) != 1 || result.Telemetry[0].ID != "ab-flow" {
 		t.Fatalf("context result = %#v", result)
 	}
-	if _, err := provider.Query(ContextQuery{Token: AnalysisToken{AnalysisID: "other", GraphSHA256: "graph"}, Template: "telemetry_chain", AnchorIDs: []string{"a"}}); err == nil {
+	if _, err := provider.Query(ContextQuery{Token: AnalysisToken{AnalysisID: "other", GraphRevision: 1}, Template: "telemetry_chain", AnchorIDs: []string{"a"}}); err == nil {
 		t.Fatal("mismatched analysis token was accepted")
 	}
 }
 
 func TestContextProviderQueriesFullSnapshotAndLongitudinalContext(t *testing.T) {
 	observedAt := time.Unix(10, 0).UTC()
-	packet := Packet{AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []Resource{{ID: "a"}}}
+	packet := Packet{AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []Resource{{ID: "a"}}}
 	incident, err := NewIncidentContext("incident", observedAt, []BehaviorBaseline{{SubjectID: "a", ObjectID: "b", Kind: "network-flow", FirstObservedAt: observedAt, LastObservedAt: observedAt}}, []IncidentEvent{{SubjectID: "b", ObjectID: "c", Kind: "network-flow", ObservedAt: observedAt, EvidenceIDs: []string{"e"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestContextProviderQueriesFullSnapshotAndLongitudinalContext(t *testing.T) 
 	provider, err := NewContextProviderWithSnapshot(packet, graph.Snapshot{
 		Resources:     []graph.Resource{{ID: "a"}, {ID: "b"}, {ID: "c"}},
 		Relationships: []graph.Relationship{{ID: "ab", SubjectID: "a", Predicate: graph.PredicateCommunicates, ObjectID: "b"}, {ID: "bc", SubjectID: "b", Predicate: graph.PredicateCommunicates, ObjectID: "c"}},
-	}, PinnedTelemetryContext{Token: AnalysisToken{AnalysisID: "analysis", GraphSHA256: "graph"}}, incident, DefaultContextLimits())
+	}, PinnedTelemetryContext{Token: AnalysisToken{AnalysisID: "analysis", GraphRevision: 1}}, incident, DefaultContextLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +83,8 @@ func TestContextProviderGraphPathExcludesRunsOnByDefault(t *testing.T) {
 		{ID: "unrelated-placement", SubjectID: "unrelated-pod", Predicate: graph.PredicateRunsOn, ObjectID: "node"},
 		{ID: "source-shell", SubjectID: "source-pod", Predicate: graph.PredicateExecutes, ObjectID: "shell"},
 	}
-	packet := Packet{AnalysisID: "analysis", HydratedGraphSHA256: "graph", Resources: []Resource{{ID: "source"}, {ID: "target"}}}
-	provider, err := NewContextProviderWithSnapshot(packet, graph.Snapshot{Resources: resources, Relationships: relationships}, PinnedTelemetryContext{Token: AnalysisToken{AnalysisID: "analysis", GraphSHA256: "graph"}}, IncidentContext{}, DefaultContextLimits())
+	packet := Packet{AnalysisID: "analysis", HydratedGraphRevision: 1, Resources: []Resource{{ID: "source"}, {ID: "target"}}}
+	provider, err := NewContextProviderWithSnapshot(packet, graph.Snapshot{Resources: resources, Relationships: relationships}, PinnedTelemetryContext{Token: AnalysisToken{AnalysisID: "analysis", GraphRevision: 1}}, IncidentContext{}, DefaultContextLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +122,9 @@ func TestCompactPacketRetainsOnlyCandidateFacts(t *testing.T) {
 }
 
 func TestContextProviderRejectsMismatchedTelemetryContext(t *testing.T) {
-	packet := Packet{AnalysisID: "analysis", HydratedGraphSHA256: "graph"}
+	packet := Packet{AnalysisID: "analysis", HydratedGraphRevision: 1}
 	_, err := NewContextProviderWithTelemetry(packet, PinnedTelemetryContext{
-		Token: AnalysisToken{AnalysisID: "other", GraphSHA256: "graph"},
+		Token: AnalysisToken{AnalysisID: "other", GraphRevision: 1},
 	}, DefaultContextLimits())
 	if err == nil {
 		t.Fatal("mismatched telemetry context token was accepted")

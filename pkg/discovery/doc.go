@@ -8,7 +8,9 @@
 // run pure projectors over their current caches, and publish complete
 // [ContributionOutput] values. [RuntimeService] records each change as a
 // native event, fans it out through the in-memory [Hub], and hands
-// contributions to package state for atomic publication. Everything after
+// contributions to package state for atomic publication. The first output of
+// each plugin run is an authoritative replacement; later outputs use explicit
+// assertion deltas with periodic complete checkpoints. Everything after
 // publication (outbox, reasoning, findings) is outside this package.
 //
 // # Shared collections and replay-then-live delivery
@@ -48,10 +50,12 @@
 //
 // Collection readiness ([Runtime.MarkReady]) means a source's cache is
 // coherent. Contribution publication ([Runtime.ReplaceContribution]) is a
-// durable graph write with its own Ready flag and SourceHealth. They are
-// separate states: a collection can be ready while its consumer has not yet
-// published, and a contribution can stay published with degraded or stale
-// health after its source fails.
+// durable graph write with its own Ready flag and SourceHealth. Plugins submit
+// complete desired contribution state; the runtime may persist only the
+// assertion delta from the last accepted output. These are separate states: a
+// collection can be ready while its consumer has not yet published, and a
+// contribution can stay published with degraded or stale health after its
+// source fails.
 //
 // # Generations
 //

@@ -10,7 +10,7 @@ import (
 )
 
 func BenchmarkPostgreSQLPublication(b *testing.B) {
-	for _, size := range []int{100, 1_000, 10_000} {
+	for _, size := range []int{10_000, 50_000, 100_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
 			store := benchmarkStore(b)
 			inputs := [2]graph.Input{benchmarkInput(size, "a"), benchmarkInput(size, "b")}
@@ -27,11 +27,61 @@ func BenchmarkPostgreSQLPublication(b *testing.B) {
 	}
 }
 
-func BenchmarkPostgreSQLLatest(b *testing.B) {
-	for _, size := range []int{100, 1_000, 10_000} {
+func BenchmarkPostgreSQLInitialPublication(b *testing.B) {
+	for _, size := range []int{10_000, 50_000, 100_000} {
+		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
+			store := benchmarkStore(b)
+			contribution := benchmarkContribution(1, benchmarkInput(size, "a"))
+			b.ResetTimer()
+			for index := 0; index < b.N; index++ {
+				if index > 0 {
+					b.StopTimer()
+					resetBenchmarkStore(b, store)
+					b.StartTimer()
+				}
+				if _, err := store.ReplaceContribution(context.Background(), contribution); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPostgreSQLLatestCold(b *testing.B) {
+	for _, size := range []int{10_000, 50_000, 100_000} {
+		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
+			writer := benchmarkStore(b)
+			if _, err := writer.ReplaceContribution(context.Background(), benchmarkContribution(1, benchmarkInput(size, "a"))); err != nil {
+				b.Fatal(err)
+			}
+			b.ResetTimer()
+			for range b.N {
+				b.StopTimer()
+				reader := openBenchmarkStore(b)
+				b.StartTimer()
+				_, err := reader.Latest(context.Background())
+				b.StopTimer()
+				closeErr := reader.Close()
+				b.StartTimer()
+				if err != nil {
+					b.Fatal(err)
+				}
+				if closeErr != nil {
+					b.Fatal(closeErr)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPostgreSQLLatestCached(b *testing.B) {
+	for _, size := range []int{10_000, 50_000, 100_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
 			store := benchmarkStore(b)
 			if _, err := store.ReplaceContribution(context.Background(), benchmarkContribution(1, benchmarkInput(size, "a"))); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := store.Latest(context.Background()); err != nil {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
@@ -46,6 +96,14 @@ func BenchmarkPostgreSQLLatest(b *testing.B) {
 
 func benchmarkStore(b *testing.B) *Store {
 	b.Helper()
+	store := openBenchmarkStore(b)
+	resetBenchmarkStore(b, store)
+	b.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func openBenchmarkStore(b *testing.B) *Store {
+	b.Helper()
 	databaseURL := os.Getenv("AGENTSHIELD_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		b.Skip("set AGENTSHIELD_TEST_DATABASE_URL to run PostgreSQL benchmarks")
@@ -58,12 +116,15 @@ func benchmarkStore(b *testing.B) *Store {
 	if err != nil {
 		b.Fatal(err)
 	}
+	return store
+}
+
+func resetBenchmarkStore(b *testing.B, store *Store) {
+	b.Helper()
 	if _, err := store.pool.Exec(context.Background(), `TRUNCATE deployment_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
 		store.Close()
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = store.Close() })
-	return store
 }
 
 func benchmarkContribution(generation uint64, input graph.Input) Contribution {

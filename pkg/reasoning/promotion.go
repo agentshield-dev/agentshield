@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/agentshield-dev/agentshield/pkg/detector"
@@ -108,8 +109,8 @@ func Promote(packet Packet, response Response) Promotion {
 		return Promotion{Status: PromotionRejected, Reason: ReasonNoEligibleCandidate}
 	}
 	// Signals are sorted by ID in the packet, so the finding ID is stable for
-	// the same promoted signals over the same graph digest.
-	digest := sha256.Sum256([]byte(findingIDDomain + "\x00" + strings.Join(promoted, "\x00") + "\x00" + packet.HydratedGraphSHA256))
+	// the same promoted signals over the same graph revision.
+	digest := sha256.Sum256([]byte(findingIDDomain + "\x00" + strings.Join(promoted, "\x00") + "\x00" + strconv.FormatUint(packet.HydratedGraphRevision, 10)))
 	promotion := Promotion{
 		Status: PromotionPromoted, Reason: ReasonEvidenceBackedSignal, FindingID: "finding:sha256:" + hex.EncodeToString(digest[:]),
 		SignalIDs: promoted,
@@ -120,7 +121,7 @@ func Promote(packet Packet, response Response) Promotion {
 
 // NewRemediationProposals hydrates each validated suggestion on a promoted
 // outcome into a canonical [remediation.Proposal] bound to the finding,
-// analysis, graph digest, and target identity. It recomputes the promotion
+// analysis, graph revision, and target identity. It recomputes the promotion
 // rather than trusting outcome.Promotion, so a tampered or stale outcome cannot
 // mint proposals. Only evidence cited by both the suggestion and a qualifying
 // candidate claim is carried onto the proposal.
@@ -144,7 +145,7 @@ func NewRemediationProposals(outcome AnalysisOutcome) ([]remediation.Proposal, e
 		}
 		evidenceIDs := qualifyingSuggestionEvidence(outcome.EffectivePacket, outcome.Response.Assessment, suggestion)
 		proposal, err := remediation.NewProposal(
-			promotion.FindingID, outcome.EffectivePacket.AnalysisID, outcome.EffectivePacket.HydratedGraphSHA256, suggestion,
+			promotion.FindingID, outcome.EffectivePacket.AnalysisID, outcome.EffectivePacket.HydratedGraphRevision, suggestion,
 			remediation.Target{EntityID: target.ID, Identity: target.Identity, Kind: target.Kind},
 			evidenceIDs,
 		)

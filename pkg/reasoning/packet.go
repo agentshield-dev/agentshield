@@ -49,7 +49,7 @@ func DefaultLimits() Limits {
 //
 // AnalysisID is the SHA-256 of the packet's canonical encoding without the ID,
 // so the same events, checkpoint, signals, and evaluation time always produce
-// the same ID. Together with HydratedGraphSHA256 and TelemetryWindow it pins
+// the same ID. Together with HydratedGraphRevision and TelemetryWindow it pins
 // later retrieval to the analyzed state.
 //
 // Changes come from the trigger window; Resources come from the hydrated
@@ -64,7 +64,7 @@ type Packet struct {
 	TriggerLastSequence     uint64                         `json:"triggerLastSequence"`
 	HydratedAtSequence      uint64                         `json:"hydratedAtSequence"`
 	Baseline                bool                           `json:"baseline"`
-	HydratedGraphSHA256     string                         `json:"hydratedGraphSha256"`
+	HydratedGraphRevision   uint64                         `json:"hydratedGraphRevision"`
 	EvaluationTime          time.Time                      `json:"evaluationTime"`
 	TopologyChange          string                         `json:"topologyChange"`
 	AvailableContext        []string                       `json:"availableContext,omitempty"`
@@ -184,7 +184,7 @@ func buildPacket(events []state.ContributionChangeEvent, checkpoint state.GraphC
 	packet := Packet{
 		SchemaVersion: SchemaVersion, TriggerFirstSequence: events[0].Sequence,
 		TriggerLastSequence: events[len(events)-1].Sequence, HydratedAtSequence: checkpoint.ThroughSequence,
-		Baseline: baseline, HydratedGraphSHA256: checkpoint.View.SHA256,
+		Baseline: baseline, HydratedGraphRevision: checkpoint.View.Revision,
 		EvaluationTime: evaluationTime.UTC(), Truncated: make(map[string]int),
 	}
 	packet.Signals = append([]detector.InvestigationSignal(nil), signals...)

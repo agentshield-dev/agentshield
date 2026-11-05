@@ -64,12 +64,12 @@ type GraphCheckpoint struct {
 	View            GraphView `json:"view"`
 }
 
-// ReasoningCursor is a consumer's durable outbox position and the graph digest
+// ReasoningCursor is a consumer's durable outbox position and graph revision
 // it evaluated at that position.
 type ReasoningCursor struct {
 	ConsumerID      string    `json:"consumerId"`
 	ThroughSequence uint64    `json:"throughSequence"`
-	GraphSHA256     string    `json:"graphSha256"`
+	GraphRevision   uint64    `json:"graphRevision"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
@@ -118,7 +118,7 @@ func (s *Store) ReadReasoningCursor(ctx context.Context, consumerID string) (Rea
 	}
 	var sequence int64
 	var cursor ReasoningCursor
-	err := s.pool.QueryRow(ctx, `SELECT through_sequence, graph_sha256, updated_at FROM reasoning_cursors WHERE consumer_id=$1`, consumerID).Scan(&sequence, &cursor.GraphSHA256, &cursor.UpdatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT through_sequence, graph_revision, updated_at FROM reasoning_cursors WHERE consumer_id=$1`, consumerID).Scan(&sequence, &cursor.GraphRevision, &cursor.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReasoningCursor{}, false, nil
 	}
@@ -134,18 +134,17 @@ func (s *Store) ReadReasoningCursor(ctx context.Context, consumerID string) (Rea
 }
 
 // AdvanceReasoningCursor moves a consumer's cursor forward. Writing the same
-// sequence and digest again is a no-op; moving backwards, or reusing a
-// sequence with a different digest, is an error. A per-consumer advisory lock
+// sequence and revision again is a no-op; moving backwards, or reusing a
+// sequence with a different revision, is an error. A per-consumer advisory lock
 // makes concurrent first writes for one consumer safe. Callers should advance
 // only after durably recording what they did with the range.
 func (s *Store) AdvanceReasoningCursor(ctx context.Context, cursor ReasoningCursor) error {
 	cursor.ConsumerID = strings.TrimSpace(cursor.ConsumerID)
-	cursor.GraphSHA256 = strings.TrimSpace(cursor.GraphSHA256)
 	if cursor.ConsumerID == "" {
 		return errors.New("reasoning consumer ID is required")
 	}
-	if cursor.GraphSHA256 == "" {
-		return errors.New("reasoning cursor graph digest is required")
+	if cursor.GraphRevision == 0 || cursor.GraphRevision > math.MaxInt64 {
+		return errors.New("reasoning cursor graph revision must be positive and bounded")
 	}
 	if cursor.ThroughSequence > math.MaxInt64 {
 		return errors.New("reasoning cursor sequence exceeds PostgreSQL bigint range")
@@ -162,21 +161,21 @@ func (s *Store) AdvanceReasoningCursor(ctx context.Context, cursor ReasoningCurs
 		return fmt.Errorf("lock reasoning cursor %q: %w", cursor.ConsumerID, err)
 	}
 	var currentSequence int64
-	var currentDigest string
-	err = tx.QueryRow(ctx, `SELECT through_sequence, graph_sha256 FROM reasoning_cursors WHERE consumer_id=$1 FOR UPDATE`, cursor.ConsumerID).Scan(&currentSequence, &currentDigest)
+	var currentRevision int64
+	err = tx.QueryRow(ctx, `SELECT through_sequence, graph_revision FROM reasoning_cursors WHERE consumer_id=$1 FOR UPDATE`, cursor.ConsumerID).Scan(&currentSequence, &currentRevision)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		_, err = tx.Exec(ctx, `INSERT INTO reasoning_cursors (consumer_id, through_sequence, graph_sha256, updated_at) VALUES ($1,$2,$3,$4)`, cursor.ConsumerID, int64(cursor.ThroughSequence), cursor.GraphSHA256, cursor.UpdatedAt)
+		_, err = tx.Exec(ctx, `INSERT INTO reasoning_cursors (consumer_id, through_sequence, graph_revision, updated_at) VALUES ($1,$2,$3,$4)`, cursor.ConsumerID, int64(cursor.ThroughSequence), cursor.GraphRevision, cursor.UpdatedAt)
 	case err != nil:
 		return fmt.Errorf("lock reasoning cursor %q: %w", cursor.ConsumerID, err)
 	case cursor.ThroughSequence < uint64(currentSequence):
 		return fmt.Errorf("reasoning cursor %q cannot regress from %d to %d", cursor.ConsumerID, currentSequence, cursor.ThroughSequence)
-	case cursor.ThroughSequence == uint64(currentSequence) && cursor.GraphSHA256 != currentDigest:
-		return fmt.Errorf("reasoning cursor %q sequence %d has graph digest %q, not %q", cursor.ConsumerID, cursor.ThroughSequence, currentDigest, cursor.GraphSHA256)
+	case cursor.ThroughSequence == uint64(currentSequence) && cursor.GraphRevision != uint64(currentRevision):
+		return fmt.Errorf("reasoning cursor %q sequence %d has graph revision %d, not %d", cursor.ConsumerID, cursor.ThroughSequence, currentRevision, cursor.GraphRevision)
 	case cursor.ThroughSequence == uint64(currentSequence):
 		return tx.Commit(ctx)
 	default:
-		_, err = tx.Exec(ctx, `UPDATE reasoning_cursors SET through_sequence=$2, graph_sha256=$3, updated_at=$4 WHERE consumer_id=$1`, cursor.ConsumerID, int64(cursor.ThroughSequence), cursor.GraphSHA256, cursor.UpdatedAt)
+		_, err = tx.Exec(ctx, `UPDATE reasoning_cursors SET through_sequence=$2, graph_revision=$3, updated_at=$4 WHERE consumer_id=$1`, cursor.ConsumerID, int64(cursor.ThroughSequence), cursor.GraphRevision, cursor.UpdatedAt)
 	}
 	if err != nil {
 		return fmt.Errorf("advance reasoning cursor %q: %w", cursor.ConsumerID, err)

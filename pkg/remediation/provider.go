@@ -270,9 +270,9 @@ func stringsCompare(left, right string) int {
 	return 0
 }
 
-// GraphView is a current graph snapshot and its digest.
+// GraphView is a current graph snapshot and its revision.
 type GraphView struct {
-	SHA256   string
+	Revision uint64
 	Snapshot graph.Snapshot
 }
 
@@ -554,7 +554,7 @@ func validatePlan(proposal Proposal, action Action, providerID, sourceID string,
 	if err := plan.validateID(); err != nil {
 		return err
 	}
-	if plan.ProposalID != proposal.ID || plan.GraphSHA256 != proposal.GraphSHA256 || plan.ProviderID != providerID || plan.SourceID != sourceID || plan.ActionID != action.ID || plan.Mode != action.Mode || plan.ID == "" || plan.DesiredSHA256 == "" {
+	if plan.ProposalID != proposal.ID || plan.GraphRevision != proposal.GraphRevision || plan.ProviderID != providerID || plan.SourceID != sourceID || plan.ActionID != action.ID || plan.Mode != action.Mode || plan.ID == "" || plan.DesiredSHA256 == "" {
 		return errors.New("remediation plan does not match proposal and provider")
 	}
 	return nil
@@ -564,7 +564,7 @@ func validatePreparation(plan Plan, preparation Preparation) error {
 	if err := preparation.validateID(); err != nil {
 		return err
 	}
-	if preparation.PlanID != plan.ID || preparation.ProposalID != plan.ProposalID || preparation.ProviderID != plan.ProviderID || preparation.SourceID != plan.SourceID || preparation.ActionID != plan.ActionID || preparation.GraphSHA256 != plan.GraphSHA256 || preparation.ID == "" {
+	if preparation.PlanID != plan.ID || preparation.ProposalID != plan.ProposalID || preparation.ProviderID != plan.ProviderID || preparation.SourceID != plan.SourceID || preparation.ActionID != plan.ActionID || preparation.GraphRevision != plan.GraphRevision || preparation.ID == "" {
 		return errors.New("remediation preparation does not match plan")
 	}
 	return nil

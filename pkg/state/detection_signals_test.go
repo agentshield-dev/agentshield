@@ -13,13 +13,13 @@ func TestPostgreSQLDetectionSignalsRoundTripIdempotentlyAndPrune(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	start := time.Date(2026, time.October, 16, 12, 0, 0, 0, time.UTC)
-	graphSHA := strings.Repeat("a", 64)
+	graphRevision := uint64(1)
 	novelty := DetectionSignal{
 		Signal: detector.InvestigationSignal{
 			ID: "signal:novelty", Risk: detector.RiskMedium, Reasons: []string{"established_source", "new_communication_path"},
 			AnchorIDs: []string{"checkout", "secrets"}, Window: detector.TimeWindow{Start: start, End: start.Add(10 * time.Minute)},
 		},
-		ThroughSequence: 7, GraphSHA256: graphSHA, Investigation: InvestigationInvestigated,
+		ThroughSequence: 7, GraphRevision: graphRevision, Investigation: InvestigationInvestigated,
 	}
 	shadow := DetectionSignal{
 		Signal: detector.InvestigationSignal{
@@ -27,7 +27,7 @@ func TestPostgreSQLDetectionSignalsRoundTripIdempotentlyAndPrune(t *testing.T) {
 			Window: detector.TimeWindow{Start: start, End: start.Add(time.Minute)}, RuleID: "deployment/checkout/rule-1", RuleRevision: 1,
 			RulesetDigest: strings.Repeat("b", 64), RuleMode: detector.RuleModeShadow,
 		},
-		ThroughSequence: 7, GraphSHA256: graphSHA, Investigation: InvestigationShadow,
+		ThroughSequence: 7, GraphRevision: graphRevision, Investigation: InvestigationShadow,
 	}
 	for range 2 {
 		if err := store.RecordDetectionSignals(ctx, []DetectionSignal{novelty, shadow}); err != nil {

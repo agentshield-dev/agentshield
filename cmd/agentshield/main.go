@@ -73,6 +73,8 @@ type options struct {
 	databaseURL                 string
 	databaseMaxConns            int
 	databaseMinConns            int
+	checkpointInterval          time.Duration
+	checkpointDeltas            uint64
 	telemetryPath               string
 	clickHouseURL               string
 	clickHouseDatabase          string
@@ -148,7 +150,10 @@ func runWithArgsOutput(args []string, output io.Writer) error {
 	// budget so an unreachable dependency fails fast.
 	startupContext, cancelStartup := context.WithTimeout(context.Background(), startupOpenTimeout)
 	defer cancelStartup()
-	runtime, err := discovery.NewRuntime(store)
+	runtime, err := discovery.NewRuntime(store, discovery.RuntimeConfig{
+		CheckpointInterval: config.checkpointInterval,
+		CheckpointDeltas:   config.checkpointDeltas,
+	})
 	if err != nil {
 		return err
 	}
@@ -189,6 +194,8 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&config.databaseURL, "database-url", os.Getenv("AGENTSHIELD_DATABASE_URL"), "PostgreSQL connection URL; defaults to AGENTSHIELD_DATABASE_URL")
 	flags.IntVar(&config.databaseMaxConns, "database-max-conns", envInt("AGENTSHIELD_DATABASE_MAX_CONNS", 20), "maximum PostgreSQL pool connections")
 	flags.IntVar(&config.databaseMinConns, "database-min-conns", envInt("AGENTSHIELD_DATABASE_MIN_CONNS", 2), "minimum PostgreSQL pool connections")
+	flags.DurationVar(&config.checkpointInterval, "contribution-checkpoint-interval", 15*time.Minute, "maximum time between authoritative complete contribution checkpoints")
+	flags.Uint64Var(&config.checkpointDeltas, "contribution-checkpoint-deltas", 1000, "maximum accepted contribution deltas between authoritative complete checkpoints")
 	flags.StringVar(&config.telemetryPath, "telemetry-jsonl", ".agentshield/telemetry.jsonl", "local durable telemetry path")
 	flags.StringVar(&config.clickHouseURL, "clickhouse-url", "", "ClickHouse HTTP endpoint; uses JSONL when empty")
 	flags.StringVar(&config.clickHouseDatabase, "clickhouse-database", "agentshield", "ClickHouse database")
@@ -234,6 +241,9 @@ func parseOptions(args []string) (options, error) {
 	if strings.TrimSpace(config.aws.Region) == "" &&
 		(strings.TrimSpace(config.aws.EventsQueueURL) != "" || strings.TrimSpace(config.aws.FirehoseStreamARN) != "") {
 		return options{}, errors.New("AWS events queue and Firehose options require --aws-region")
+	}
+	if config.checkpointInterval <= 0 || config.checkpointDeltas == 0 {
+		return options{}, errors.New("contribution checkpoint interval and delta count must be positive")
 	}
 	switch strings.ToLower(strings.TrimSpace(config.modelProviderName)) {
 	case "openai":
@@ -450,7 +460,7 @@ func newAPIServer(config options, store *state.Store, manager *discovery.Manager
 	}
 	executor, err := remediation.NewExecutor(manager.Remediations(), func(ctx context.Context) (remediation.GraphView, error) {
 		view, latestErr := store.Latest(ctx)
-		return remediation.GraphView{SHA256: view.SHA256, Snapshot: view.Snapshot}, latestErr
+		return remediation.GraphView{Revision: view.Revision, Snapshot: view.Snapshot}, latestErr
 	})
 	if err != nil {
 		return nil, err

@@ -3,9 +3,7 @@ package graph
 import (
 	"cmp"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -758,25 +756,20 @@ func (c *Compiler) resolve(claim IdentityClaim) (IdentityClaim, string, error) {
 	return normalized, resourceID(normalized), nil
 }
 
+func (c *Compiler) NormalizeIdentityClaim(claim IdentityClaim) (IdentityClaim, error) {
+	normalized, _, err := c.resolve(claim)
+	return normalized, err
+}
+
 // CanonicalJSON encodes the snapshot. Because the compiler sorts every slice
 // and encoding/json sorts map keys, equal snapshots encode to equal bytes.
 func (s Snapshot) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(s)
 }
 
-// MarshalIndent encodes the snapshot for human inspection. Do not hash it.
+// MarshalIndent encodes the snapshot for human inspection.
 func (s Snapshot) MarshalIndent() ([]byte, error) {
 	return json.MarshalIndent(s, "", "  ")
-}
-
-// Hash returns the hex SHA-256 of CanonicalJSON.
-func (s Snapshot) Hash() (string, error) {
-	data, err := s.CanonicalJSON()
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
 }
 
 func validateResourceAssertion(assertion ResourceAssertion) error {

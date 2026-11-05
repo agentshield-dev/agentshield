@@ -27,7 +27,10 @@ func BenchmarkPostgreSQLResourceDetail(b *testing.B) {
 	for _, size := range []int{100, 1_000, 10_000} {
 		b.Run(fmt.Sprintf("assertions=%d", size), func(b *testing.B) {
 			store := benchmarkStore(b)
-			view, err := store.ReplaceContribution(context.Background(), benchmarkContribution(1, benchmarkInput(size, "a")))
+			if _, err := store.ReplaceContribution(context.Background(), benchmarkContribution(1, benchmarkInput(size, "a"))); err != nil {
+				b.Fatal(err)
+			}
+			view, err := store.Latest(context.Background())
 			if err != nil {
 				b.Fatal(err)
 			}

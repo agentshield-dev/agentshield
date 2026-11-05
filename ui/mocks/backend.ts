@@ -25,7 +25,7 @@ import type {
 	WorkloadRule
 } from '@/api/types';
 import { label, list, securitySemantics } from '@/lib/model';
-import { dataset, digest256, graphSha, minutesAfter } from './dataset';
+import { dataset, digest256, minutesAfter } from './dataset';
 import { authoredProposal, type RuleJob, seedRuleJobs } from './rules';
 
 // An in-memory stand-in for the AgentShield HTTP API (pkg/api). It follows the real handlers'
@@ -65,7 +65,7 @@ const defaults: BackendConfig = {
 };
 
 export interface GraphEvent {
-	sha256: string;
+	revision: number;
 	generatedAt: string;
 }
 
@@ -239,7 +239,7 @@ const newestFirst = (left: Finding, right: Finding) =>
 
 export class FakeBackend {
 	config: BackendConfig = { ...defaults };
-	private revision = 1;
+	private revision = 2;
 	private sequence = 5;
 	private findings: Finding[] = [];
 	private sessions = new Map<string, Session>();
@@ -258,7 +258,7 @@ export class FakeBackend {
 		this.listeners.clear();
 		this.sessions.clear();
 		this.config = { ...defaults };
-		this.revision = 1;
+		this.revision = 2;
 		this.sequence = 5;
 		this.findings = structuredClone(dataset.findings);
 		this.ruleJobs = seedRuleJobs();
@@ -276,10 +276,10 @@ export class FakeBackend {
 		this.sequence++;
 		this.findings = structuredClone(findings).map(item => ({
 			...item,
-			graphSha256: this.sha,
+			graphRevision: this.revision,
 			remediations: list(item.remediations).map(proposal => ({
 				...proposal,
-				graphSha256: this.sha
+				graphRevision: this.revision
 			}))
 		}));
 		this.notify();
@@ -294,10 +294,6 @@ export class FakeBackend {
 		return this.snapshot;
 	}
 
-	private get sha(): string {
-		return graphSha(this.revision);
-	}
-
 	private get generatedAt(): string {
 		return minutesAfter(this.revision);
 	}
@@ -305,7 +301,7 @@ export class FakeBackend {
 	// What a new stream subscriber learns first: undefined until a graph exists.
 	currentEvent(): GraphEvent | undefined {
 		return this.config.materialized
-			? { sha256: this.sha, generatedAt: this.generatedAt }
+			? { revision: this.revision, generatedAt: this.generatedAt }
 			: undefined;
 	}
 
@@ -338,7 +334,7 @@ export class FakeBackend {
 			id: `finding:sha256:${digest256(`raised/${this.revision}/${summary}`)}`,
 			origin: 'agentic_investigation',
 			analysisId: `analysis:sha256:${digest256(`raised-analysis/${this.revision}`)}`,
-			graphSha256: graphSha(this.revision + 1),
+			graphRevision: this.revision + 1,
 			category: 'possible_lateral_path',
 			severity: 'high',
 			modelUncertainty: 'medium',
@@ -357,7 +353,7 @@ export class FakeBackend {
 	graph(): GraphRecord {
 		return {
 			generatedAt: this.generatedAt,
-			sha256: this.sha,
+			revision: this.revision,
 			snapshot: this.requireGraph('load graph')
 		};
 	}
@@ -366,7 +362,7 @@ export class FakeBackend {
 		const snapshot = this.requireGraph('load graph overview');
 		const active = this.findings.filter(item => item.status === 'active').sort(newestFirst);
 		return {
-			graphSha256: this.sha,
+			graphRevision: this.revision,
 			generatedAt: this.generatedAt,
 			counts: {
 				resources: list(snapshot.resources).length,
@@ -594,7 +590,7 @@ export class FakeBackend {
 			sourceId,
 			actionId,
 			mode: candidate.mode === 'advisory-only' ? 'advisory-only' : 'executable',
-			graphSha256: proposal.graphSha256,
+			graphRevision: proposal.graphRevision,
 			desiredSha256: digest256(`desired/${identity}`)
 		};
 		if (plan.mode === 'advisory-only') {
@@ -667,7 +663,7 @@ export class FakeBackend {
 		finding.status = 'invalidated';
 		finding.invalidatedAt = this.generatedAt;
 		finding.invalidatedBySequence = this.sequence;
-		finding.invalidatedGraphSha256 = this.sha;
+		finding.invalidatedGraphRevision = this.revision;
 		this.notify();
 	}
 

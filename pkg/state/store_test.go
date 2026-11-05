@@ -51,7 +51,7 @@ func TestPostgreSQLPublicationLockWaitIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err == nil || !strings.Contains(err.Error(), "advance graph revision") {
+	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err == nil || !strings.Contains(err.Error(), "lock graph revision") {
 		t.Fatalf("publication behind a held lock returned %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
@@ -75,7 +75,7 @@ func TestPostgreSQLPublicationLockWaitIsBounded(t *testing.T) {
 func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 	store, _ := integrationStore(t)
 	proposal, err := remediation.NewProposal(
-		"finding:test", "analysis:test", strings.Repeat("a", 64),
+		"finding:test", "analysis:test", 1,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 			Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "pod/uid",
@@ -86,7 +86,7 @@ func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	finding := Finding{
-		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphSHA256: proposal.GraphSHA256,
+		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphRevision: proposal.GraphRevision,
 		Category: "new_exposure", Severity: "high",
 		ModelUncertainty: "low", Summary: "Unexpected ingress", SignalIDs: []string{"signal"},
 		AffectedEntityIDs: []string{"target"}, Remediations: []remediation.Proposal{proposal}, CreatedAt: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC),
@@ -131,18 +131,18 @@ func TestPostgreSQLFindingRoundTripAndIdempotency(t *testing.T) {
 		t.Fatalf("filtered finding page = %#v, err = %v", page, err)
 	}
 	invalidatedAt := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	if err := store.InvalidateFindings(context.Background(), strings.Repeat("b", 64), 2, []string{"target"}, invalidatedAt); err != nil {
+	if err := store.InvalidateFindings(context.Background(), 2, 2, []string{"target"}, invalidatedAt); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.GetFinding(context.Background(), finding.ID)
-	if err != nil || got.Status != FindingStatusInvalidated || got.InvalidatedAt == nil || !got.InvalidatedAt.Equal(invalidatedAt) || got.InvalidatedBySequence == nil || *got.InvalidatedBySequence != 2 || got.InvalidatedGraphSHA256 != strings.Repeat("b", 64) {
+	if err != nil || got.Status != FindingStatusInvalidated || got.InvalidatedAt == nil || !got.InvalidatedAt.Equal(invalidatedAt) || got.InvalidatedBySequence == nil || *got.InvalidatedBySequence != 2 || got.InvalidatedGraphRevision != 2 {
 		t.Fatalf("invalidated finding = %#v, err = %v", got, err)
 	}
 	page, err = store.QueryFindings(context.Background(), FindingQuery{Status: FindingStatusActive, Limit: 10})
 	if err != nil || len(page.Findings) != 1 || page.Findings[0].ID != second.ID || page.Total != 1 {
 		t.Fatalf("active findings = %#v, err = %v", page, err)
 	}
-	if err := store.InvalidateFindings(context.Background(), strings.Repeat("c", 64), 3, nil, invalidatedAt.Add(time.Hour)); err != nil {
+	if err := store.InvalidateFindings(context.Background(), 3, 3, nil, invalidatedAt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.GetFinding(context.Background(), second.ID)
@@ -155,7 +155,7 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
 	finding := Finding{
-		ID: "finding:rule", Origin: FindingOriginDetectionRule, AnalysisID: "detection-window:test", GraphSHA256: strings.Repeat("a", 64),
+		ID: "finding:rule", Origin: FindingOriginDetectionRule, AnalysisID: "detection-window:test", GraphRevision: 1,
 		Category: "detection_rule_match", Severity: "critical", Summary: "Detection rule matched",
 		DetectionRuleID: "deployment/checkout/rule-1", DetectionRuleRevision: 3,
 		SignalIDs: []string{"signal"}, AffectedEntityIDs: []string{"checkout"}, CreatedAt: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC),
@@ -191,7 +191,7 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 		}
 	}
 	for _, entityIDs := range [][]string{{"checkout"}, nil} {
-		if err := store.InvalidateFindings(ctx, strings.Repeat("b", 64), 5, entityIDs, time.Now()); err != nil {
+		if err := store.InvalidateFindings(ctx, 2, 5, entityIDs, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -202,8 +202,8 @@ func TestPostgreSQLDetectionRuleFindingRoundTrip(t *testing.T) {
 		t.Fatalf("agentic finding after graph change = %#v err = %v", got, err)
 	}
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO findings (finding_id, analysis_id, graph_sha256, category, severity, model_uncertainty, summary, signal_ids, remediations, created_at, origin)
-		VALUES ('finding:raw', 'analysis', $1, 'category', 'high', '', 'summary', '[]', '[]', now(), 'agentic_investigation')`, strings.Repeat("a", 64)); err == nil {
+		INSERT INTO findings (finding_id, analysis_id, graph_revision, category, severity, model_uncertainty, summary, signal_ids, remediations, created_at, origin)
+		VALUES ('finding:raw', 'analysis', $1, 'category', 'high', '', 'summary', '[]', '[]', now(), 'agentic_investigation')`, 1); err == nil {
 		t.Fatal("schema accepted an agentic finding without model uncertainty")
 	}
 }
@@ -253,7 +253,7 @@ func TestPostgreSQLLatestBeforeFirstContributionIsNotMaterialized(t *testing.T) 
 func TestPostgreSQLGraphRevisionChangesOnlyWithPublication(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
-	revision := func() string {
+	revision := func() uint64 {
 		t.Helper()
 		value, err := store.GraphRevision(ctx)
 		if err != nil {
@@ -267,13 +267,13 @@ func TestPostgreSQLGraphRevisionChangesOnlyWithPublication(t *testing.T) {
 	}
 	first := revision()
 	if first == empty {
-		t.Fatalf("revision %q did not change after the first publication", first)
+		t.Fatalf("revision %d did not change after the first publication", first)
 	}
 	if _, err := store.ReplaceContribution(ctx, testContribution("first", 1, "a")); err != nil {
 		t.Fatal(err)
 	}
 	if got := revision(); got != first {
-		t.Fatalf("idempotent retry changed revision from %q to %q", first, got)
+		t.Fatalf("idempotent retry changed revision from %d to %d", first, got)
 	}
 	if _, err := store.ReplaceContribution(ctx, testContribution("second", 1, "b")); err != nil {
 		t.Fatal(err)
@@ -298,20 +298,20 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 	if _, found, err := store.ReadReasoningCursor(ctx, "reasoning/default"); err != nil || found {
 		t.Fatalf("initial cursor found=%t err=%v, want false nil", found, err)
 	}
-	first := ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 2, GraphSHA256: "graph-2", UpdatedAt: time.Now().UTC()}
+	first := ReasoningCursor{ConsumerID: "reasoning/default", ThroughSequence: 2, GraphRevision: 1, UpdatedAt: time.Now().UTC()}
 	if err := store.AdvanceReasoningCursor(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AdvanceReasoningCursor(ctx, first); err != nil {
 		t.Fatalf("idempotent cursor advance: %v", err)
 	}
-	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 1, GraphSHA256: "graph-1"}); err == nil {
+	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 1, GraphRevision: 1}); err == nil {
 		t.Fatal("reasoning cursor regression was accepted")
 	}
-	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 2, GraphSHA256: "different"}); err == nil {
-		t.Fatal("same-sequence graph digest change was accepted")
+	if err := store.AdvanceReasoningCursor(ctx, ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 2, GraphRevision: 2}); err == nil {
+		t.Fatal("same-sequence graph revision change was accepted")
 	}
-	second := ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 3, GraphSHA256: "graph-3"}
+	second := ReasoningCursor{ConsumerID: first.ConsumerID, ThroughSequence: 3, GraphRevision: 2}
 	if err := store.AdvanceReasoningCursor(ctx, second); err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || got.ThroughSequence != second.ThroughSequence || got.GraphSHA256 != second.GraphSHA256 {
+	if !found || got.ThroughSequence != second.ThroughSequence || got.GraphRevision != second.GraphRevision {
 		t.Fatalf("cursor = %#v found=%t, want sequence 3 graph-3", got, found)
 	}
 }
@@ -327,8 +327,8 @@ func TestPostgreSQLReasoningCursorIsMonotonicAndIdempotent(t *testing.T) {
 func TestPostgreSQLReasoningCursorConcurrentInitialization(t *testing.T) {
 	store, _ := integrationStore(t)
 	cursors := []ReasoningCursor{
-		{ConsumerID: "reasoning/concurrent", ThroughSequence: 1, GraphSHA256: "graph-1"},
-		{ConsumerID: "reasoning/concurrent", ThroughSequence: 2, GraphSHA256: "graph-2"},
+		{ConsumerID: "reasoning/concurrent", ThroughSequence: 1, GraphRevision: 1},
+		{ConsumerID: "reasoning/concurrent", ThroughSequence: 2, GraphRevision: 1},
 	}
 	var wait sync.WaitGroup
 	errorsChannel := make(chan error, len(cursors))
@@ -368,7 +368,7 @@ func TestPostgreSQLReplaceContributionConcurrencyAndStaleGeneration(t *testing.T
 	defer second.Close()
 
 	var wait sync.WaitGroup
-	records := make(chan GraphView, 2)
+	records := make(chan Publication, 2)
 	errorsChannel := make(chan error, 2)
 	for index, current := range []*Store{store, second} {
 		wait.Add(1)
@@ -388,13 +388,13 @@ func TestPostgreSQLReplaceContributionConcurrencyAndStaleGeneration(t *testing.T
 	for err := range errorsChannel {
 		t.Fatal(err)
 	}
-	var hashes []string
+	var revisions []uint64
 	for record := range records {
-		hashes = append(hashes, record.SHA256)
+		revisions = append(revisions, record.Revision)
 	}
-	slices.Sort(hashes)
-	if len(hashes) != 2 || hashes[0] == "" || hashes[1] == "" {
-		t.Fatalf("concurrent graph hashes = %v", hashes)
+	slices.Sort(revisions)
+	if len(revisions) != 2 || revisions[0] == 0 || revisions[1] == 0 {
+		t.Fatalf("concurrent graph revisions = %v", revisions)
 	}
 	var contributionVersions int
 	if err := store.pool.QueryRow(context.Background(), `SELECT count(*) FROM contribution_versions`).Scan(&contributionVersions); err != nil {
@@ -429,7 +429,7 @@ func TestPostgreSQLReplaceContributionSameGenerationIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry.SHA256 != first.SHA256 {
+	if retry.Revision != first.Revision {
 		t.Fatalf("same-generation retry changed the graph: first=%+v retry=%+v", first, retry)
 	}
 	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "b")); err == nil {
@@ -446,8 +446,8 @@ func TestPostgreSQLReplaceContributionSameGenerationIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.SHA256 != first.SHA256 {
-		t.Fatalf("new generation with unchanged content changed hash: %+v, want %s", second, first.SHA256)
+	if second.Revision == first.Revision {
+		t.Fatalf("new generation did not advance revision: first=%+v second=%+v", first, second)
 	}
 	events, err := store.ReadContributionChanges(context.Background(), 0, 10)
 	if err != nil {
@@ -484,6 +484,169 @@ func TestPostgreSQLPublicationPreservesUnchangedProjectionRows(t *testing.T) {
 	}
 	if !after.Equal(before) {
 		t.Fatalf("unchanged projection updated_at = %s, want %s", after, before)
+	}
+}
+
+func TestPostgreSQLContributionDeltaUpdatesMembershipAndRejectsStaleBase(t *testing.T) {
+	store, _ := integrationStore(t)
+	first := testContribution("inventory", 1, "a")
+	if _, err := store.ReplaceContribution(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := testContribution("inventory", 2, "b")
+	delta := ContributionDelta{
+		PluginID: "test", SourceID: "source", Name: "inventory", BaseGeneration: 1, Generation: 2,
+		Added: second.Input, Retracted: first.Input, Ready: true, SourceHealth: SourceHealthHealthy,
+	}
+	publication, err := store.ApplyContributionDelta(context.Background(), delta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := store.ApplyContributionDelta(context.Background(), delta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Revision != publication.Revision {
+		t.Fatalf("delta retry revision = %d, want %d", retry.Revision, publication.Revision)
+	}
+	view, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Snapshot.Resources) != 1 || view.Snapshot.Resources[0].Identity.ImmutableKey != "b" {
+		t.Fatalf("delta graph resources = %+v, want b", view.Snapshot.Resources)
+	}
+	overlap := delta
+	overlap.BaseGeneration = 2
+	overlap.Generation = 3
+	overlap.Added = second.Input
+	overlap.Retracted = second.Input
+	if _, err := store.ApplyContributionDelta(context.Background(), overlap); !errors.Is(err, ErrContributionDeltaMembershipMismatch) || !strings.Contains(err.Error(), "both added and retracted") {
+		t.Fatalf("overlapping delta error = %v", err)
+	}
+	third := testContribution("inventory", 4, "c")
+	if _, err := store.ApplyContributionDelta(context.Background(), ContributionDelta{
+		PluginID: "test", SourceID: "source", Name: "inventory", BaseGeneration: 2, Generation: 4,
+		Added: third.Input, Retracted: second.Input, Ready: true, SourceHealth: SourceHealthHealthy,
+	}); err != nil {
+		t.Fatalf("gapped delta generation: %v", err)
+	}
+	stale := delta
+	stale.BaseGeneration = 2
+	stale.Generation = 5
+	if _, err := store.ApplyContributionDelta(context.Background(), stale); !errors.Is(err, ErrContributionDeltaBaseMismatch) {
+		t.Fatalf("stale delta error = %v", err)
+	}
+}
+
+func TestPostgreSQLCompleteReplacementAndDeltaAreEquivalent(t *testing.T) {
+	observedAt := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
+	subject := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "subject"}
+	object := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "object"}
+	resource := func(version string) graph.ResourceAssertion {
+		return graph.ResourceAssertion{
+			Claim: subject, Kind: "test/workload", Attributes: map[string]string{"version": version},
+			PluginID: "test", SourceID: "source", RuleID: "resource", EvidenceIDs: []string{"resource-" + version},
+		}
+	}
+	facet := func(version string) graph.FacetAssertion {
+		return graph.FacetAssertion{
+			Resource: subject, Kind: "security", Key: "policy", Attributes: map[string]string{"version": version},
+			PluginID: "test", SourceID: "source", RuleID: "facet", EvidenceIDs: []string{"facet-" + version},
+		}
+	}
+	relationship := func(version string) graph.RelationshipAssertion {
+		return graph.RelationshipAssertion{
+			Subject: subject, Predicate: graph.PredicateCommunicates, Object: object, Qualifier: version,
+			Properties: map[string]string{"version": version}, PluginID: "test", SourceID: "source",
+			RuleID: "relationship", EvidenceIDs: []string{"relationship-" + version},
+		}
+	}
+	telemetryAssertion := func(version string) graph.TelemetryAssertion {
+		return graph.TelemetryAssertion{
+			EventID: "flow-" + version, Kind: "network-flow", Subject: subject, Object: object, Count: 1,
+			Properties: map[string]string{"version": version}, PluginID: "test", SourceID: "source",
+			RuleID: "telemetry", EvidenceIDs: []string{"telemetry-" + version},
+		}
+	}
+	stableResource := graph.ResourceAssertion{
+		Claim: object, Kind: "test/service", PluginID: "test", SourceID: "source", RuleID: "resource", EvidenceIDs: []string{"object"},
+	}
+	input := func(version string) graph.Input {
+		return graph.Input{
+			Resources:     []graph.ResourceAssertion{resource(version), stableResource},
+			Facets:        []graph.FacetAssertion{facet(version)},
+			Relationships: []graph.RelationshipAssertion{relationship(version)},
+			Telemetry:     []graph.TelemetryAssertion{telemetryAssertion(version)},
+		}
+	}
+
+	type result struct {
+		snapshot string
+		change   string
+	}
+	run := func(t *testing.T, delta bool) result {
+		t.Helper()
+		store, _ := integrationStore(t)
+		first := Contribution{
+			PluginID: "test", SourceID: "source", Name: "mixed", Generation: 1, Input: input("one"),
+			SourceObservedAt: observedAt, Ready: true, SourceHealth: SourceHealthHealthy,
+		}
+		if _, err := store.ReplaceContribution(context.Background(), first); err != nil {
+			t.Fatal(err)
+		}
+		initialEvents, err := store.ReadContributionChanges(context.Background(), 0, 10)
+		if err != nil || len(initialEvents) != 1 {
+			t.Fatalf("initial changes = %+v, err = %v", initialEvents, err)
+		}
+		second := first
+		second.Generation = 2
+		second.Input = input("two")
+		if delta {
+			_, err = store.ApplyContributionDelta(context.Background(), ContributionDelta{
+				PluginID: first.PluginID, SourceID: first.SourceID, Name: first.Name,
+				BaseGeneration: 1, Generation: 2,
+				Added: graph.Input{
+					Resources: []graph.ResourceAssertion{second.Input.Resources[0]}, Facets: second.Input.Facets,
+					Relationships: second.Input.Relationships, Telemetry: second.Input.Telemetry,
+				},
+				Retracted: graph.Input{
+					Resources: []graph.ResourceAssertion{first.Input.Resources[0]}, Facets: first.Input.Facets,
+					Relationships: first.Input.Relationships, Telemetry: first.Input.Telemetry,
+				},
+				SourceObservedAt: observedAt, Ready: true, SourceHealth: SourceHealthHealthy,
+			})
+		} else {
+			_, err = store.ReplaceContribution(context.Background(), second)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := store.Latest(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := json.Marshal(view.Snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := store.ReadContributionChanges(context.Background(), initialEvents[0].Sequence, 10)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("mutation changes = %+v, err = %v", events, err)
+		}
+		events[0].Sequence = 0
+		events[0].Contribution.VersionID = 0
+		change, err := json.Marshal(events[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result{snapshot: string(snapshot), change: string(change)}
+	}
+
+	complete := run(t, false)
+	delta := run(t, true)
+	if complete != delta {
+		t.Fatalf("complete replacement and delta differ:\ncomplete=%+v\ndelta=%+v", complete, delta)
 	}
 }
 
@@ -575,8 +738,8 @@ func TestPostgreSQLContributionChangesPreservePublicationBoundaries(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.ThroughSequence != events[len(events)-1].Sequence || checkpoint.View.SHA256 != latest.SHA256 {
-		t.Fatalf("graph checkpoint = %+v, latest hash = %s", checkpoint, latest.SHA256)
+	if checkpoint.ThroughSequence != events[len(events)-1].Sequence || checkpoint.View.Revision != latest.Revision {
+		t.Fatalf("graph checkpoint = %+v, latest revision = %d", checkpoint, latest.Revision)
 	}
 }
 
@@ -953,7 +1116,7 @@ func TestPostgreSQLAtomicRollbackAndRestartPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.SHA256 != second.SHA256 || generation != 2 {
+	if latest.Revision != second.Revision || generation != 2 {
 		t.Fatalf("state did not survive restart: latest=%+v generation=%d", latest, generation)
 	}
 }
@@ -979,19 +1142,6 @@ func TestValidateContributionRejectsSpoofedAssertionProvenance(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLLatestRejectsStoredSpoofedAssertionProvenance(t *testing.T) {
-	store, _ := integrationStore(t)
-	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "owned")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.pool.Exec(context.Background(), `UPDATE resource_assertions SET plugin_id='spoofed' WHERE assertion_id IN (SELECT assertion_id FROM contribution_current_assertions WHERE assertion_type='resource')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Latest(context.Background()); err == nil || !strings.Contains(err.Error(), "does not match active contribution owner") {
-		t.Fatalf("stored spoofed provenance error = %v", err)
-	}
-}
-
 func TestPostgreSQLNativeEventIsIdempotent(t *testing.T) {
 	store, _ := integrationStore(t)
 	event := NativeEvent{EventID: "event-1", PluginID: "test", SourceID: "source", Collection: "objects", Key: "a", Operation: "upsert", ObservedAt: time.Now().UTC(), Payload: json.RawMessage(`{"a":1,"b":2}`)}
@@ -1011,7 +1161,7 @@ func TestPostgreSQLNativeEventIsIdempotent(t *testing.T) {
 
 func TestPostgreSQLNeighborhoodTraversal(t *testing.T) {
 	store, _ := integrationStore(t)
-	record, err := store.ReplaceContribution(context.Background(), Contribution{
+	_, err := store.ReplaceContribution(context.Background(), Contribution{
 		PluginID: "test", SourceID: "source", Name: "neighborhood", Generation: 1,
 		Input: graph.Input{
 			Resources: []graph.ResourceAssertion{
@@ -1025,6 +1175,10 @@ func TestPostgreSQLNeighborhoodTraversal(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,7 +1213,7 @@ func TestPostgreSQLUnresolvedRelationshipLifecycle(t *testing.T) {
 	store, _ := integrationStore(t)
 	subject := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "subject"}
 	object := graph.IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "source", ImmutableKey: "object"}
-	record, err := store.ReplaceContribution(context.Background(), Contribution{
+	_, err := store.ReplaceContribution(context.Background(), Contribution{
 		PluginID: "edges", SourceID: "source", Name: "topology", Generation: 1, Ready: true, SourceHealth: "healthy",
 		Input: graph.Input{
 			Resources: []graph.ResourceAssertion{{Claim: subject, Kind: "test/resource", PluginID: "edges", SourceID: "source", RuleID: "resource"}},
@@ -1069,6 +1223,10 @@ func TestPostgreSQLUnresolvedRelationshipLifecycle(t *testing.T) {
 			}},
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,6 +1362,65 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	if resources != 0 || conflicts != 1 {
 		t.Fatalf("projection resources=%d conflicts=%d", resources, conflicts)
 	}
+	var conflictID string
+	if err := store.pool.QueryRow(context.Background(), `SELECT resource_id::text FROM assertion_conflicts`).Scan(&conflictID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := readScopedProjection(context.Background(), tx, projectionScope{resources: map[string]struct{}{conflictID: {}}})
+	if rollbackErr := tx.Rollback(context.Background()); err == nil && rollbackErr != nil {
+		err = rollbackErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped.Conflicts) != 1 || !slices.Equal(scoped.Conflicts[0].Kinds, []string{"machine", "service"}) {
+		t.Fatalf("scoped conflict = %+v", scoped.Conflicts)
+	}
+	if _, err := store.ReplaceContribution(context.Background(), Contribution{
+		PluginID: "inventory", SourceID: "source", Name: "base", Generation: 2, Ready: true, SourceHealth: "healthy",
+		Input: graph.Input{Resources: []graph.ResourceAssertion{{
+			Claim: claim, Kind: "machine", DisplayName: "renamed", PluginID: "inventory", SourceID: "source", RuleID: "resource",
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Snapshot.Conflicts) != 1 || !slices.Equal(view.Snapshot.Conflicts[0].Kinds, []string{"machine", "service"}) || len(view.Snapshot.Conflicts[0].Assertions) != 2 || view.Snapshot.Conflicts[0].Assertions[0].PluginID == "" || view.Snapshot.Conflicts[0].Assertions[1].PluginID == "" {
+		t.Fatalf("projected conflict lost assertion provenance: %+v", view.Snapshot.Conflicts)
+	}
+}
+
+func TestPostgreSQLCurrentGraphMatchesCheckpointForSparseGraph(t *testing.T) {
+	store, _ := integrationStore(t)
+	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.CurrentGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := store.ReadGraphCheckpoint(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentJSON, err := json.Marshal(current.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointJSON, err := json.Marshal(checkpoint.View.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentJSON) != string(checkpointJSON) {
+		t.Fatalf("current graph and checkpoint differ:\ncurrent=%s\ncheckpoint=%s", currentJSON, checkpointJSON)
+	}
 }
 
 func TestPostgreSQLAnalysisViewPinsContributionVersions(t *testing.T) {
@@ -1252,7 +1469,10 @@ func TestPostgreSQLContributionRetirementRetractsAssertions(t *testing.T) {
 	if _, err := store.ReplaceContribution(context.Background(), testContribution("inventory", 1, "a")); err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.RetireContribution(context.Background(), "test", "source", "inventory", 2, time.Now().UTC())
+	if _, err := store.RetireContribution(context.Background(), "test", "source", "inventory", 2, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

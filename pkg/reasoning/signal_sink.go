@@ -50,19 +50,19 @@ func (sink *SignalSink) RecordReasoningEvaluation(ctx context.Context, evaluatio
 	records := make([]state.DetectionSignal, 0, len(evaluation.Signals)+len(evaluation.RuleSignals)+len(evaluation.ShadowSignals))
 	for _, signal := range evaluation.Signals {
 		records = append(records, state.DetectionSignal{
-			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphSHA256: checkpoint.View.SHA256,
+			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphRevision: checkpoint.View.Revision,
 			Investigation: signalInvestigation(evaluation.Investigation),
 		})
 	}
 	for _, signal := range evaluation.RuleSignals {
 		records = append(records, state.DetectionSignal{
-			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphSHA256: checkpoint.View.SHA256,
+			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphRevision: checkpoint.View.Revision,
 			Investigation: state.InvestigationRuleFinding,
 		})
 	}
 	for _, signal := range evaluation.ShadowSignals {
 		records = append(records, state.DetectionSignal{
-			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphSHA256: checkpoint.View.SHA256,
+			Signal: signal, ThroughSequence: checkpoint.ThroughSequence, GraphRevision: checkpoint.View.Revision,
 			Investigation: state.InvestigationShadow,
 		})
 	}

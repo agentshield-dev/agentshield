@@ -30,10 +30,6 @@ const titles: Record<View, string> = {
 };
 
 // Reports whether the live stream is reconnecting, and refreshes when it announces a new graph.
-// The browser does not poll: the server pushes a 'graph' event with the new digest over SSE (it
-// polls PostgreSQL for a cheap revision per open stream), and only a digest that differs from the
-// loaded graph triggers a refetch. EventSource ignores the server's keepalive comments and
-// reconnects on its own.
 function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): boolean {
 	const [reconnecting, setReconnecting] = useState(false);
 	const latest = useRef(loaded);
@@ -49,8 +45,8 @@ function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): bo
 			const current = latest.current;
 			// An initial load in flight already fetches the newest graph.
 			if (current.status === 'loading' && !current.data) return;
-			const update = JSON.parse((event as MessageEvent<string>).data) as { sha256?: string };
-			if (update.sha256 !== current.data?.sha256) onChange();
+			const update = JSON.parse((event as MessageEvent<string>).data) as { revision?: number };
+			if (update.revision !== current.data?.revision) onChange();
 		});
 		return () => events.close();
 	}, [onChange]);

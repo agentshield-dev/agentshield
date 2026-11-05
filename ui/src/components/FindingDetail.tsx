@@ -66,10 +66,8 @@ export function FindingDetail({ finding, active, refresh, onViewGraph }: Finding
 					<dd>{formatTime(finding.createdAt)}</dd>
 				</div>
 				<div>
-					<dt>Graph digest</dt>
-					<dd className="mono" title={finding.graphSha256 || 'unknown'}>
-						{(finding.graphSha256 || 'unknown').slice(0, 12)}
-					</dd>
+					<dt>Graph revision</dt>
+					<dd className="mono">{finding.graphRevision || 'unknown'}</dd>
 				</div>
 			</dl>
 			<div className="detail-columns">

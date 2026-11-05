@@ -37,12 +37,12 @@ const (
 	ClosureTruncated = "truncated"
 )
 
-// AnalysisToken pins retrieval to one analyzed packet and graph digest.
+// AnalysisToken pins retrieval to one analyzed packet and graph revision.
 // A query carrying any other token is rejected, so the model cannot read a
 // later or different graph state than the one it is being judged against.
 type AnalysisToken struct {
-	AnalysisID  string `json:"analysisId"`
-	GraphSHA256 string `json:"graphSha256"`
+	AnalysisID    string `json:"analysisId"`
+	GraphRevision uint64 `json:"graphRevision"`
 }
 
 // ContextLimits bounds each retrieval result. PathDepth is the maximum number
@@ -142,7 +142,7 @@ func defaultGraphPathPredicates() []graph.Predicate {
 // first-seen time are skipped because they cannot be placed in the window.
 func PinSnapshotTelemetry(packet Packet, snapshot graph.Snapshot, limit int) PinnedTelemetryContext {
 	pinned := PinnedTelemetryContext{
-		Token:           AnalysisToken{AnalysisID: packet.AnalysisID, GraphSHA256: packet.HydratedGraphSHA256},
+		Token:           AnalysisToken{AnalysisID: packet.AnalysisID, GraphRevision: packet.HydratedGraphRevision},
 		TelemetryWindow: packet.TelemetryWindow,
 	}
 	if packet.TelemetryWindow == nil || limit < 1 {
@@ -169,7 +169,7 @@ func PinSnapshotTelemetry(packet Packet, snapshot graph.Snapshot, limit int) Pin
 // with no telemetry.
 func NewContextProvider(packet Packet, limits ContextLimits) (*ContextProvider, error) {
 	return NewContextProviderWithTelemetry(packet, PinnedTelemetryContext{
-		Token:           AnalysisToken{AnalysisID: packet.AnalysisID, GraphSHA256: packet.HydratedGraphSHA256},
+		Token:           AnalysisToken{AnalysisID: packet.AnalysisID, GraphRevision: packet.HydratedGraphRevision},
 		TelemetryWindow: packet.TelemetryWindow,
 	}, limits)
 }
@@ -192,8 +192,8 @@ func NewContextProviderWithSnapshot(packet Packet, snapshot graph.Snapshot, pinn
 }
 
 func newContextProvider(packet Packet, resources []Resource, relationships []Relationship, facets []Facet, pinned PinnedTelemetryContext, incident IncidentContext, limits ContextLimits) (*ContextProvider, error) {
-	if packet.AnalysisID == "" || packet.HydratedGraphSHA256 == "" {
-		return nil, errors.New("context provider requires an analysis ID and graph digest")
+	if packet.AnalysisID == "" || packet.HydratedGraphRevision == 0 {
+		return nil, errors.New("context provider requires an analysis ID and graph revision")
 	}
 	defaults := DefaultContextLimits()
 	if limits.IncidentEvents == 0 {
@@ -208,7 +208,7 @@ func newContextProvider(packet Packet, resources []Resource, relationships []Rel
 	if limits.Resources < 1 || limits.Relationships < 1 || limits.Facets < 1 || limits.Telemetry < 1 || limits.IncidentEvents < 1 || limits.Baselines < 1 || limits.PathDepth < 1 {
 		return nil, errors.New("context limits must be positive")
 	}
-	token := AnalysisToken{AnalysisID: packet.AnalysisID, GraphSHA256: packet.HydratedGraphSHA256}
+	token := AnalysisToken{AnalysisID: packet.AnalysisID, GraphRevision: packet.HydratedGraphRevision}
 	if pinned.Token != token {
 		return nil, errors.New("telemetry context token does not match packet")
 	}
@@ -271,7 +271,7 @@ func sameTimeWindow(left, right *detector.TimeWindow) bool {
 
 // Token returns the analysis token every query to this provider must carry.
 func (provider *ContextProvider) Token() AnalysisToken {
-	return AnalysisToken{AnalysisID: provider.packet.AnalysisID, GraphSHA256: provider.packet.HydratedGraphSHA256}
+	return AnalysisToken{AnalysisID: provider.packet.AnalysisID, GraphRevision: provider.packet.HydratedGraphRevision}
 }
 
 // Query answers one template around the query anchors. Results are bounded

@@ -33,8 +33,8 @@
 // deduplicates evidence IDs, groups equal claims onto one record while keeping
 // every contributing assertion, deduplicates identical assertions, and sorts
 // all output. Two inputs containing the same assertion set therefore compile
-// to byte-identical [Snapshot.CanonicalJSON] and the same [Snapshot.Hash],
-// regardless of slice order or duplication.
+// to byte-identical [Snapshot.CanonicalJSON], regardless of slice order or
+// duplication.
 //
 // Relationships use only predicates registered in this package (see
 // [IsRegisteredPredicate]); adding a predicate is a central change that must

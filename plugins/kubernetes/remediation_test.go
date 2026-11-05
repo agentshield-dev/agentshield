@@ -22,7 +22,7 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 )
 
-const remediationTestGraphSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const remediationTestGraphRevision uint64 = 1
 
 func TestKubernetesRemediationPrepareExecuteVerifyAndIdempotency(t *testing.T) {
 	pod := remediationPod("target-uid", "target", map[string]string{"app": "target", "instance": "only"})
@@ -199,7 +199,7 @@ func TestKubernetesRemediationBindsTrustedOwnershipAndProposalCapability(t *test
 		{name: "kind", target: remediation.Target{EntityID: "target", Identity: ClaimForUID("cluster", "v1", "Pod", "target-uid"), Kind: "kubernetes/service"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphSHA256,
+			proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphRevision,
 				remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 				test.target, []string{"evidence"})
 			if err != nil {
@@ -705,7 +705,7 @@ func remediationService(uid, name string, selector map[string]string) *unstructu
 
 func kubernetesGraphSource(proposal remediation.Proposal) remediation.GraphSourceFunc {
 	return func(context.Context) (remediation.GraphView, error) {
-		return remediation.GraphView{SHA256: proposal.GraphSHA256, Snapshot: graph.Snapshot{Resources: []graph.Resource{{
+		return remediation.GraphView{Revision: proposal.GraphRevision, Snapshot: graph.Snapshot{Resources: []graph.Resource{{
 			ID: proposal.Target.EntityID, Kind: proposal.Target.Kind, Identity: proposal.Target.Identity,
 		}}}}, nil
 	}
@@ -735,7 +735,7 @@ func remediationNetworkPolicyWithSpec(t *testing.T, name string, spec networking
 
 func kubernetesRemediationProposal(t *testing.T, uid string) remediation.Proposal {
 	t.Helper()
-	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphSHA256,
+	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphRevision,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Identity: ClaimForUID("cluster", "v1", "Pod", uid), Kind: "kubernetes/pod"}, []string{"evidence"})
 	if err != nil {
@@ -746,7 +746,7 @@ func kubernetesRemediationProposal(t *testing.T, uid string) remediation.Proposa
 
 func kubernetesServiceRemediationProposal(t *testing.T, uid string) remediation.Proposal {
 	t.Helper()
-	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphSHA256,
+	proposal, err := remediation.NewProposal("finding", "analysis", remediationTestGraphRevision,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Identity: ClaimForUID("cluster", "v1", "Service", uid), Kind: "kubernetes/service"}, []string{"evidence"})
 	if err != nil {

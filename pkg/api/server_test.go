@@ -15,10 +15,10 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 	"github.com/agentshield-dev/agentshield/pkg/state"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type fakeStateStore struct {
@@ -50,7 +50,7 @@ func (store *fakeStateStore) QueryResources(_ context.Context, query state.Resou
 	if store.latestError != nil {
 		return state.ResourcePage{}, store.latestError
 	}
-	page := state.ResourcePage{GraphSHA256: store.record.SHA256}
+	page := state.ResourcePage{GraphRevision: store.record.Revision}
 	for _, resource := range store.record.Snapshot.Resources {
 		if query.Kind != "" && resource.Kind != query.Kind || query.Namespace != "" && resourceNamespace(resource) != query.Namespace || query.After != "" && resource.ID <= query.After {
 			continue
@@ -72,7 +72,7 @@ func (store *fakeStateStore) GetResourceDetail(_ context.Context, id string) (st
 	if !found {
 		return state.ResourceDetail{}, state.ErrGraphEntityNotFound
 	}
-	detail := state.ResourceDetail{GraphSHA256: store.record.SHA256, Resource: resource}
+	detail := state.ResourceDetail{GraphRevision: store.record.Revision, Resource: resource}
 	for _, relationship := range store.record.Snapshot.Relationships {
 		if relationship.SubjectID == id || relationship.ObjectID == id {
 			detail.Relationships = append(detail.Relationships, relationship)
@@ -90,7 +90,7 @@ func (store *fakeStateStore) QueryRelationships(_ context.Context, query state.R
 	if store.latestError != nil {
 		return state.RelationshipPage{}, store.latestError
 	}
-	page := state.RelationshipPage{GraphSHA256: store.record.SHA256}
+	page := state.RelationshipPage{GraphRevision: store.record.Revision}
 	for _, relationship := range store.record.Snapshot.Relationships {
 		if query.Predicate != "" && string(relationship.Predicate) != query.Predicate || query.ResourceID != "" && relationship.SubjectID != query.ResourceID && relationship.ObjectID != query.ResourceID || query.After != "" && relationship.ID <= query.After {
 			continue
@@ -112,14 +112,14 @@ func (store *fakeStateStore) GetRelationshipDetail(_ context.Context, id string)
 			if !subjectFound || !objectFound {
 				return state.RelationshipDetail{}, errors.New("relationship endpoint is unresolved")
 			}
-			return state.RelationshipDetail{GraphSHA256: store.record.SHA256, Relationship: relationship, Subject: subject, Object: object}, nil
+			return state.RelationshipDetail{GraphRevision: store.record.Revision, Relationship: relationship, Subject: subject, Object: object}, nil
 		}
 	}
 	return state.RelationshipDetail{}, state.ErrGraphEntityNotFound
 }
 
-func (store *fakeStateStore) GraphRevision(context.Context) (string, error) {
-	return store.record.SHA256, store.revisionError
+func (store *fakeStateStore) GraphRevision(context.Context) (uint64, error) {
+	return store.record.Revision, store.revisionError
 }
 
 func (store *fakeStateStore) CreateManifest(context.Context) (state.GraphManifest, error) {
@@ -136,7 +136,7 @@ func (store *fakeStateStore) Neighborhood(_ context.Context, _ string, depth int
 	store.depth = depth
 	store.direction = direction
 	store.limit = limit
-	return state.Neighborhood{SHA256: store.record.SHA256}, nil
+	return state.Neighborhood{Revision: store.record.Revision}, nil
 }
 
 func (store *fakeStateStore) GetFinding(_ context.Context, findingID string) (state.Finding, error) {
@@ -198,7 +198,7 @@ func TestGraphExplorerAndManifestParity(t *testing.T) {
 
 	graphResponse := httptest.NewRecorder()
 	handler.ServeHTTP(graphResponse, httptest.NewRequest(http.MethodGet, "/api/v1/graph", nil))
-	if graphResponse.Code != http.StatusOK || graphResponse.Header().Get("ETag") != `"abc123"` || !strings.Contains(graphResponse.Body.String(), `"sha256":"abc123"`) {
+	if graphResponse.Code != http.StatusOK || graphResponse.Header().Get("ETag") != `"1"` || !strings.Contains(graphResponse.Body.String(), `"revision":1`) {
 		t.Fatalf("unexpected graph response: code=%d headers=%v body=%s", graphResponse.Code, graphResponse.Header(), graphResponse.Body.String())
 	}
 	manifestResponse := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestGraphExplorerAndManifestParity(t *testing.T) {
 	}
 	neighborhoodResponse := httptest.NewRecorder()
 	handler.ServeHTTP(neighborhoodResponse, httptest.NewRequest(http.MethodGet, "/api/v1/neighborhood?resourceId=00000000-0000-0000-0000-000000000001", nil))
-	if neighborhoodResponse.Code != http.StatusOK || !strings.Contains(neighborhoodResponse.Body.String(), `"sha256":"abc123"`) {
+	if neighborhoodResponse.Code != http.StatusOK || !strings.Contains(neighborhoodResponse.Body.String(), `"revision":1`) {
 		t.Fatalf("unexpected neighborhood response: code=%d body=%s", neighborhoodResponse.Code, neighborhoodResponse.Body.String())
 	}
 	if store.depth != 2 || store.direction != "both" || store.limit != 500 {
@@ -288,7 +288,7 @@ func TestGraphBackedProductQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &fakeStateStore{
-		record: state.GraphView{GeneratedAt: time.Now().UTC(), SHA256: "graph", Snapshot: graph.Snapshot{
+		record: state.GraphView{GeneratedAt: time.Now().UTC(), Revision: 1, Snapshot: graph.Snapshot{
 			Resources: []graph.Resource{
 				{ID: "a", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{AuthorityID: "cluster", ImmutableKey: "v1/pod/a"}, Assertions: []graph.ResourceAssertion{{DisplayName: "worker", Attributes: map[string]string{"namespace": "team-a"}}}},
 				{ID: "b", Kind: "network/destination", Identity: graph.IdentityClaim{AuthorityID: "cluster", ImmutableKey: "metadata"}},
@@ -340,7 +340,7 @@ func TestGraphBackedProductQueries(t *testing.T) {
 	}
 }
 
-func TestGraphSSEPublishesLatestHash(t *testing.T) {
+func TestGraphSSEPublishesLatestRevision(t *testing.T) {
 	store := &fakeStateStore{record: testRecord()}
 	server, err := NewServer(store, nil)
 	if err != nil {
@@ -357,7 +357,7 @@ func TestGraphSSEPublishesLatestHash(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	<-done
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "event: graph") || !strings.Contains(response.Body.String(), `"sha256":"abc123"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "event: graph") || !strings.Contains(response.Body.String(), `"revision":1`) {
 		t.Fatalf("unexpected SSE response: code=%d body=%s", response.Code, response.Body.String())
 	}
 }
@@ -366,11 +366,11 @@ func TestGraphSSEPublishesLatestHash(t *testing.T) {
 type streamingStateStore struct {
 	fakeStateStore
 	mu          sync.Mutex
-	revision    string
+	revision    uint64
 	latestCalls int
 }
 
-func (store *streamingStateStore) GraphRevision(context.Context) (string, error) {
+func (store *streamingStateStore) GraphRevision(context.Context) (uint64, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.revision, nil
@@ -383,11 +383,11 @@ func (store *streamingStateStore) CurrentGraph(context.Context) (state.GraphView
 	return store.record, nil
 }
 
-func (store *streamingStateStore) publish(revision, digest string) {
+func (store *streamingStateStore) publish(revision uint64) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.revision = revision
-	store.record.SHA256 = digest
+	store.record.Revision = revision
 }
 
 func (store *streamingStateStore) loads() int {
@@ -452,55 +452,53 @@ func awaitLine(t *testing.T, lines <-chan string, want string) {
 }
 
 func TestGraphSSEOutlivesServerWriteTimeout(t *testing.T) {
-	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: "1"}
+	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: 1}
 	server, err := NewServer(store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	server.eventPollInterval = 10 * time.Millisecond
 	lines := openEventStream(t, server, 100*time.Millisecond)
-	awaitLine(t, lines, `"sha256":"abc123"`)
+	awaitLine(t, lines, `"revision":1`)
 	time.Sleep(300 * time.Millisecond)
-	store.publish("2", "def456")
-	awaitLine(t, lines, `"sha256":"def456"`)
+	store.publish(2)
+	awaitLine(t, lines, `"revision":2`)
 }
 
 func TestGraphSSESendsKeepAliveComments(t *testing.T) {
-	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: "1"}
+	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: 1}
 	server, err := NewServer(store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	server.eventKeepAliveInterval = 20 * time.Millisecond
 	lines := openEventStream(t, server, time.Minute)
-	awaitLine(t, lines, `"sha256":"abc123"`)
+	awaitLine(t, lines, `"revision":1`)
 	awaitLine(t, lines, ": keepalive")
 }
 
 func TestGraphSSELoadsGraphOnlyWhenRevisionChanges(t *testing.T) {
-	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: "1"}
+	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: 1}
 	server, err := NewServer(store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	server.eventPollInterval = 5 * time.Millisecond
 	lines := openEventStream(t, server, time.Minute)
-	awaitLine(t, lines, `"sha256":"abc123"`)
+	awaitLine(t, lines, `"revision":1`)
 	time.Sleep(100 * time.Millisecond)
 	if loads := store.loads(); loads != 1 {
 		t.Fatalf("Latest called %d times with an unchanged revision, want 1", loads)
 	}
-	// A new revision with the same digest reloads the graph but sends nothing.
-	store.publish("2", "abc123")
-	store.publish("3", "def456")
-	awaitLine(t, lines, `"sha256":"def456"`)
-	if loads := store.loads(); loads < 2 || loads > 3 {
-		t.Fatalf("Latest called %d times across two revisions, want 2 or 3", loads)
+	store.publish(2)
+	awaitLine(t, lines, `"revision":2`)
+	if loads := store.loads(); loads != 2 {
+		t.Fatalf("Latest called %d times across two revisions, want 2", loads)
 	}
 }
 
 func TestCloseStreamsLetsShutdownFinish(t *testing.T) {
-	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: "1"}
+	store := &streamingStateStore{fakeStateStore: fakeStateStore{record: testRecord()}, revision: 1}
 	server, err := NewServer(store, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -627,7 +625,7 @@ func TestFindingsAPIQueriesAndPaginates(t *testing.T) {
 func TestFindingRemediationRequiresPreparedExactPlanApproval(t *testing.T) {
 	proposal := testRemediationProposal(t)
 	store := &fakeStateStore{findings: []state.Finding{{
-		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphSHA256: proposal.GraphSHA256,
+		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphRevision: proposal.GraphRevision,
 		Category: "new_exposure", Severity: "high",
 		ModelUncertainty: "low", Summary: "Unexpected ingress", SignalIDs: []string{"signal"},
 		Remediations: []remediation.Proposal{proposal}, Status: state.FindingStatusActive, CreatedAt: time.Now().UTC(),
@@ -677,7 +675,7 @@ func TestFindingRemediationRequiresPreparedExactPlanApproval(t *testing.T) {
 func TestFindingRemediationApprovalOutlivesRequestAndReportsUnverifiedExecution(t *testing.T) {
 	proposal := testRemediationProposal(t)
 	store := &fakeStateStore{findings: []state.Finding{{
-		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphSHA256: proposal.GraphSHA256,
+		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphRevision: proposal.GraphRevision,
 		Category: "new_exposure", Severity: "high", ModelUncertainty: "low", Summary: "Unexpected ingress",
 		SignalIDs: []string{"signal"}, Remediations: []remediation.Proposal{proposal}, Status: state.FindingStatusActive, CreatedAt: time.Now().UTC(),
 	}}}
@@ -720,7 +718,7 @@ func TestFindingRemediationApprovalOutlivesRequestAndReportsUnverifiedExecution(
 func TestLoopbackHostCheck(t *testing.T) {
 	proposal := testRemediationProposal(t)
 	store := &fakeStateStore{record: testRecord(), findings: []state.Finding{{
-		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphSHA256: proposal.GraphSHA256,
+		ID: proposal.FindingID, AnalysisID: proposal.AnalysisID, GraphRevision: proposal.GraphRevision,
 		Category: "new_exposure", Severity: "high", ModelUncertainty: "low", Summary: "Unexpected ingress",
 		SignalIDs: []string{"signal"}, Remediations: []remediation.Proposal{proposal}, Status: state.FindingStatusActive, CreatedAt: time.Now().UTC(),
 	}}}
@@ -870,7 +868,7 @@ func serveJSON(t *testing.T, handler http.Handler, method, path, body string) *h
 func testRemediationProposal(t *testing.T) remediation.Proposal {
 	t.Helper()
 	proposal, err := remediation.NewProposal(
-		"finding:test", "analysis:test", strings.Repeat("a", 64),
+		"finding:test", "analysis:test", 1,
 		remediation.Suggestion{Intent: remediation.IntentNetworkDeclareIngressIsolation, TargetEntityIDs: []string{"target"}, SupportingIDs: []string{"evidence"}},
 		remediation.Target{EntityID: "target", Kind: "kubernetes/pod", Identity: graph.IdentityClaim{
 			Scheme: graph.IdentityScheme{Group: "kubernetes.io", Version: "v1", Kind: "Object"}, AuthorityID: "cluster", ImmutableKey: "v1/pod/uid",
@@ -894,7 +892,7 @@ func assertStatus(t *testing.T, handler http.Handler, path string, want int) {
 
 func testRecord() state.GraphView {
 	return state.GraphView{
-		GeneratedAt: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC), SHA256: "abc123",
+		GeneratedAt: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC), Revision: 1,
 		Snapshot: graph.Snapshot{Resources: []graph.Resource{}, Facets: []graph.Facet{}, Relationships: []graph.Relationship{}, Telemetry: []graph.TelemetryEvent{}},
 	}
 }

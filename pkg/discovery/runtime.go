@@ -3,10 +3,13 @@ package discovery
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"maps"
+	"reflect"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -23,23 +26,59 @@ import (
 // RuntimeService is the unscoped host runtime shared by all plugins. Plugins
 // never see it directly; Manager wraps it in a per-instance scoped runtime.
 type RuntimeService struct {
-	hub   *Hub
-	store runtimeStore
+	hub          *Hub
+	store        runtimeStore
+	config       RuntimeConfig
+	publications *publicationSession
 }
 
 // runtimeStore is the part of [state.Store] the runtime uses.
 type runtimeStore interface {
 	RecordNative(context.Context, state.NativeEvent) error
-	ReplaceContribution(context.Context, state.Contribution) (state.GraphView, error)
+	ReplaceContribution(context.Context, state.Contribution) (state.Publication, error)
+	ApplyContributionDelta(context.Context, state.ContributionDelta) (state.Publication, error)
 	ContributionGeneration(context.Context, string, string) (uint64, error)
+	NormalizeIdentityClaim(graph.IdentityClaim) (graph.IdentityClaim, error)
+}
+
+const (
+	defaultCheckpointInterval = 15 * time.Minute
+	defaultCheckpointDeltas   = 1000
+)
+
+// RuntimeConfig controls authoritative contribution checkpoint frequency.
+type RuntimeConfig struct {
+	CheckpointInterval time.Duration
+	CheckpointDeltas   uint64
+}
+
+func (config RuntimeConfig) withDefaults() RuntimeConfig {
+	if config.CheckpointInterval == 0 {
+		config.CheckpointInterval = defaultCheckpointInterval
+	}
+	if config.CheckpointDeltas == 0 {
+		config.CheckpointDeltas = defaultCheckpointDeltas
+	}
+	return config
+}
+
+func (config RuntimeConfig) validate() error {
+	if config.CheckpointInterval <= 0 || config.CheckpointDeltas == 0 {
+		return errors.New("contribution checkpoint interval and delta count must be positive")
+	}
+	return nil
 }
 
 // NewRuntime returns a runtime backed by store with a fresh in-memory hub.
-func NewRuntime(store *state.Store) (*RuntimeService, error) {
+func NewRuntime(store *state.Store, config RuntimeConfig) (*RuntimeService, error) {
 	if store == nil {
 		return nil, errors.New("state store is required")
 	}
-	return &RuntimeService{hub: NewHub(), store: store}, nil
+	config = config.withDefaults()
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
+	return &RuntimeService{hub: NewHub(), store: store, config: config, publications: newPublicationSession()}, nil
 }
 
 // Publish records a durable receipt before delivering change. A change that
@@ -111,15 +150,286 @@ func (r *RuntimeService) Subscribe(ctx context.Context, collection string) (<-ch
 // for (plugin, source, output.Name). A failure is logged here because some
 // plugins only degrade their health after one instead of stopping.
 func (r *RuntimeService) ReplaceContribution(ctx context.Context, pluginID, sourceID string, output ContributionOutput) error {
+	_, err := r.publishContribution(ctx, pluginID, sourceID, output, r.publications)
+	return err
+}
+
+type contributionPublication struct {
+	output          ContributionOutput
+	checkpointAt    time.Time
+	checkpointAfter time.Duration
+	deltas          uint64
+	forceCheckpoint bool
+}
+
+type publicationSession struct {
+	mu            sync.Mutex
+	contributions map[publicationKey]contributionPublication
+}
+
+type publicationKey struct {
+	pluginID, sourceID, name string
+}
+
+func newPublicationSession() *publicationSession {
+	return &publicationSession{contributions: make(map[publicationKey]contributionPublication)}
+}
+
+const checkpointStaggerDivisor = 8
+
+func initialCheckpointInterval(maximum time.Duration, key publicationKey) time.Duration {
+	window := maximum / checkpointStaggerDivisor
+	if window == 0 {
+		return maximum
+	}
+	hash := fnv.New64a()
+	for _, value := range []string{key.pluginID, key.sourceID, key.name} {
+		_, _ = hash.Write([]byte(value))
+		_, _ = hash.Write([]byte{0})
+	}
+	return maximum - time.Duration(hash.Sum64()%uint64(window+1))
+}
+
+func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sourceID string, output ContributionOutput, session *publicationSession) (string, error) {
+	if session == nil {
+		return "checkpoint", r.replaceContribution(ctx, pluginID, sourceID, output)
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	key := publicationKey{pluginID: pluginID, sourceID: sourceID, name: output.Name}
+	previous, exists := session.contributions[key]
+	if exists && output.Generation == previous.output.Generation {
+		if !reflect.DeepEqual(output.Input, previous.output.Input) {
+			return "delta", fmt.Errorf("contribution generation %d conflicts with the accepted output", output.Generation)
+		}
+		return "noop", nil
+	}
+	now := time.Now()
+	reason := ""
+	switch {
+	case !exists:
+		reason = "startup"
+	case previous.forceCheckpoint:
+		reason = "recovery"
+	case previous.deltas >= r.config.CheckpointDeltas:
+		reason = "delta_limit"
+	case now.Sub(previous.checkpointAt) >= previous.checkpointAfter:
+		reason = "interval"
+	}
+	if reason != "" {
+		if err := r.replaceContribution(ctx, pluginID, sourceID, output); err != nil {
+			return "checkpoint", err
+		}
+		checkpointAfter := r.config.CheckpointInterval
+		if reason == "startup" {
+			checkpointAfter = initialCheckpointInterval(checkpointAfter, key)
+		}
+		session.contributions[key] = contributionPublication{output: cloneContributionOutput(output), checkpointAt: now, checkpointAfter: checkpointAfter}
+		slog.DebugContext(ctx, "published authoritative contribution checkpoint",
+			"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "reason", reason)
+		return "checkpoint", nil
+	}
+	added, retracted, err := contributionInputDelta(previous.output.Input, output.Input, r.store.NormalizeIdentityClaim)
+	if err != nil {
+		return "delta", err
+	}
+	_, err = r.store.ApplyContributionDelta(ctx, state.ContributionDelta{
+		PluginID: pluginID, SourceID: sourceID, Name: output.Name,
+		BaseGeneration: previous.output.Generation, Generation: output.Generation,
+		Added: added, Retracted: retracted, SourceObservedAt: output.SourceObservedAt,
+		Ready: output.Ready, SourceHealth: output.SourceHealth,
+	})
+	if err != nil {
+		if errors.Is(err, state.ErrContributionDeltaMembershipMismatch) {
+			if checkpointErr := r.replaceContribution(ctx, pluginID, sourceID, output); checkpointErr == nil {
+				session.contributions[key] = contributionPublication{
+					output: cloneContributionOutput(output), checkpointAt: now, checkpointAfter: r.config.CheckpointInterval,
+				}
+				slog.DebugContext(ctx, "published authoritative contribution checkpoint",
+					"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "reason", "membership_drift")
+				return "checkpoint", nil
+			}
+			previous.forceCheckpoint = true
+			session.contributions[key] = previous
+		}
+		if errors.Is(err, state.ErrContributionDeltaBaseMismatch) {
+			previous.forceCheckpoint = true
+			session.contributions[key] = previous
+		}
+		r.logContributionFailure(ctx, pluginID, sourceID, output, err)
+		return "delta", err
+	}
+	previous.output = cloneContributionOutput(output)
+	previous.deltas++
+	session.contributions[key] = previous
+	return "delta", nil
+}
+
+func (r *RuntimeService) replaceContribution(ctx context.Context, pluginID, sourceID string, output ContributionOutput) error {
 	_, err := r.store.ReplaceContribution(ctx, state.Contribution{
 		PluginID: pluginID, SourceID: sourceID, Name: output.Name, Generation: output.Generation, Input: output.Input,
 		SourceObservedAt: output.SourceObservedAt, Ready: output.Ready, SourceHealth: output.SourceHealth,
 	})
-	if err != nil && ctx.Err() == nil {
+	if err != nil {
+		r.logContributionFailure(ctx, pluginID, sourceID, output, err)
+	}
+	return err
+}
+
+func (r *RuntimeService) logContributionFailure(ctx context.Context, pluginID, sourceID string, output ContributionOutput, err error) {
+	if ctx.Err() == nil {
 		slog.Error("contribution publication failed",
 			"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "error", err)
 	}
-	return err
+}
+
+func contributionInputDelta(previous, next graph.Input, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) (graph.Input, graph.Input, error) {
+	addedResources, retractedResources, err := assertionDelta(previous.Resources, next.Resources, normalize)
+	if err != nil {
+		return graph.Input{}, graph.Input{}, err
+	}
+	addedFacets, retractedFacets, err := assertionDelta(previous.Facets, next.Facets, normalize)
+	if err != nil {
+		return graph.Input{}, graph.Input{}, err
+	}
+	addedRelationships, retractedRelationships, err := assertionDelta(previous.Relationships, next.Relationships, normalize)
+	if err != nil {
+		return graph.Input{}, graph.Input{}, err
+	}
+	addedTelemetry, retractedTelemetry, err := assertionDelta(previous.Telemetry, next.Telemetry, normalize)
+	if err != nil {
+		return graph.Input{}, graph.Input{}, err
+	}
+	return graph.Input{
+		Resources: addedResources, Facets: addedFacets, Relationships: addedRelationships, Telemetry: addedTelemetry,
+	}, graph.Input{
+		Resources: retractedResources, Facets: retractedFacets, Relationships: retractedRelationships, Telemetry: retractedTelemetry,
+	}, nil
+}
+
+func assertionDelta[T any](previous, next []T, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) ([]T, []T, error) {
+	previousKeys := make(map[string]struct{}, len(previous))
+	for _, assertion := range previous {
+		key, err := assertionDeltaKey(assertion, normalize)
+		if err != nil {
+			return nil, nil, err
+		}
+		previousKeys[key] = struct{}{}
+	}
+	nextKeys := make(map[string]struct{}, len(next))
+	var added []T
+	for _, assertion := range next {
+		key, err := assertionDeltaKey(assertion, normalize)
+		if err != nil {
+			return nil, nil, err
+		}
+		nextKeys[key] = struct{}{}
+		if _, exists := previousKeys[key]; !exists {
+			added = append(added, assertion)
+		}
+	}
+	var retracted []T
+	for _, assertion := range previous {
+		key, err := assertionDeltaKey(assertion, normalize)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, exists := nextKeys[key]; !exists {
+			retracted = append(retracted, assertion)
+		}
+	}
+	return added, retracted, nil
+}
+
+func assertionDeltaKey(assertion any, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) (string, error) {
+	switch value := assertion.(type) {
+	case graph.ResourceAssertion:
+		claim, err := normalize(value.Claim)
+		if err != nil {
+			return "", err
+		}
+		value.Claim = claim
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.FacetAssertion:
+		resource, err := normalize(value.Resource)
+		if err != nil {
+			return "", err
+		}
+		value.Resource = resource
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.RelationshipAssertion:
+		subject, err := normalize(value.Subject)
+		if err != nil {
+			return "", err
+		}
+		object, err := normalize(value.Object)
+		if err != nil {
+			return "", err
+		}
+		value.Subject = subject
+		value.Object = object
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.TelemetryAssertion:
+		subject, err := normalize(value.Subject)
+		if err != nil {
+			return "", err
+		}
+		object, err := normalize(value.Object)
+		if err != nil {
+			return "", err
+		}
+		value.Subject = subject
+		value.Object = object
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	}
+	encoded, err := json.Marshal(assertion)
+	return string(encoded), err
+}
+
+func normalizedEvidenceIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func cloneContributionOutput(output ContributionOutput) ContributionOutput {
+	output.Input.Resources = slices.Clone(output.Input.Resources)
+	for index := range output.Input.Resources {
+		output.Input.Resources[index].Attributes = maps.Clone(output.Input.Resources[index].Attributes)
+		output.Input.Resources[index].EvidenceIDs = slices.Clone(output.Input.Resources[index].EvidenceIDs)
+	}
+	output.Input.Facets = slices.Clone(output.Input.Facets)
+	for index := range output.Input.Facets {
+		output.Input.Facets[index].Attributes = maps.Clone(output.Input.Facets[index].Attributes)
+		output.Input.Facets[index].EvidenceIDs = slices.Clone(output.Input.Facets[index].EvidenceIDs)
+	}
+	output.Input.Relationships = slices.Clone(output.Input.Relationships)
+	for index := range output.Input.Relationships {
+		output.Input.Relationships[index].Properties = maps.Clone(output.Input.Relationships[index].Properties)
+		output.Input.Relationships[index].EvidenceIDs = slices.Clone(output.Input.Relationships[index].EvidenceIDs)
+	}
+	output.Input.Telemetry = slices.Clone(output.Input.Telemetry)
+	for index := range output.Input.Telemetry {
+		output.Input.Telemetry[index].Properties = maps.Clone(output.Input.Telemetry[index].Properties)
+		output.Input.Telemetry[index].EvidenceIDs = slices.Clone(output.Input.Telemetry[index].EvidenceIDs)
+	}
+	return output
 }
 
 // ContributionGeneration returns the highest durable generation for
@@ -189,7 +499,8 @@ type scopedRuntime struct {
 	progress *progress.Reporter
 	// published remembers the instance's last stored output per contribution
 	// so the manager can mark it degraded when the instance fails.
-	published *publishedOutputs
+	published    *publishedOutputs
+	publications *publicationSession
 }
 
 // publishedOutputs is the last successfully stored output of each named
@@ -205,7 +516,7 @@ func (p *publishedOutputs) record(output ContributionOutput) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.byName[output.Name] = output
+	p.byName[output.Name] = cloneContributionOutput(output)
 }
 
 func (p *publishedOutputs) snapshot() []ContributionOutput {
@@ -250,11 +561,15 @@ func (r scopedRuntime) ReplaceContribution(ctx context.Context, pluginID, source
 	if pluginID != r.pluginID || sourceID != r.sourceID {
 		return errors.New("contribution provenance does not match the scoped plugin instance")
 	}
-	if err := r.runtime.ReplaceContribution(ctx, pluginID, sourceID, output); err != nil {
+	mode, err := r.runtime.publishContribution(ctx, pluginID, sourceID, output, r.publications)
+	if err != nil {
 		return err
 	}
+	if mode == "noop" {
+		return nil
+	}
 	r.published.record(output)
-	r.count("contributions")
+	r.count("contribution_" + mode)
 	return nil
 }
 
@@ -402,9 +717,12 @@ func (m *Manager) Run(ctx context.Context) error {
 // nil, restarting it after each failure.
 func (m *Manager) supervise(ctx context.Context, instance managedPlugin, descriptor Descriptor, reporter *progress.Reporter) {
 	published := &publishedOutputs{byName: make(map[string]ContributionOutput)}
-	runtime := scopedRuntime{runtime: m.runtime, pluginID: descriptor.ID, sourceID: instance.sourceID, progress: reporter, published: published}
 	delay := m.restartBackoff
 	for attempt := 1; ; attempt++ {
+		runtime := scopedRuntime{
+			runtime: m.runtime, pluginID: descriptor.ID, sourceID: instance.sourceID,
+			progress: reporter, published: published, publications: newPublicationSession(),
+		}
 		if attempt > 1 {
 			m.runtime.hub.beginResync(instance.sourceID, descriptor.Publishes)
 		}
@@ -473,7 +791,7 @@ func (m *Manager) degrade(ctx context.Context, pluginID, sourceID string, publis
 		}
 		output.Generation = generation + 1
 		output.SourceHealth = state.SourceHealthDegraded
-		if err := m.runtime.ReplaceContribution(ctx, pluginID, sourceID, output); err == nil {
+		if err := m.runtime.replaceContribution(ctx, pluginID, sourceID, output); err == nil {
 			published.record(output)
 		}
 	}
