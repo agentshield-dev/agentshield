@@ -23,7 +23,7 @@
 //
 // Drafts never change the active ruleset. pkg/detector loads them as resource
 // rules in shadow mode, where matches are only recorded, until an operator
-// approves the job (state.Store.ReviewResourceRuleJob); approved rules run in
+// approves the job ([state.Store.ReviewResourceRuleJobRules]); approved rules run in
 // active mode and their matches become findings. The model has no database,
 // graph-publication, or review access, and nothing in this package approves
 // rules. Running a rule never calls a model. See
