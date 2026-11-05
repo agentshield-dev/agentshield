@@ -38,7 +38,7 @@ func WithRules(store RuleStore, writable bool) Option {
 // the API. It is audit metadata, not an identity.
 const ruleActor = "api/web-ui"
 
-// draftListLimit bounds the draft list; the UI filters by resource client-side.
+// draftListLimit bounds the draft list.
 const draftListLimit = 500
 
 var (

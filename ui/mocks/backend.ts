@@ -800,7 +800,7 @@ export class FakeBackend {
 			throw new ApiError(400, 'review rule draft', 'decision must be approved or rejected');
 		}
 		if (job.draft.status !== 'completed') {
-			throw new ApiError(409, 'review rule draft', 'Resource rule job is not a completed proposal');
+			throw new ApiError(409, 'review rule draft', 'Resource rule job is not reviewable');
 		}
 		if (decision === 'approved' && !job.draft.currentRevision) {
 			throw new ApiError(

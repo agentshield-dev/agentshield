@@ -447,6 +447,9 @@ func (s *Store) RenewResourceRuleJob(ctx context.Context, jobID int64, workerID 
 	return result.RowsAffected() == 1, nil
 }
 
+// MaxResourceRuleProposalRules bounds rules stored in one authoring proposal.
+const MaxResourceRuleProposalRules = 3
+
 // CompleteResourceRuleJob stores the proposal and completes the job. It
 // fails if workerID no longer holds the lease, so a worker whose lease expired
 // cannot overwrite the result of the worker that reclaimed it.
@@ -461,6 +464,9 @@ func (s *Store) CompleteResourceRuleJob(ctx context.Context, jobID int64, worker
 	}
 	if err := json.Unmarshal(proposal, &decoded); err != nil {
 		return fmt.Errorf("decode resource rule proposal: %w", err)
+	}
+	if len(decoded.Rules) > MaxResourceRuleProposalRules {
+		return fmt.Errorf("resource rule proposal cannot contain more than %d rules", MaxResourceRuleProposalRules)
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -600,7 +606,7 @@ type ResourceRuleJobSummary struct {
 // Resource rule job errors.
 var (
 	ErrResourceRuleJobNotFound      = errors.New("resource rule authoring job not found")
-	ErrResourceRuleJobNotReviewable = errors.New("resource rule job is not a completed proposal")
+	ErrResourceRuleJobNotReviewable = errors.New("resource rule job is not reviewable")
 	ErrResourceRuleJobInProgress    = errors.New("resource rule authoring is already in progress")
 	ErrResourceRuleSelectionInvalid = errors.New("resource rule selection is invalid")
 )
@@ -922,7 +928,7 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 				FROM jsonb_array_elements(
 					CASE WHEN jsonb_typeof(proposal->'rules') = 'array' THEN proposal->'rules' ELSE '[]'::jsonb END
 				) candidate
-				LIMIT 4
+				LIMIT $2
 			) expanded
 			WHERE expanded.candidate->'rule'->>'scopeResourceId' = resource_id::text
 			AND (
@@ -934,7 +940,7 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 		SELECT resource_id::text, review_status, proposal->'approvedRuleIds', candidate
 		FROM candidates
 		ORDER BY (review_status = 'approved') DESC, candidate->'rule'->>'id', job_id
-		LIMIT CASE WHEN $1 > 0 THEN (2 * $1) + 1 END`, limit)
+		LIMIT CASE WHEN $1 > 0 THEN (2 * $1) + 1 END`, limit, MaxResourceRuleProposalRules+1)
 	if err != nil {
 		return nil, fmt.Errorf("read resource rules: %w", err)
 	}

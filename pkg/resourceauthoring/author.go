@@ -29,7 +29,7 @@ var authoringPrompt string
 
 // maxDraftRules bounds one proposal; the tool budget leaves room to correct each rejected rule once.
 const (
-	maxDraftRules            = 3
+	maxDraftRules            = state.MaxResourceRuleProposalRules
 	ModelAuthorInputMaxBytes = 96 << 10
 )
 

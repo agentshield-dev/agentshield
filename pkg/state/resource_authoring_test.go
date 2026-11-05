@@ -657,6 +657,32 @@ func TestPostgreSQLDeploymentJobClaimLeaseRetryAndCompletion(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLCompleteResourceRuleJobRejectsOversizedProposal(t *testing.T) {
+	store, _ := integrationStore(t)
+	ctx := context.Background()
+	if _, err := store.ReplaceContribution(ctx, deploymentContribution("deployments", 1, "deployment-uid", "payments")); err != nil {
+		t.Fatal(err)
+	}
+	job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0)
+	if err != nil || !claimed {
+		t.Fatalf("job=%#v claimed=%t err=%v", job, claimed, err)
+	}
+	rules := make([]map[string]any, MaxResourceRuleProposalRules+1)
+	for index := range rules {
+		rules[index] = map[string]any{"rule": detector.Rule{
+			ID: fmt.Sprintf("resource/rule-%d", index), Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+			Type: "resource", Kind: job.Context.Kind, Expression: "true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+		}}
+	}
+	proposal, err := json.Marshal(map[string]any{"rules": rules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker", proposal); err == nil {
+		t.Fatal("completed an oversized rule proposal")
+	}
+}
+
 func TestPostgreSQLDeploymentJobLeaseReclaimAfterCrash(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
