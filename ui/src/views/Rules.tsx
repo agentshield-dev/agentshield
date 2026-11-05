@@ -295,6 +295,11 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 				</div>
 			</header>
 			<MetricCards label="Rule summary" metrics={metrics} />
+			{loaded.data?.resourceRulesTruncated ? (
+				<p className="muted">
+					The detector rule capacity is full; additional authored rules are not loaded.
+				</p>
+			) : null}
 			<div className="toolrow panel catalog-controls">
 				<div className="collection-tabs" role="tablist" aria-label="Rule records">
 					{tabs.map(item => (

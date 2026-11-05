@@ -141,7 +141,7 @@ func resourceAuthoringAttribute(key string) bool {
 		"kubernetes/ingress-class", "kubernetes/hosts", "kubernetes/backends", "kubernetes/unresolved-backends", "kubernetes/tls",
 		"kubernetes/pod-selector", "kubernetes/policy-types", "kubernetes/ingress-rule-count", "kubernetes/egress-rule-count",
 		"kubernetes/ingress-rules", "kubernetes/egress-rules", "kubernetes/omitted-ingress-rules", "kubernetes/omitted-egress-rules",
-		"kubernetes/gateway-class", "kubernetes/addresses", "kubernetes/listeners", "kubernetes/status-addresses",
+		"kubernetes/gateway-class", "kubernetes/addresses", "kubernetes/listeners", "kubernetes/listener-status", "kubernetes/status-addresses",
 		"kubernetes/hostnames", "kubernetes/parent-refs", "kubernetes/rules", "kubernetes/parent-status", "kubernetes/unresolved-references",
 		"kubernetes/rbac-role-ref-api-group", "kubernetes/rbac-role-ref-kind", "kubernetes/rbac-role-ref-name",
 		"kubernetes/rbac-subjects", "kubernetes/rbac-subjects-omitted":

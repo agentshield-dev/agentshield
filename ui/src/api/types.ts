@@ -318,6 +318,7 @@ export interface RulesResponse {
 	activation: { revision: number; rulesetId: string } | null;
 	rules: List<DetectorRule>;
 	resourceRules: List<ResourceRule>;
+	resourceRulesTruncated?: boolean;
 }
 
 export type RuleDraftStatus = 'queued' | 'running' | 'retryable' | 'completed' | 'failed';

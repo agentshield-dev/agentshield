@@ -16,7 +16,7 @@ import (
 // implements it.
 type RuleStore interface {
 	ReadActiveDetectorRuleset(context.Context) (detector.Activation, error)
-	ReadResourceRules(context.Context) ([]detector.ResourceRule, error)
+	ReadResourceRulesForDetector(context.Context) ([]detector.ResourceRule, error)
 	ListResourceRuleJobs(context.Context, int, string) ([]state.ResourceRuleJobSummary, error)
 	ResourceRuleJobStatus(context.Context, int64) (state.ResourceRuleJobSummary, bool, error)
 	ResourceRuleProposal(context.Context, int64) (json.RawMessage, bool, error)
@@ -48,9 +48,10 @@ var (
 
 type rulesResponse struct {
 	// Activation is null when no ruleset has been activated.
-	Activation    *rulesActivation        `json:"activation"`
-	Rules         []detector.Rule         `json:"rules"`
-	ResourceRules []detector.ResourceRule `json:"resourceRules"`
+	Activation             *rulesActivation        `json:"activation"`
+	Rules                  []detector.Rule         `json:"rules"`
+	ResourceRules          []detector.ResourceRule `json:"resourceRules"`
+	ResourceRulesTruncated bool                    `json:"resourceRulesTruncated,omitempty"`
 }
 
 type rulesActivation struct {
@@ -91,10 +92,14 @@ func (server *Server) handleRules(writer http.ResponseWriter, request *http.Requ
 			response.Rules = activation.Ruleset.Rules
 		}
 	}
-	resourceRules, err := server.rules.ReadResourceRules(request.Context())
+	resourceRules, err := server.rules.ReadResourceRulesForDetector(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "read resource rules", err)
 		return
+	}
+	if len(resourceRules) > detector.MaxResourceRules {
+		response.ResourceRulesTruncated = true
+		resourceRules = resourceRules[:detector.MaxResourceRules]
 	}
 	if resourceRules != nil {
 		response.ResourceRules = resourceRules

@@ -32,7 +32,7 @@ func (store *fakeRuleStore) ReadActiveDetectorRuleset(context.Context) (detector
 	return store.activation, nil
 }
 
-func (store *fakeRuleStore) ReadResourceRules(context.Context) ([]detector.ResourceRule, error) {
+func (store *fakeRuleStore) ReadResourceRulesForDetector(context.Context) ([]detector.ResourceRule, error) {
 	return store.workload, nil
 }
 
@@ -46,6 +46,16 @@ func (store *fakeRuleStore) ListResourceRuleJobs(_ context.Context, _ int, resou
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
+}
+
+func TestRulesRouteReportsDetectorRuleTruncation(t *testing.T) {
+	store := newRuleStore()
+	store.workload = make([]detector.ResourceRule, detector.MaxResourceRules+1)
+	response := serveRuleRequest(ruleTestServer(t, store, false), http.MethodGet, "/api/v1/rules", "")
+	var body rulesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.ResourceRules) != detector.MaxResourceRules || !body.ResourceRulesTruncated {
+		t.Fatalf("rules=%d truncated=%t err=%v", len(body.ResourceRules), body.ResourceRulesTruncated, err)
+	}
 }
 
 func (store *fakeRuleStore) ResourceRuleJobStatus(_ context.Context, id int64) (state.ResourceRuleJobSummary, bool, error) {

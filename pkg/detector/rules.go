@@ -329,8 +329,17 @@ func (engine *Engine) Evaluate(ctx context.Context, events []Event) (Result, err
 		omitted["events"] = len(events) - MaxEvaluationEvents
 		events = events[:MaxEvaluationEvents]
 	}
+	shadowSignals := make([]InvestigationSignal, 0, min(len(events), MaxEvaluationSignals))
 	add := func(signals ...InvestigationSignal) {
 		for _, signal := range signals {
+			if signal.RuleMode == RuleModeShadow {
+				if len(shadowSignals) >= MaxEvaluationSignals {
+					omitted["signals"]++
+					continue
+				}
+				shadowSignals = append(shadowSignals, signal)
+				continue
+			}
 			if len(result.Signals) >= MaxEvaluationSignals {
 				omitted["signals"]++
 				continue
@@ -372,6 +381,11 @@ func (engine *Engine) Evaluate(ctx context.Context, events []Event) (Result, err
 			return Result{}, err
 		}
 		add(matched...)
+	}
+	remaining := MaxEvaluationSignals - len(result.Signals)
+	result.Signals = append(result.Signals, shadowSignals[:min(len(shadowSignals), remaining)]...)
+	if shadowOmitted := len(shadowSignals) - remaining; shadowOmitted > 0 {
+		omitted["signals"] += shadowOmitted
 	}
 	slices.SortFunc(result.Signals, func(left, right InvestigationSignal) int { return strings.Compare(left.ID, right.ID) })
 	result.Signals = slices.CompactFunc(result.Signals, func(left, right InvestigationSignal) bool { return left.ID == right.ID })

@@ -55,6 +55,11 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 	return (
 		<section className="detail-section" aria-label="Detection rules">
 			<h3>Detection rules · {rules.length}</h3>
+			{loaded.data?.resourceRulesTruncated ? (
+				<p className="muted">
+					The detector rule capacity is full; additional authored rules are not loaded.
+				</p>
+			) : null}
 			{error ? (
 				<p className="approval-error">{error.message}</p>
 			) : rules.length ? (

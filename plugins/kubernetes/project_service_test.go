@@ -211,6 +211,7 @@ func TestResourceAuthoringContextTracksSupportedResourceAttributes(t *testing.T)
 		{name: "Ingress", key: "kubernetes/backends"},
 		{name: "NetworkPolicy", key: "kubernetes/ingress-rules"},
 		{name: "HTTPRoute", key: "kubernetes/rules"},
+		{name: "Gateway status", key: "kubernetes/listener-status"},
 		{name: "Service", key: "kubernetes/ports"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

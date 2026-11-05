@@ -62,6 +62,40 @@ func TestResourceRulesSignalActiveAndShadowMatches(t *testing.T) {
 	}
 }
 
+func TestResourceRuleShadowSignalsCannotDisplaceActiveSignals(t *testing.T) {
+	ctx := context.Background()
+	repository := resourceRuleRepository{
+		ruleRepository: ruleRepository{activation: Activation{Revision: 1, Ruleset: DefaultRuleset()}},
+		rules: []ResourceRule{
+			testResourceRule("deployment/deployment-a/rule-1", "deployment-a", RuleModeActive),
+			testResourceRule("deployment/deployment-b/rule-1", "deployment-b", RuleModeShadow),
+		},
+	}
+	engine, err := Load(ctx, repository, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]Event, MaxEvaluationSignals+1)
+	for index := range MaxEvaluationSignals {
+		events[index] = testEvent()
+		events[index].ID = fmt.Sprintf("shadow-%04d", index)
+		events[index].AnchorIDs, events[index].SubjectIDs = []string{"deployment-b", "destination"}, []string{"deployment-b"}
+	}
+	events[MaxEvaluationSignals] = testEvent()
+	result, err := engine.Evaluate(ctx, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Signals) != MaxEvaluationSignals || result.Omitted["signals"] != 1 {
+		t.Fatalf("signals=%d omitted=%#v", len(result.Signals), result.Omitted)
+	}
+	if !slices.ContainsFunc(result.Signals, func(signal InvestigationSignal) bool {
+		return signal.RuleID == "deployment/deployment-a/rule-1" && signal.RuleMode == ""
+	}) {
+		t.Fatal("an active signal was displaced by shadow matches")
+	}
+}
+
 func TestResourceRulesReloadRetainsLastKnownGoodRulesOnReadFailure(t *testing.T) {
 	ctx := context.Background()
 	base := ruleRepository{activation: Activation{Revision: 1, Ruleset: DefaultRuleset()}}
