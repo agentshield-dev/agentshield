@@ -91,7 +91,11 @@ type ModelAuthor struct {
 // selectors returns the selectors offered to the model, validated against the catalog.
 func (author ModelAuthor) selectors(resource state.ResourceAuthoringContext) ([]string, error) {
 	if len(author.Selectors) == 0 {
-		return append(detector.CELSelectorNames(), "resource:"+resource.Kind), nil
+		resourceSelector := "resource:" + resource.Kind
+		if !observedBehaviorKind(resource.Kind) {
+			return []string{resourceSelector}, nil
+		}
+		return append(detector.CELSelectorNames(), resourceSelector), nil
 	}
 	for _, name := range author.Selectors {
 		if _, _, ok := detector.ParseCELSelector(name); !ok {

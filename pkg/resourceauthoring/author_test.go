@@ -188,7 +188,7 @@ func TestModelAuthorSendsResourceContextAndAppliesHostScope(t *testing.T) {
 	resource.Name, resource.Namespace = "lab-admin", ""
 	resource.Context = json.RawMessage(`{}`)
 	resource.Attributes = map[string]string{"kubernetes/rbac-role-ref-kind": "ClusterRole", "kubernetes/rbac-role-ref-name": "cluster-admin"}
-	rule := modelRule{Risk: detector.RiskMedium, Selector: "relationship:communicates-with", Expression: "destination_ip_class == 'public' && destination_role == ''", Rationale: "Detect new public destinations."}
+	rule := modelRule{Risk: detector.RiskHigh, Selector: "resource:kubernetes/clusterrolebinding", Expression: "attributes['kubernetes/rbac-role-ref-name'] == 'cluster-admin'", Rationale: "Detect cluster-admin bindings."}
 	toolArguments, err := json.Marshal(rule)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestModelAuthorSendsResourceContextAndAppliesHostScope(t *testing.T) {
 			}
 			if len(body.Tools) != 2 || body.Tools[0].Name != "add_rule" || body.Tools[1].Name != "finish" {
 				t.Errorf("offered tools=%#v, want add_rule and finish", body.Tools)
-			} else if parameters, _ := json.Marshal(body.Tools[0].Parameters); !strings.Contains(string(parameters), "destination_role") || !strings.Contains(string(parameters), "process_class") {
+			} else if parameters, _ := json.Marshal(body.Tools[0].Parameters); !strings.Contains(string(parameters), "resource:kubernetes/clusterrolebinding") || !strings.Contains(string(parameters), "attributes") {
 				t.Errorf("add_rule does not carry the generated rule contract: %s", parameters)
 			}
 			if strings.Contains(body.Instructions, "CEL") || strings.Contains(body.Instructions, "destination_ip_class") || strings.Contains(body.Instructions, "public") {
@@ -584,6 +584,16 @@ func TestModelAuthorSelectorAllowlist(t *testing.T) {
 	}
 	if all, err := (ModelAuthor{}).selectors(testWorkload()); err != nil || len(all) != len(detector.CELSelectorNames())+1 || all[len(all)-1] != "resource:kubernetes/deployment" {
 		t.Fatalf("default selectors=%v err=%v", all, err)
+	}
+	service := testWorkload()
+	service.Kind = "kubernetes/service"
+	serviceSelectors, err := (ModelAuthor{}).selectors(service)
+	if err != nil || !reflect.DeepEqual(serviceSelectors, []string{"resource:kubernetes/service"}) {
+		t.Fatalf("service selectors=%v err=%v", serviceSelectors, err)
+	}
+	impossible := modelDraft{Rules: []modelRule{{Risk: detector.RiskMedium, Selector: "telemetry:active-probe", Expression: "true", Rationale: "r"}}}
+	if _, err := buildProposal(service, impossible, serviceSelectors); err == nil {
+		t.Fatal("a non-workload resource accepted an unavailable telemetry selector")
 	}
 	if _, err := (ModelAuthor{Selectors: []string{"telemetry:unknown"}}).selectors(testWorkload()); err == nil {
 		t.Fatal("unknown selector accepted")
