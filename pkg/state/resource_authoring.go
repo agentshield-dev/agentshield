@@ -17,6 +17,7 @@ import (
 
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -634,7 +635,17 @@ func (s *Store) ListResourceRuleJobs(ctx context.Context, limit int, resourceID 
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("resource job list limit must be between 1 and 1000")
 	}
-	rows, err := s.pool.Query(ctx, `SELECT `+resourceRuleJobColumns+` FROM resource_rule_jobs WHERE $2='' OR resource_id::text=$2 ORDER BY job_id DESC LIMIT $1`, limit, resourceID)
+	query := `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs ORDER BY job_id DESC LIMIT $1`
+	args := []any{limit}
+	if resourceID != "" {
+		parsed, err := uuid.Parse(resourceID)
+		if err != nil {
+			return nil, nil
+		}
+		query = `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs WHERE resource_id=$2 ORDER BY job_id DESC LIMIT $1`
+		args = append(args, parsed)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list Resource rule authoring jobs: %w", err)
 	}
@@ -789,6 +800,10 @@ func (s *Store) RequestResourceRuleJob(ctx context.Context, resourceID, actor st
 	if err := validateDetectorActor(actor); err != nil {
 		return ResourceRuleJobSummary{}, err
 	}
+	parsedResourceID, err := uuid.Parse(resourceID)
+	if err != nil {
+		return ResourceRuleJobSummary{}, fmt.Errorf("%w for the resource's current revision", ErrResourceRuleJobNotFound)
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ResourceRuleJobSummary{}, fmt.Errorf("begin Resource rule request: %w", err)
@@ -798,8 +813,8 @@ func (s *Store) RequestResourceRuleJob(ctx context.Context, resourceID, actor st
 	var status string
 	err = tx.QueryRow(ctx, `
 		SELECT job_id, status FROM resource_rule_jobs
-		WHERE resource_id::text=$1 AND current_revision
-		FOR UPDATE`, resourceID).Scan(&jobID, &status)
+		WHERE resource_id=$1 AND current_revision
+		FOR UPDATE`, parsedResourceID).Scan(&jobID, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ResourceRuleJobSummary{}, fmt.Errorf("%w for the resource's current revision", ErrResourceRuleJobNotFound)
 	}
@@ -865,7 +880,9 @@ func (s *Store) ResourceRuleQueueStats(ctx context.Context, minAge time.Duration
 			SELECT status, available_at,
 			       requested_at IS NULL AND created_at > now()-($1::bigint * interval '1 microsecond') AS waiting,
 			       created_at + ($1::bigint * interval '1 microsecond') AS eligible_at
-			FROM resource_rule_jobs WHERE status <> 'completed'
+			FROM resource_rule_jobs j
+			JOIN current_resources r ON r.resource_id = j.resource_id
+			WHERE j.current_revision AND j.status <> 'completed'
 		)
 		SELECT
 			count(*) FILTER (WHERE status IN ('queued', 'retryable') AND waiting),

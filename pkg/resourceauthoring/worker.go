@@ -161,6 +161,15 @@ func (worker *Worker) process(ctx context.Context, job state.ResourceRuleJob) er
 	if err := <-leaseResult; err != nil {
 		return fmt.Errorf("renew resource authoring lease: %w", err)
 	}
+	var encoded []byte
+	if authorErr == nil {
+		encoded, authorErr = json.Marshal(proposal)
+		if authorErr != nil {
+			authorErr = fmt.Errorf("encode resource rule proposal %d: %w", job.ID, authorErr)
+		} else if err := worker.store.CompleteResourceRuleJob(ctx, job.ID, worker.config.ID, encoded); err != nil {
+			authorErr = fmt.Errorf("persist resource rule proposal %d: %w", job.ID, err)
+		}
+	}
 	if authorErr != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -184,13 +193,6 @@ func (worker *Worker) process(ctx context.Context, job state.ResourceRuleJob) er
 			return fmt.Errorf("resource authoring job %d failed after %d attempt(s); request it again to retry: %w", job.ID, job.AttemptCount, authorErr)
 		}
 		return fmt.Errorf("resource authoring job %d failed (retry in %s): %w", job.ID, retryAfter, authorErr)
-	}
-	encoded, err := json.Marshal(proposal)
-	if err != nil {
-		return fmt.Errorf("encode resource rule proposal %d: %w", job.ID, err)
-	}
-	if err := worker.store.CompleteResourceRuleJob(ctx, job.ID, worker.config.ID, encoded); err != nil {
-		return fmt.Errorf("persist resource rule proposal %d: %w", job.ID, err)
 	}
 	worker.progress.Add("completed", 1)
 	slog.InfoContext(ctx, "drafted resource rules", "worker", worker.config.ID, "job", job.ID,

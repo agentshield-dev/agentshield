@@ -941,6 +941,28 @@ func TestPostgreSQLResourceRuleJobFailsTerminallyUntilRequested(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLResourceRuleQueueStatsIgnoreStaleFailures(t *testing.T) {
+	store, _ := integrationStore(t)
+	ctx := context.Background()
+	if _, err := store.ReplaceContribution(ctx, revisionContribution(1, "a")); err != nil {
+		t.Fatal(err)
+	}
+	job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker/a", time.Minute, 0)
+	if err != nil || !claimed {
+		t.Fatalf("claimed=%t err=%v", claimed, err)
+	}
+	if outcome, err := store.RetryResourceRuleJob(ctx, job.ID, "worker/a", "invalid proposal", time.Second, true); err != nil || outcome != ResourceRuleRetryFailed {
+		t.Fatalf("outcome=%v err=%v", outcome, err)
+	}
+	if _, err := store.ReplaceContribution(ctx, revisionContribution(2, "b")); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := store.ResourceRuleQueueStats(ctx, 0)
+	if err != nil || stats.Failed != 0 {
+		t.Fatalf("stats=%#v err=%v", stats, err)
+	}
+}
+
 func TestPostgreSQLStaleResourceRuleJobsAreDropped(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()

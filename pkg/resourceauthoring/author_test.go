@@ -294,6 +294,7 @@ func (author authorFunc) Author(ctx context.Context, resource state.ResourceAuth
 
 type fakeJobStore struct {
 	completed   json.RawMessage
+	completeErr error
 	retried     string
 	retryAfter  time.Duration
 	terminal    bool
@@ -328,7 +329,7 @@ func (store *fakeJobStore) RenewResourceRuleJob(context.Context, int64, string, 
 
 func (store *fakeJobStore) CompleteResourceRuleJob(_ context.Context, _ int64, _ string, proposal json.RawMessage) error {
 	store.completed = proposal
-	return nil
+	return store.completeErr
 }
 
 func (store *fakeJobStore) RetryResourceRuleJob(_ context.Context, _ int64, _ string, failure string, retryAfter time.Duration, terminal bool) (state.ResourceRuleRetry, error) {
@@ -503,6 +504,22 @@ func TestWorkerSchedulesRetryAfterAuthorFailure(t *testing.T) {
 	}
 	if store.retried != "model unavailable" || len(store.completed) != 0 {
 		t.Fatalf("retried=%q completed=%s", store.retried, store.completed)
+	}
+}
+
+func TestWorkerRecordsInvalidCustomProposalAsTerminalFailure(t *testing.T) {
+	store := &fakeJobStore{completeErr: errors.New("resource rule proposal cannot contain more than 3 rules")}
+	worker, err := NewWorker(store, WorkerConfig{ID: "worker", LeaseDuration: 5 * time.Second, MaxAttempts: 1, Author: authorFunc(func(context.Context, state.ResourceAuthoringContext) (Proposal, error) {
+		return Proposal{Rules: make([]ProposalRule, state.MaxResourceRuleProposalRules+1)}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.process(context.Background(), state.ResourceRuleJob{ID: 42, AttemptCount: 1, Context: testWorkload()}); err == nil {
+		t.Fatal("invalid custom proposal was not reported")
+	}
+	if !strings.Contains(store.retried, "cannot contain more than 3 rules") || !store.terminal {
+		t.Fatalf("retried=%q terminal=%t", store.retried, store.terminal)
 	}
 }
 
