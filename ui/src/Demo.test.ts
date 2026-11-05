@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { list } from '@/lib/model';
-import { FakeBackend } from '../mocks/backend';
+import { ApiError, FakeBackend } from '../mocks/backend';
 import { demoScenario } from '../mocks/scenarios';
 
 describe('demo scenarios', () => {
+	it('requires explicit rule selection when approving a draft', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts).find(
+			item => item.status === 'completed' && item.reviewStatus === 'pending' && item.ruleCount > 0
+		);
+		expect(draft).toBeDefined();
+		let failure: unknown;
+		try {
+			backend.reviewRuleDraft(String(draft?.id), { decision: 'approved' });
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(ApiError);
+		expect((failure as ApiError).status).toBe(400);
+	});
+
 	it('replaces findings and announces the updated graph', () => {
 		const backend = new FakeBackend();
 		const events: number[] = [];
