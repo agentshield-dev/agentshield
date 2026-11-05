@@ -50,11 +50,12 @@
 //
 // Collection readiness ([Runtime.MarkReady]) means a source's cache is
 // coherent. Contribution publication ([Runtime.ReplaceContribution]) is a
-// durable graph write with its own Ready flag and SourceHealth. The output is
-// complete even when the runtime publishes it as a delta. These are
-// separate states: a collection can be ready while its consumer has not yet
-// published, and a contribution can stay published with degraded or stale
-// health after its source fails.
+// durable graph write with its own Ready flag and SourceHealth. Plugins submit
+// complete desired contribution state; the runtime may persist only the
+// assertion delta from the last accepted output. These are separate states: a
+// collection can be ready while its consumer has not yet published, and a
+// contribution can stay published with degraded or stale health after its
+// source fails.
 //
 // # Generations
 //
