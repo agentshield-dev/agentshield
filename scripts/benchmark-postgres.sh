@@ -38,5 +38,5 @@ if [[ -z "${AGENTSHIELD_TEST_DATABASE_URL:-}" ]]; then
 fi
 
 cd "$repo_root"
-go test -run '^$' -bench "${AGENTSHIELD_BENCHMARK_PATTERN:-^BenchmarkPostgreSQL(InitialPublication|Publication|DeltaPublication|Latest)$}" \
+go test -run '^$' -bench "${AGENTSHIELD_BENCHMARK_PATTERN:-^BenchmarkPostgreSQL(InitialPublication|Publication|DeltaPublication|DeltaPublicationAndRead|LatestCold|LatestCached)$}" \
   -benchtime "${AGENTSHIELD_BENCHMARK_TIME:-1s}" -benchmem -count "${AGENTSHIELD_BENCHMARK_COUNT:-3}" ./pkg/state
