@@ -310,20 +310,19 @@ func contributionInputDelta(previous, next graph.Input) (graph.Input, graph.Inpu
 func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
 	previousKeys := make(map[string]struct{}, len(previous))
 	for _, assertion := range previous {
-		encoded, err := json.Marshal(assertion)
+		key, err := assertionDeltaKey(assertion)
 		if err != nil {
 			return nil, nil, err
 		}
-		previousKeys[string(encoded)] = struct{}{}
+		previousKeys[key] = struct{}{}
 	}
 	nextKeys := make(map[string]struct{}, len(next))
 	var added []T
 	for _, assertion := range next {
-		encoded, err := json.Marshal(assertion)
+		key, err := assertionDeltaKey(assertion)
 		if err != nil {
 			return nil, nil, err
 		}
-		key := string(encoded)
 		nextKeys[key] = struct{}{}
 		if _, exists := previousKeys[key]; !exists {
 			added = append(added, assertion)
@@ -331,15 +330,51 @@ func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
 	}
 	var retracted []T
 	for _, assertion := range previous {
-		encoded, err := json.Marshal(assertion)
+		key, err := assertionDeltaKey(assertion)
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, exists := nextKeys[string(encoded)]; !exists {
+		if _, exists := nextKeys[key]; !exists {
 			retracted = append(retracted, assertion)
 		}
 	}
 	return added, retracted, nil
+}
+
+func assertionDeltaKey(assertion any) (string, error) {
+	switch value := assertion.(type) {
+	case graph.ResourceAssertion:
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.FacetAssertion:
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.RelationshipAssertion:
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	case graph.TelemetryAssertion:
+		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
+		assertion = value
+	}
+	encoded, err := json.Marshal(assertion)
+	return string(encoded), err
+}
+
+func normalizedEvidenceIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return result
 }
 
 func cloneContributionOutput(output ContributionOutput) ContributionOutput {

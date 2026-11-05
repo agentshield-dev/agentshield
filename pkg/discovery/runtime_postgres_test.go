@@ -102,6 +102,26 @@ func TestPostgreSQLRuntimeRecoveryCheckpoints(t *testing.T) {
 		assertPostgresTestResources(t, store, sourceID, "b")
 	})
 
+	t.Run("normalized duplicate retention", func(t *testing.T) {
+		runtime := postgresTestRuntime(store, time.Hour, 100)
+		sourceID := owner + "/normalized-duplicate"
+		session := newPublicationSession()
+		first := postgresTestOutput(sourceID, "inventory", 1, "a")
+		first.Input.Resources[0].EvidenceIDs = []string{"event-a", "event-b"}
+		duplicate := first.Input.Resources[0]
+		duplicate.EvidenceIDs = []string{"event-b", "event-a"}
+		first.Input.Resources = append(first.Input.Resources, duplicate)
+		if mode, err := runtime.publishContribution(context.Background(), "runtime-test", sourceID, first, session); err != nil || mode != "checkpoint" {
+			t.Fatalf("initial duplicate publication mode=%q error=%v", mode, err)
+		}
+		next := postgresTestOutput(sourceID, "inventory", 2, "a")
+		next.Input.Resources[0].EvidenceIDs = []string{"event-a", "event-b"}
+		if mode, err := runtime.publishContribution(context.Background(), "runtime-test", sourceID, next, session); err != nil || mode != "delta" {
+			t.Fatalf("duplicate retention mode=%q error=%v", mode, err)
+		}
+		assertPostgresTestResources(t, store, sourceID, "a")
+	})
+
 	t.Run("periodic delta limit", func(t *testing.T) {
 		runtime := postgresTestRuntime(store, time.Hour, 1)
 		sourceID := owner + "/delta-limit"
