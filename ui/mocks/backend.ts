@@ -747,11 +747,7 @@ export class FakeBackend {
 				[shadow, 'shadow']
 			] as const) {
 				for (const item of list(job?.proposal?.rules)) {
-					if (
-						mode === 'active' &&
-						job?.proposal?.approvedRuleIds &&
-						!list(job.proposal.approvedRuleIds).includes(item.rule.id)
-					)
+					if (mode === 'active' && !list(job?.proposal?.approvedRuleIds).includes(item.rule.id))
 						continue;
 					resourceRules.push({ rule: item.rule, mode });
 				}

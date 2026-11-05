@@ -4,6 +4,20 @@ import { ApiError, FakeBackend } from '../mocks/backend';
 import { demoScenario } from '../mocks/scenarios';
 
 describe('demo scenarios', () => {
+	it('requires explicit selections when loading approved rules', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts).find(item => item.reviewStatus === 'approved');
+		if (!draft) throw new Error('expected an approved rule draft');
+		const proposal = backend.ruleDraft(String(draft.id)).proposal;
+		expect(list(proposal?.approvedRuleIds)).not.toHaveLength(0);
+		if (proposal) delete proposal.approvedRuleIds;
+		expect(
+			list(backend.rules().resourceRules).filter(
+				item => item.mode === 'active' && item.rule.scopeResourceId === draft.resourceId
+			)
+		).toHaveLength(0);
+	});
+
 	it('requires explicit rule selection when approving a draft', () => {
 		const backend = new FakeBackend();
 		const draft = list(backend.ruleDrafts().drafts).find(

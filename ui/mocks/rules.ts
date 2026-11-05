@@ -142,8 +142,14 @@ export function seedRuleJobs(): RuleJob[] {
 		const id = index + 1;
 		const minutes = 400 - index * 30;
 		if (index <= 2) {
-			const proposal = authoredProposal(resourceId, index, index === 1 ? 3 : 2);
 			const approved = index === 0;
+			const authored = authoredProposal(resourceId, index, index === 1 ? 3 : 2);
+			const proposal = approved
+				? {
+						...authored,
+						approvedRuleIds: list(authored.rules).map(item => item.rule.id)
+					}
+				: authored;
 			return {
 				draft: job(id, resourceId, minutes, {
 					status: 'completed',

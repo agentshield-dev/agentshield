@@ -538,6 +538,13 @@ func TestPostgreSQLApprovedResourceRulesRequireExplicitSelection(t *testing.T) {
 	if err != nil || len(rules) != 0 {
 		t.Fatalf("rules=%#v err=%v", rules, err)
 	}
+	if _, err := store.pool.Exec(ctx, `UPDATE resource_rule_jobs SET proposal=jsonb_set(proposal, '{approvedRuleIds}', '{}'::jsonb) WHERE job_id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	rules, err = store.ReadResourceRules(ctx)
+	if err != nil || len(rules) != 0 {
+		t.Fatalf("rules with malformed selection=%#v err=%v", rules, err)
+	}
 }
 
 func TestPostgreSQLRemovingResourceUnloadsApprovedResourceRules(t *testing.T) {

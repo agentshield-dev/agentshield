@@ -968,11 +968,10 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 			WHERE expanded.candidate->'rule'->>'scopeResourceId' = resource_id::text
 			AND (
 				review_status <> 'approved'
-				OR (
-					jsonb_typeof(proposal->'approvedRuleIds') = 'array'
-					AND jsonb_array_length(proposal->'approvedRuleIds') > 0
-					AND proposal->'approvedRuleIds' ? (expanded.candidate->'rule'->>'id')
-				)
+				OR CASE
+					WHEN jsonb_typeof(proposal->'approvedRuleIds') = 'array' THEN proposal->'approvedRuleIds'
+					ELSE '[]'::jsonb
+				END ? (expanded.candidate->'rule'->>'id')
 			)
 		)
 		SELECT resource_id::text, review_status, proposal->'approvedRuleIds', candidate
