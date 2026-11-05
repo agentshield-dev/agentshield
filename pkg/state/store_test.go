@@ -1362,6 +1362,14 @@ func TestPostgreSQLProjectsConflicts(t *testing.T) {
 	if resources != 0 || conflicts != 1 {
 		t.Fatalf("projection resources=%d conflicts=%d", resources, conflicts)
 	}
+	if _, err := store.ReplaceContribution(context.Background(), Contribution{
+		PluginID: "inventory", SourceID: "source", Name: "base", Generation: 2, Ready: true, SourceHealth: "healthy",
+		Input: graph.Input{Resources: []graph.ResourceAssertion{{
+			Claim: claim, Kind: "machine", DisplayName: "renamed", PluginID: "inventory", SourceID: "source", RuleID: "resource",
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	view, err := store.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
