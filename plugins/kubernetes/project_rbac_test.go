@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/agentshield-dev/agentshield/pkg/state"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -28,6 +29,7 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"},
 		"subjects": subjects,
 	})
+	clusterRoleBinding.SetResourceVersion("10")
 
 	input, err := Project("cluster", "source", []*unstructured.Unstructured{clusterRoleBinding, roleBinding})
 	if err != nil {
@@ -76,6 +78,7 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"},
 		"subjects": subjects,
 	})
+	reversed.SetResourceVersion("10")
 	reversedInput, err := Project("cluster", "source", []*unstructured.Unstructured{reversed})
 	if err != nil {
 		t.Fatal(err)
@@ -90,9 +93,11 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 			break
 		}
 	}
-	replacedInput, err := Project("cluster", "source", []*unstructured.Unstructured{testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "lab-admin", "cluster-role-binding", map[string]any{
+	replacedBinding := testObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "lab-admin", "cluster-role-binding", map[string]any{
 		"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cluster-admin"}, "subjects": replaced,
-	})})
+	})
+	replacedBinding.SetResourceVersion("11")
+	replacedInput, err := Project("cluster", "source", []*unstructured.Unstructured{replacedBinding})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +105,13 @@ func TestProjectRBACBindingContextIsBoundedSortedAndDeterministic(t *testing.T) 
 	if replacedAttributes["kubernetes/rbac-subjects"] != attributes["kubernetes/rbac-subjects"] || replacedAttributes["kubernetes/rbac-subjects-omitted"] != attributes["kubernetes/rbac-subjects-omitted"] || replacedAttributes["kubernetes/rbac-subjects-sha256"] == attributes["kubernetes/rbac-subjects-sha256"] {
 		t.Fatalf("omitted subject replacement was not revision-sensitive: got=%#v want retained subjects unchanged", replacedAttributes)
 	}
-	if replacedAttributes[graph.ResourceAuthoringContextAttribute] != attributes[graph.ResourceAuthoringContextAttribute] {
-		t.Fatal("an omitted subject replacement changed the resource authoring context")
+	if replacedAttributes[graph.ResourceAuthoringContextAttribute] == attributes[graph.ResourceAuthoringContextAttribute] {
+		t.Fatal("an omitted subject replacement did not change the source revision")
+	}
+	before := state.ResourceAuthoringContextFor(graph.Resource{ID: "binding", Kind: binding.Kind, Assertions: []graph.ResourceAssertion{binding}})
+	afterAssertion := resourceOfKind(t, replacedInput, "kubernetes/clusterrolebinding")
+	after := state.ResourceAuthoringContextFor(graph.Resource{ID: "binding", Kind: afterAssertion.Kind, Assertions: []graph.ResourceAssertion{afterAssertion}})
+	if before.ContextSHA256 == after.ContextSHA256 || string(before.Context) != string(after.Context) || !maps.Equal(before.Attributes, after.Attributes) {
+		t.Fatalf("source revision changed model context: before=%#v after=%#v", before, after)
 	}
 }

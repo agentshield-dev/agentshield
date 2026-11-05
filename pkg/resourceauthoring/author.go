@@ -85,7 +85,7 @@ type ModelAuthor struct {
 	Logger *slog.Logger
 	// Selectors, when set, are the only rule selectors offered to and accepted
 	// from the model, such as the selectors this resource has producers for.
-	// Empty offers every selector.
+	// Empty uses the selectors supported by the resource kind.
 	Selectors []string
 }
 

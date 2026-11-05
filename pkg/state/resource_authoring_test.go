@@ -30,7 +30,7 @@ func mustAuthoringContext(context any, attributes map[string]string) string {
 }
 
 func authoringContextSHA256(resource ResourceAuthoringContext) string {
-	digest, err := resourceAuthoringContextSHA256(resource)
+	digest, err := resourceAuthoringContextSHA256(resource, "")
 	if err != nil {
 		panic(err)
 	}

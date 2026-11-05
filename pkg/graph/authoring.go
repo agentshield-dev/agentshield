@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const (
@@ -17,9 +18,10 @@ const (
 )
 
 type ResourceAuthoringContext struct {
-	SchemaVersion string            `json:"schemaVersion"`
-	Context       json.RawMessage   `json:"context"`
-	Attributes    map[string]string `json:"attributes,omitempty"`
+	SchemaVersion        string            `json:"schemaVersion"`
+	SourceRevisionSHA256 string            `json:"sourceRevisionSha256,omitempty"`
+	Context              json.RawMessage   `json:"context"`
+	Attributes           map[string]string `json:"attributes,omitempty"`
 }
 
 func NewResourceAuthoringContext(context any, attributes map[string]string) (ResourceAuthoringContext, error) {
@@ -60,6 +62,12 @@ func (authoringContext ResourceAuthoringContext) Validate() error {
 func (authoringContext *ResourceAuthoringContext) normalize() error {
 	if authoringContext.SchemaVersion != "v1" {
 		return fmt.Errorf("unsupported resource authoring context schema %q", authoringContext.SchemaVersion)
+	}
+	if authoringContext.SourceRevisionSHA256 != "" {
+		decoded, err := hex.DecodeString(authoringContext.SourceRevisionSHA256)
+		if err != nil || len(decoded) != sha256.Size || authoringContext.SourceRevisionSHA256 != strings.ToLower(authoringContext.SourceRevisionSHA256) {
+			return errors.New("resource authoring source revision must be a lowercase SHA-256")
+		}
 	}
 	var context map[string]any
 	if len(authoringContext.Context) == 0 || json.Unmarshal(authoringContext.Context, &context) != nil || context == nil {

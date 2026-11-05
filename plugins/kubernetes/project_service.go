@@ -60,7 +60,7 @@ func isAuthorableResource(item *unstructured.Unstructured) bool {
 		item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && (item.GetKind() == "Gateway" || item.GetKind() == "HTTPRoute")
 }
 
-func addResourceAuthoringContext(attributes map[string]string) error {
+func addResourceAuthoringContext(attributes map[string]string, sourceRevisionSHA256 string) error {
 	keys := make([]string, 0, len(attributes))
 	for key := range attributes {
 		if resourceAuthoringAttribute(key) {
@@ -105,7 +105,12 @@ func addResourceAuthoringContext(attributes map[string]string) error {
 		for _, key := range selected[:count] {
 			safe[key] = attributes[key]
 		}
-		return graph.NewResourceAuthoringContext(context, safe)
+		authoringContext, err := graph.NewResourceAuthoringContext(context, safe)
+		if err != nil {
+			return graph.ResourceAuthoringContext{}, err
+		}
+		authoringContext.SourceRevisionSHA256 = sourceRevisionSHA256
+		return authoringContext, authoringContext.Validate()
 	}
 	authoringContext, err := build(len(selected))
 	if err != nil {

@@ -157,6 +157,22 @@ func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
 	}
 }
 
+func TestResourceAuthoringSourceRevisionUsesResourceVersionWithObjectFallback(t *testing.T) {
+	first := testObject("v1", "Service", "demo", "service", "service", map[string]any{"spec": map[string]any{"type": "ClusterIP"}})
+	second := first.DeepCopy()
+	second.Object["spec"] = map[string]any{"type": "LoadBalancer"}
+	first.SetResourceVersion("10")
+	second.SetResourceVersion("10")
+	if resourceAuthoringSourceRevision(first) != resourceAuthoringSourceRevision(second) {
+		t.Fatal("equal resource versions produced different source revisions")
+	}
+	first.SetResourceVersion("")
+	second.SetResourceVersion("")
+	if resourceAuthoringSourceRevision(first) == resourceAuthoringSourceRevision(second) {
+		t.Fatal("different objects without resource versions produced the same source revision")
+	}
+}
+
 func TestProjectResourceAuthoringAttributesAreDeterministicallyBounded(t *testing.T) {
 	labels := make(map[string]string)
 	for index := range graph.ResourceAuthoringAttributesMaxItems + 12 {
@@ -218,7 +234,7 @@ func TestResourceAuthoringContextTracksSupportedResourceAttributes(t *testing.T)
 			project := func(value string) string {
 				t.Helper()
 				attributes := map[string]string{"kubernetes/name": "example", test.key: value}
-				if err := addResourceAuthoringContext(attributes); err != nil {
+				if err := addResourceAuthoringContext(attributes, strings.Repeat("a", 64)); err != nil {
 					t.Fatal(err)
 				}
 				return attributes[graph.ResourceAuthoringContextAttribute]
@@ -627,7 +643,18 @@ func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
 	if environmentDigest == base {
 		t.Fatal("an environment value change did not change the Pod template digest")
 	}
-	if environmentContext != baseContext {
-		t.Fatal("an unprojected environment value changed the resource authoring context")
+	if environmentContext == baseContext {
+		t.Fatal("an unprojected environment value did not change the source revision")
+	}
+	baseAuthoring, err := graph.DecodeResourceAuthoringContext(baseContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentAuthoring, err := graph.DecodeResourceAuthoringContext(environmentContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(baseAuthoring.Context, environmentAuthoring.Context) || !maps.Equal(baseAuthoring.Attributes, environmentAuthoring.Attributes) {
+		t.Fatal("an unprojected environment value entered model-visible authoring context")
 	}
 }

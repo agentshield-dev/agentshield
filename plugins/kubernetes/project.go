@@ -71,7 +71,7 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 			return graph.Input{}, err
 		}
 		if isAuthorableResource(item) {
-			if err := addResourceAuthoringContext(itemAttributes); err != nil {
+			if err := addResourceAuthoringContext(itemAttributes, resourceAuthoringSourceRevision(item)); err != nil {
 				return graph.Input{}, fmt.Errorf("project %s %s/%s for rule authoring: %w", item.GetKind(), item.GetNamespace(), item.GetName(), err)
 			}
 		}
@@ -155,6 +155,13 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 		}
 	}
 	return input, nil
+}
+
+func resourceAuthoringSourceRevision(item *unstructured.Unstructured) string {
+	if revision := item.GetResourceVersion(); revision != "" {
+		return projectkit.Digest(revision)
+	}
+	return projectkit.Digest(item.Object)
 }
 
 // ClaimFor returns the cluster-qualified identity of item.

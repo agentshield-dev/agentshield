@@ -14,8 +14,8 @@
 // [ModelAuthor] sends a bounded resource posture and observed-behavior baseline.
 // Raw manifests, secret values, environment values, exact host paths, and
 // referenced object names are never stored on the job or sent. The model chooses only a selector,
-// expression, and rationale for each of up to three rules; the host sets the
-// rule ID, plugin wildcard, resource scope, risk, reason, and window. Every
+// expression, risk, and rationale for each of up to three rules; the host sets the
+// rule ID, plugin wildcard, resource scope, reason, and window. Every
 // model turn must call a tool: add_rule validates a rule against the rules
 // already added and records it, and finish ends the run with the overall
 // rationale. Validation never evaluates synthetic inputs, and the proposal is

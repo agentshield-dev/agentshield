@@ -38,16 +38,17 @@ type ResourceAuthoringContext struct {
 	ObservedBehavior *WorkloadBehavior `json:"observedBehavior,omitempty"`
 }
 
-func resourceAuthoringContextSHA256(resource ResourceAuthoringContext) (string, error) {
+func resourceAuthoringContextSHA256(resource ResourceAuthoringContext, sourceRevisionSHA256 string) (string, error) {
 	encoded, err := json.Marshal(struct {
-		Kind       string            `json:"kind"`
-		Name       string            `json:"name,omitempty"`
-		Namespace  string            `json:"namespace,omitempty"`
-		Context    json.RawMessage   `json:"context"`
-		Attributes map[string]string `json:"attributes,omitempty"`
+		Kind                 string            `json:"kind"`
+		Name                 string            `json:"name,omitempty"`
+		Namespace            string            `json:"namespace,omitempty"`
+		SourceRevisionSHA256 string            `json:"sourceRevisionSha256,omitempty"`
+		Context              json.RawMessage   `json:"context"`
+		Attributes           map[string]string `json:"attributes,omitempty"`
 	}{
 		Kind: resource.Kind, Name: resource.Name, Namespace: resource.Namespace,
-		Context: resource.Context, Attributes: resource.Attributes,
+		SourceRevisionSHA256: sourceRevisionSHA256, Context: resource.Context, Attributes: resource.Attributes,
 	})
 	if err != nil {
 		return "", err
@@ -338,7 +339,7 @@ func ResourceAuthoringContextFor(resource graph.Resource) ResourceAuthoringConte
 		candidate.Namespace = boundedString(assertion.Attributes["kubernetes/namespace"], 253)
 		candidate.Context = slices.Clone(authoringContext.Context)
 		candidate.Attributes = maps.Clone(authoringContext.Attributes)
-		candidate.ContextSHA256, err = resourceAuthoringContextSHA256(candidate)
+		candidate.ContextSHA256, err = resourceAuthoringContextSHA256(candidate, authoringContext.SourceRevisionSHA256)
 		if err != nil {
 			continue
 		}

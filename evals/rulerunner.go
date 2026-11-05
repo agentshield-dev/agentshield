@@ -51,7 +51,7 @@ type RuleSuiteSummary struct {
 	Model         string                  `json:"model,omitempty"`
 	DetectorOnly  bool                    `json:"detectorOnly,omitempty"`
 	Variant       string                  `json:"variant"`
-	// AuthorSelectors are the selectors offered to the author; empty means every selector.
+	// AuthorSelectors are explicit selectors offered to the author; empty uses resource-kind defaults.
 	AuthorSelectors []string `json:"authorSelectors,omitempty"`
 }
 

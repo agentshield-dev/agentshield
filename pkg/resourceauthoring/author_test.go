@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -583,7 +582,13 @@ func TestModelAuthorSelectorAllowlist(t *testing.T) {
 	if err != nil || len(selectors) != 2 {
 		t.Fatalf("selectors=%v err=%v", selectors, err)
 	}
-	if all, err := (ModelAuthor{}).selectors(testWorkload()); err != nil || !slices.Contains(all, "relationship:communicates-with") || !slices.Contains(all, "telemetry:network-flow") || !slices.Contains(all, "resource:kubernetes/deployment") || slices.Contains(all, "relationship:contains") || slices.Contains(all, "telemetry:gateway-request") {
+	wantDefaults := []string{
+		"relationship:instantiates", "relationship:uses-identity", "relationship:governed-by",
+		"relationship:communicates-with", "relationship:runs-on", "relationship:executes",
+		"telemetry:network-flow", "telemetry:active-probe", "telemetry:process-exec",
+		"resource:kubernetes/deployment",
+	}
+	if all, err := (ModelAuthor{}).selectors(testWorkload()); err != nil || !reflect.DeepEqual(all, wantDefaults) {
 		t.Fatalf("default selectors=%v err=%v", all, err)
 	}
 	service := testWorkload()
