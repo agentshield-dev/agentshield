@@ -3,15 +3,16 @@
 This Helm chart deploys one AgentShield process with a read-only Kubernetes
 ClusterRole, a `ClusterIP` Service, health probes, and
 a local JSONL telemetry sink. PostgreSQL is required and is supplied through a
-Secret you create. AgentShield is pre-1.0; no container image is published.
+Secret you create. AgentShield is pre-1.0.
 
 Read the [security model](https://agent-shield.dev/docs/operations/security/) before
 installing. The HTTP API has no authentication.
 
 ## Install
 
-Build and push the root Dockerfile to a registry accessible by your cluster.
-Then create a namespace and its restricted Pod Security labels:
+Choose a version from the published images at
+`ghcr.io/agentshield-dev/agentshield`. Then create a namespace and its
+restricted Pod Security labels:
 
 ```bash
 kubectl create namespace agentshield-system
@@ -22,13 +23,12 @@ kubectl -n agentshield-system create secret generic agentshield-database \
   --from-literal=url='postgres://agentshield:REDACTED@postgres.example.internal:5432/agentshield?sslmode=verify-full'
 ```
 
-Install the chart, setting the image built above:
+Install the chart with that image version:
 
 ```bash
 helm upgrade --install agentshield deploy/kubernetes \
   --namespace agentshield-system \
-  --set image.repository=registry.example.com/agentshield \
-  --set image.tag=v0.1.0
+  --set image.tag=0.1.0
 kubectl -n agentshield-system rollout status deployment/agentshield-agentshield
 ```
 
@@ -67,8 +67,7 @@ with the password, then enable the sink:
 ```bash
 helm upgrade --install agentshield deploy/kubernetes \
   --namespace agentshield-system \
-  --set image.repository=registry.example.com/agentshield \
-  --set image.tag=v0.1.0 \
+  --set image.tag=0.1.0 \
   --set telemetry.clickhouse.enabled=true \
   --set telemetry.clickhouse.url=http://clickhouse.example.internal:8123 \
   --set telemetry.clickhouse.existingSecret=agentshield-clickhouse

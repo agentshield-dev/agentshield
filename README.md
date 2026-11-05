@@ -83,7 +83,7 @@ Agentshield is an early, pre-1.0 project. Expect breaking changes to APIs, the d
 
 - The HTTP API and UI have **no authentication**, so the server binds to `127.0.0.1:8088` by default; read the [security model](https://agent-shield.dev/docs/operations/security/) before changing that.
 - One process per database; no high availability.
-- Tagged releases publish binaries on GitHub. Build a container image from the `Dockerfile` and deploy it with the [Helm chart](https://agent-shield.dev/docs/operations/helm/); no container image is published yet.
+- Tagged releases publish binaries on GitHub and multi-architecture images at `ghcr.io/agentshield-dev/agentshield`. Deploy them with the [Helm chart](https://agent-shield.dev/docs/operations/helm/).
 - Hubble flow and agentgateway access-log normalizers exist, but no transport feeds them yet. Today's telemetry sources are Istio waypoint access logs (via OpenTelemetry) and AWS VPC Flow Logs (via Firehose).
 
 ## How it works
