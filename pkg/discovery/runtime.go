@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"maps"
+	"reflect"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -197,6 +198,12 @@ func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sour
 
 	key := publicationKey{pluginID: pluginID, sourceID: sourceID, name: output.Name}
 	previous, exists := session.contributions[key]
+	if exists && output.Generation == previous.output.Generation {
+		if !reflect.DeepEqual(output, previous.output) {
+			return "delta", fmt.Errorf("contribution generation %d conflicts with the accepted output", output.Generation)
+		}
+		return "delta", nil
+	}
 	now := time.Now()
 	reason := ""
 	switch {

@@ -112,6 +112,16 @@ func TestPostgreSQLRuntimeRecoveryCheckpoints(t *testing.T) {
 		assertPostgresTestResources(t, store, sourceID, "c")
 	})
 
+	t.Run("same generation retry at checkpoint boundary", func(t *testing.T) {
+		runtime := postgresTestRuntime(store, time.Hour, 1)
+		sourceID := owner + "/same-generation-retry"
+		session := newPublicationSession()
+		postgresTestPublish(t, runtime, session, sourceID, "inventory", 1, "a", "checkpoint")
+		postgresTestPublish(t, runtime, session, sourceID, "inventory", 2, "b", "delta")
+		postgresTestPublish(t, runtime, session, sourceID, "inventory", 2, "b", "delta")
+		assertPostgresTestResources(t, store, sourceID, "b")
+	})
+
 	t.Run("periodic interval", func(t *testing.T) {
 		runtime := postgresTestRuntime(store, time.Hour, 100)
 		sourceID := owner + "/interval"
