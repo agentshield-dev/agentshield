@@ -118,7 +118,13 @@ func TestPostgreSQLRuntimeRecoveryCheckpoints(t *testing.T) {
 		session := newPublicationSession()
 		postgresTestPublish(t, runtime, session, sourceID, "inventory", 1, "a", "checkpoint")
 		postgresTestPublish(t, runtime, session, sourceID, "inventory", 2, "b", "delta")
-		postgresTestPublish(t, runtime, session, sourceID, "inventory", 2, "b", "delta")
+		retry := postgresTestOutput(sourceID, "inventory", 2, "b")
+		retry.SourceObservedAt = time.Now().UTC()
+		retry.Ready = false
+		retry.SourceHealth = ""
+		if mode, err := runtime.publishContribution(context.Background(), "runtime-test", sourceID, retry, session); err != nil || mode != "delta" {
+			t.Fatalf("same-generation retry mode=%q error=%v, want delta nil", mode, err)
+		}
 		assertPostgresTestResources(t, store, sourceID, "b")
 	})
 
