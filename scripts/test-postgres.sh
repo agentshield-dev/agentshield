@@ -35,5 +35,5 @@ export AGENTSHIELD_DATABASE_URL="$AGENTSHIELD_TEST_DATABASE_URL"
 
 cd "$repo_root"
 printf 'PostgreSQL %s on 127.0.0.1:%s\n' "$(docker exec "$container" postgres --version | awk '{print $3}')" "$port"
-go test -race -count=1 ./pkg/state ./pkg/api
+go test -race -count=1 -p=1 ./pkg/state ./pkg/api ./pkg/discovery
 printf 'PostgreSQL integration passed\n'

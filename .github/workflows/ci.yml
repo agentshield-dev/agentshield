@@ -68,7 +68,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run PostgreSQL-backed tests
-        run: go test -race -count=1 ./pkg/state ./pkg/api
+        run: go test -race -count=1 -p=1 ./pkg/state ./pkg/api ./pkg/discovery
 
   aws-e2e:
     name: AWS LocalStack e2e

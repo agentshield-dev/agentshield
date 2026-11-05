@@ -129,7 +129,7 @@ These measurements support the publication contract. They are not service-level 
 
 - The plugin runtime must track the accepted base generation and cannot emit deltas before its initial replacement.
 - A retraction needs a stable representation that identifies exactly the assertion being removed.
-- Restart, stale-base, cursor-loss, drift, and periodic-checkpoint paths become part of the correctness contract and need integration tests.
+- Restart, stale-base, cursor-loss, drift, and periodic-checkpoint paths are part of the correctness contract and require PostgreSQL-backed integration coverage.
 - Complete checkpoints remain linear in contribution size and can create load spikes if synchronized.
 - Delta APIs and storage paths add another publication mode whose behavior must remain equivalent to complete replacement.
 
