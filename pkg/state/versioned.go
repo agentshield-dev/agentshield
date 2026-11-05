@@ -208,7 +208,7 @@ func (s *Store) commitDeltaCandidate(ctx context.Context, tx pgx.Tx, contributio
 	if err != nil {
 		return contributionPublication{}, err
 	}
-	if err := enqueueChangedDeploymentRuleJobs(ctx, tx, changedResources); err != nil {
+	if err := enqueueChangedResourceRuleJobs(ctx, tx, changedResources); err != nil {
 		return contributionPublication{}, err
 	}
 	metadataChanged := head.ready != contribution.Ready || head.sourceHealth != contribution.SourceHealth || head.status != status
