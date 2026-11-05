@@ -83,6 +83,10 @@ func (s *fakeStore) ContributionGeneration(_ context.Context, pluginID, sourceID
 	return generation, nil
 }
 
+func (s *fakeStore) NormalizeIdentityClaim(claim graph.IdentityClaim) (graph.IdentityClaim, error) {
+	return claim, nil
+}
+
 func (s *fakeStore) history() []state.Contribution {
 	s.mu.Lock()
 	defer s.mu.Unlock()

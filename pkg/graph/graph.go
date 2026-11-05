@@ -756,6 +756,11 @@ func (c *Compiler) resolve(claim IdentityClaim) (IdentityClaim, string, error) {
 	return normalized, resourceID(normalized), nil
 }
 
+func (c *Compiler) NormalizeIdentityClaim(claim IdentityClaim) (IdentityClaim, error) {
+	normalized, _, err := c.resolve(claim)
+	return normalized, err
+}
+
 // CanonicalJSON encodes the snapshot. Because the compiler sorts every slice
 // and encoding/json sorts map keys, equal snapshots encode to equal bytes.
 func (s Snapshot) CanonicalJSON() ([]byte, error) {

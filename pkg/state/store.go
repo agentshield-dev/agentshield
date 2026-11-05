@@ -370,6 +370,10 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) NormalizeIdentityClaim(claim graph.IdentityClaim) (graph.IdentityClaim, error) {
+	return s.compiler.NormalizeIdentityClaim(claim)
+}
+
 // ReplaceContribution publishes contribution as the complete current output of
 // its (plugin, source, name) tuple. Replacement semantics: any assertion the
 // tuple owned before and that is absent now is retracted, so a plugin removes

@@ -38,6 +38,7 @@ type runtimeStore interface {
 	ReplaceContribution(context.Context, state.Contribution) (state.Publication, error)
 	ApplyContributionDelta(context.Context, state.ContributionDelta) (state.Publication, error)
 	ContributionGeneration(context.Context, string, string) (uint64, error)
+	NormalizeIdentityClaim(graph.IdentityClaim) (graph.IdentityClaim, error)
 }
 
 const (
@@ -229,7 +230,7 @@ func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sour
 			"plugin", pluginID, "source", sourceID, "contribution", output.Name, "generation", output.Generation, "reason", reason)
 		return "checkpoint", nil
 	}
-	added, retracted, err := contributionInputDelta(previous.output.Input, output.Input)
+	added, retracted, err := contributionInputDelta(previous.output.Input, output.Input, r.store.NormalizeIdentityClaim)
 	if err != nil {
 		return "delta", err
 	}
@@ -283,20 +284,20 @@ func (r *RuntimeService) logContributionFailure(ctx context.Context, pluginID, s
 	}
 }
 
-func contributionInputDelta(previous, next graph.Input) (graph.Input, graph.Input, error) {
-	addedResources, retractedResources, err := assertionDelta(previous.Resources, next.Resources)
+func contributionInputDelta(previous, next graph.Input, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) (graph.Input, graph.Input, error) {
+	addedResources, retractedResources, err := assertionDelta(previous.Resources, next.Resources, normalize)
 	if err != nil {
 		return graph.Input{}, graph.Input{}, err
 	}
-	addedFacets, retractedFacets, err := assertionDelta(previous.Facets, next.Facets)
+	addedFacets, retractedFacets, err := assertionDelta(previous.Facets, next.Facets, normalize)
 	if err != nil {
 		return graph.Input{}, graph.Input{}, err
 	}
-	addedRelationships, retractedRelationships, err := assertionDelta(previous.Relationships, next.Relationships)
+	addedRelationships, retractedRelationships, err := assertionDelta(previous.Relationships, next.Relationships, normalize)
 	if err != nil {
 		return graph.Input{}, graph.Input{}, err
 	}
-	addedTelemetry, retractedTelemetry, err := assertionDelta(previous.Telemetry, next.Telemetry)
+	addedTelemetry, retractedTelemetry, err := assertionDelta(previous.Telemetry, next.Telemetry, normalize)
 	if err != nil {
 		return graph.Input{}, graph.Input{}, err
 	}
@@ -307,10 +308,10 @@ func contributionInputDelta(previous, next graph.Input) (graph.Input, graph.Inpu
 	}, nil
 }
 
-func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
+func assertionDelta[T any](previous, next []T, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) ([]T, []T, error) {
 	previousKeys := make(map[string]struct{}, len(previous))
 	for _, assertion := range previous {
-		key, err := assertionDeltaKey(assertion)
+		key, err := assertionDeltaKey(assertion, normalize)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -319,7 +320,7 @@ func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
 	nextKeys := make(map[string]struct{}, len(next))
 	var added []T
 	for _, assertion := range next {
-		key, err := assertionDeltaKey(assertion)
+		key, err := assertionDeltaKey(assertion, normalize)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -330,7 +331,7 @@ func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
 	}
 	var retracted []T
 	for _, assertion := range previous {
-		key, err := assertionDeltaKey(assertion)
+		key, err := assertionDeltaKey(assertion, normalize)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -341,18 +342,48 @@ func assertionDelta[T any](previous, next []T) ([]T, []T, error) {
 	return added, retracted, nil
 }
 
-func assertionDeltaKey(assertion any) (string, error) {
+func assertionDeltaKey(assertion any, normalize func(graph.IdentityClaim) (graph.IdentityClaim, error)) (string, error) {
 	switch value := assertion.(type) {
 	case graph.ResourceAssertion:
+		claim, err := normalize(value.Claim)
+		if err != nil {
+			return "", err
+		}
+		value.Claim = claim
 		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
 		assertion = value
 	case graph.FacetAssertion:
+		resource, err := normalize(value.Resource)
+		if err != nil {
+			return "", err
+		}
+		value.Resource = resource
 		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
 		assertion = value
 	case graph.RelationshipAssertion:
+		subject, err := normalize(value.Subject)
+		if err != nil {
+			return "", err
+		}
+		object, err := normalize(value.Object)
+		if err != nil {
+			return "", err
+		}
+		value.Subject = subject
+		value.Object = object
 		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
 		assertion = value
 	case graph.TelemetryAssertion:
+		subject, err := normalize(value.Subject)
+		if err != nil {
+			return "", err
+		}
+		object, err := normalize(value.Object)
+		if err != nil {
+			return "", err
+		}
+		value.Subject = subject
+		value.Object = object
 		value.EvidenceIDs = normalizedEvidenceIDs(value.EvidenceIDs)
 		assertion = value
 	}
