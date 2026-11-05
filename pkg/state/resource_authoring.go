@@ -21,7 +21,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const ResourceAuthoringContextMaxBytes = 48 << 10
+const (
+	ResourceAuthoringContextMaxBytes = 48 << 10
+	resourceRuleHistoryLimit         = 8
+)
 
 // ResourceAuthoringContext is the bounded plugin context given to the rule author.
 type ResourceAuthoringContext struct {
@@ -331,6 +334,35 @@ func enqueueChangedResourceRuleJobs(ctx context.Context, tx pgx.Tx, changed []gr
 			ON CONFLICT (resource_id, context_sha256) DO NOTHING`, resource.ResourceID, resource.ContextSHA256, encoded); err != nil {
 			return fmt.Errorf("enqueue resource rule authoring job %s: %w", resource.ResourceID, err)
 		}
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM resource_rule_jobs stale
+		WHERE stale.resource_id = ANY($1::uuid[])
+		  AND NOT stale.current_revision
+		  AND stale.status IN ('completed', 'failed')
+		  AND stale.job_id NOT IN (
+			SELECT recent.job_id
+			FROM resource_rule_jobs recent
+			WHERE recent.resource_id = stale.resource_id
+			  AND NOT recent.current_revision
+			  AND recent.status IN ('completed', 'failed')
+			ORDER BY recent.job_id DESC
+			LIMIT $2
+		  )
+		  AND stale.job_id IS DISTINCT FROM (
+			SELECT approved.job_id
+			FROM resource_rule_jobs approved
+			WHERE approved.resource_id = stale.resource_id
+			  AND approved.status = 'completed'
+			  AND approved.review_status = 'approved'
+			  AND CASE
+				WHEN jsonb_typeof(approved.proposal->'approvedRuleIds') = 'array' THEN approved.proposal->'approvedRuleIds'
+				ELSE '[]'::jsonb
+			  END <> '[]'::jsonb
+			ORDER BY approved.current_revision DESC, approved.job_id DESC
+			LIMIT 1
+		  )`, ids, resourceRuleHistoryLimit); err != nil {
+		return fmt.Errorf("prune resource rule authoring history: %w", err)
 	}
 	return nil
 }
@@ -647,20 +679,20 @@ func scanResourceRuleJob(row pgx.Row, job *ResourceRuleJobSummary) error {
 		&job.RuleCount, &job.RequestedBy, &job.RequestedAt, &job.CurrentRevision)
 }
 
-// ListResourceRuleJobs returns up to limit (1-1000) jobs, newest first. A
-// non-empty resourceID restricts the result to that resource.
+// ListResourceRuleJobs returns up to limit (1-1000) jobs, current revisions
+// first and then newest first. A non-empty resourceID restricts the result.
 func (s *Store) ListResourceRuleJobs(ctx context.Context, limit int, resourceID string) ([]ResourceRuleJobSummary, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("resource job list limit must be between 1 and 1000")
 	}
-	query := `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs ORDER BY job_id DESC LIMIT $1`
+	query := `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs ORDER BY current_revision DESC, job_id DESC LIMIT $1`
 	args := []any{limit}
 	if resourceID != "" {
 		parsed, err := uuid.Parse(resourceID)
 		if err != nil {
 			return nil, nil
 		}
-		query = `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs WHERE resource_id=$2 ORDER BY job_id DESC LIMIT $1`
+		query = `SELECT ` + resourceRuleJobColumns + ` FROM resource_rule_jobs WHERE resource_id=$2 ORDER BY current_revision DESC, job_id DESC LIMIT $1`
 		args = append(args, parsed)
 	}
 	rows, err := s.pool.Query(ctx, query, args...)

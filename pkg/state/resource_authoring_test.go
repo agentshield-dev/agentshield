@@ -351,6 +351,70 @@ func TestPostgreSQLResourceAuthoringJobPerContextRevision(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLResourceRuleHistoryIsBoundedWithApprovedFallback(t *testing.T) {
+	store, _ := integrationStore(t)
+	ctx := context.Background()
+	var approvedJobID int64
+	for index := range 11 {
+		if _, err := store.ReplaceContribution(ctx, revisionContribution(uint64(index+1), fmt.Sprintf("revision-%d", index))); err != nil {
+			t.Fatal(err)
+		}
+		job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0)
+		if err != nil || !claimed {
+			t.Fatalf("revision=%d claimed=%t err=%v", index, claimed, err)
+		}
+		proposal := json.RawMessage(`{"rules":[]}`)
+		if index == 0 {
+			rule := detector.Rule{
+				ID: "resource/approved-fallback", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: job.Context.ResourceID,
+				Type: "resource", Kind: job.Context.Kind, Expression: "true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+			}
+			proposal, err = json.Marshal(map[string]any{"rules": []map[string]any{{"rule": rule}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			approvedJobID = job.ID
+		}
+		if err := store.CompleteResourceRuleJob(ctx, job.ID, "worker", proposal); err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			if err := store.ReviewResourceRuleJobRules(ctx, job.ID, ResourceRuleReviewApproved, "operator", []string{"resource/approved-fallback"}); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := store.ReviewResourceRuleJobRules(ctx, job.ID, ResourceRuleReviewRejected, "operator", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	var approvedKept bool
+	if err := store.pool.QueryRow(ctx, `SELECT count(*), bool_or(job_id=$1) FROM resource_rule_jobs`, approvedJobID).Scan(&count, &approvedKept); err != nil {
+		t.Fatal(err)
+	}
+	if count != 10 || !approvedKept {
+		t.Fatalf("jobs=%d approved fallback kept=%t", count, approvedKept)
+	}
+}
+
+func TestPostgreSQLResourceRuleListPrioritizesCurrentDrafts(t *testing.T) {
+	store, _ := integrationStore(t)
+	ctx := context.Background()
+	if _, err := store.ReplaceContribution(ctx, revisionContribution(1, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO resource_rule_jobs (resource_id, resource_context, context_sha256, status)
+		SELECT resource_id, resource_context, md5(history::text) || md5('history-' || history::text), 'failed'
+		FROM resource_rule_jobs CROSS JOIN generate_series(1, 501) history
+		WHERE current_revision`); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := store.ListResourceRuleJobs(ctx, 501, "")
+	if err != nil || len(jobs) != 501 || !jobs[0].CurrentRevision {
+		t.Fatalf("jobs=%d first=%#v err=%v", len(jobs), jobs[0], err)
+	}
+}
+
 func TestPostgreSQLResourceRuleRevisionsFollowTheCurrentContext(t *testing.T) {
 	store, _ := integrationStore(t)
 	ctx := context.Background()
