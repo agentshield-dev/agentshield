@@ -122,8 +122,8 @@ func TestPostgreSQLRuntimeRecoveryCheckpoints(t *testing.T) {
 		retry.SourceObservedAt = time.Now().UTC()
 		retry.Ready = false
 		retry.SourceHealth = ""
-		if mode, err := runtime.publishContribution(context.Background(), "runtime-test", sourceID, retry, session); err != nil || mode != "delta" {
-			t.Fatalf("same-generation retry mode=%q error=%v, want delta nil", mode, err)
+		if mode, err := runtime.publishContribution(context.Background(), "runtime-test", sourceID, retry, session); err != nil || mode != "noop" {
+			t.Fatalf("same-generation retry mode=%q error=%v, want noop nil", mode, err)
 		}
 		assertPostgresTestResources(t, store, sourceID, "b")
 	})

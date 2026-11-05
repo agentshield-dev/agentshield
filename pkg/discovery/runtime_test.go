@@ -270,6 +270,33 @@ func TestRuntimeSnapshotsAcceptedContributionOutput(t *testing.T) {
 	}
 }
 
+func TestScopedRuntimeKeepsAcceptedMetadataOnSameGenerationRetry(t *testing.T) {
+	store := newFakeStore()
+	runtime := &RuntimeService{
+		hub: NewHub(), store: store,
+		config: RuntimeConfig{CheckpointInterval: time.Hour, CheckpointDeltas: 100},
+	}
+	published := &publishedOutputs{byName: make(map[string]ContributionOutput)}
+	scoped := scopedRuntime{
+		runtime: runtime, pluginID: "test", sourceID: "source",
+		published: published, publications: newPublicationSession(),
+	}
+	output := ContributionOutput{Name: "inventory", Generation: 1, Ready: true, SourceHealth: state.SourceHealthHealthy}
+	if err := scoped.ReplaceContribution(context.Background(), "test", "source", output); err != nil {
+		t.Fatal(err)
+	}
+	retry := output
+	retry.Ready = false
+	retry.SourceHealth = state.SourceHealthDegraded
+	if err := scoped.ReplaceContribution(context.Background(), "test", "source", retry); err != nil {
+		t.Fatal(err)
+	}
+	accepted := published.snapshot()
+	if len(accepted) != 1 || !accepted[0].Ready || accepted[0].SourceHealth != state.SourceHealthHealthy {
+		t.Fatalf("accepted output = %+v", accepted)
+	}
+}
+
 // flakyPlugin publishes keys a and b and fails on its first attempt, panics on
 // its second, and on its third publishes only key a and then runs until
 // cancelled.

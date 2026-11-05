@@ -202,7 +202,7 @@ func (r *RuntimeService) publishContribution(ctx context.Context, pluginID, sour
 		if !reflect.DeepEqual(output.Input, previous.output.Input) {
 			return "delta", fmt.Errorf("contribution generation %d conflicts with the accepted output", output.Generation)
 		}
-		return "delta", nil
+		return "noop", nil
 	}
 	now := time.Now()
 	reason := ""
@@ -498,6 +498,9 @@ func (r scopedRuntime) ReplaceContribution(ctx context.Context, pluginID, source
 	mode, err := r.runtime.publishContribution(ctx, pluginID, sourceID, output, r.publications)
 	if err != nil {
 		return err
+	}
+	if mode == "noop" {
+		return nil
 	}
 	r.published.record(output)
 	r.count("contribution_" + mode)
