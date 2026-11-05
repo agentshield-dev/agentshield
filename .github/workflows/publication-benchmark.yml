@@ -1,0 +1,56 @@
+name: Publication benchmark
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "pkg/state/migrations/**"
+      - "scripts/benchmark-postgres.sh"
+      - "scripts/benchmark-delta.sh"
+      - ".github/workflows/publication-benchmark.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publication-benchmark:
+    name: Publication benchmark
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Benchmark base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -o pipefail
+          PR_MODULE=$(go list -m)
+          git worktree add "$RUNNER_TEMP/agentshield-base" "$BASE_SHA"
+          cp pkg/state/publication_benchmark_test.go "$RUNNER_TEMP/agentshield-base/pkg/state/"
+          cp scripts/benchmark-postgres.sh "$RUNNER_TEMP/agentshield-base/scripts/"
+          chmod +x "$RUNNER_TEMP/agentshield-base/scripts/benchmark-postgres.sh"
+          cd "$RUNNER_TEMP/agentshield-base"
+          BASE_MODULE=$(go list -m)
+          sed -i "s|\"$PR_MODULE/|\"$BASE_MODULE/|g" pkg/state/publication_benchmark_test.go
+          ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-base.txt"
+      - name: Benchmark pull request
+        run: |
+          set -o pipefail
+          ./scripts/benchmark-postgres.sh | tee "$RUNNER_TEMP/benchmark-pr.txt"
+      - name: Report benchmark delta
+        run: |
+          {
+            printf '## Publication benchmark delta\n\n'
+            printf 'Median of three runs. Negative deltas are improvements. This check is informational.\n\n'
+            ./scripts/benchmark-delta.sh "$RUNNER_TEMP/benchmark-base.txt" "$RUNNER_TEMP/benchmark-pr.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
