@@ -29,6 +29,7 @@ jobs:
           POSTGRES_PASSWORD: agentshield
           POSTGRES_DB: agentshield_base
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready --username agentshield --dbname agentshield_base"
           --health-interval 2s
           --health-timeout 5s
@@ -42,6 +43,7 @@ jobs:
           POSTGRES_PASSWORD: agentshield
           POSTGRES_DB: agentshield_pr
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
           --health-cmd "pg_isready --username agentshield --dbname agentshield_pr"
           --health-interval 2s
           --health-timeout 5s
