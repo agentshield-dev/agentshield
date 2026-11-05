@@ -22,6 +22,7 @@ type fakeRuleStore struct {
 	reviews    []string
 	selections [][]string
 	requested  []string
+	listedFor  string
 }
 
 func (store *fakeRuleStore) ReadActiveDetectorRuleset(context.Context) (detector.Activation, error) {
@@ -35,9 +36,13 @@ func (store *fakeRuleStore) ReadResourceRules(context.Context) ([]detector.Resou
 	return store.workload, nil
 }
 
-func (store *fakeRuleStore) ListResourceRuleJobs(context.Context, int) ([]state.ResourceRuleJobSummary, error) {
+func (store *fakeRuleStore) ListResourceRuleJobs(_ context.Context, _ int, resourceID string) ([]state.ResourceRuleJobSummary, error) {
+	store.listedFor = resourceID
 	var jobs []state.ResourceRuleJobSummary
 	for _, job := range store.jobs {
+		if resourceID != "" && job.ResourceID != resourceID {
+			continue
+		}
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
@@ -133,11 +138,16 @@ func TestRulesRouteReportsMissingActivationAndResourceRules(t *testing.T) {
 }
 
 func TestRuleDraftRoutesReturnSummariesAndProposals(t *testing.T) {
-	handler := ruleTestServer(t, newRuleStore(), false)
+	store := newRuleStore()
+	handler := ruleTestServer(t, store, false)
 	response := serveRuleRequest(handler, http.MethodGet, "/api/v1/rule-drafts", "")
 	var list ruleDraftsResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || len(list.Drafts) != 2 {
 		t.Fatalf("drafts=%s err=%v", response.Body, err)
+	}
+	response = serveRuleRequest(handler, http.MethodGet, "/api/v1/rule-drafts?resourceId=deployment-a", "")
+	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || len(list.Drafts) != 1 || store.listedFor != "deployment-a" {
+		t.Fatalf("resource drafts=%s listedFor=%q err=%v", response.Body, store.listedFor, err)
 	}
 	response = serveRuleRequest(handler, http.MethodGet, "/api/v1/rule-drafts/1", "")
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"proposal":{"rationale":"r"`) {

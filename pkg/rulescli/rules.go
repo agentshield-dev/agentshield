@@ -148,7 +148,7 @@ func Run(parent context.Context, args []string, output io.Writer) error {
 		}
 		return encodeJSON(output, jobs)
 	case "jobs":
-		jobs, err := store.ListResourceRuleJobs(ctx, 100)
+		jobs, err := store.ListResourceRuleJobs(ctx, 100, "")
 		if err != nil {
 			return err
 		}

@@ -17,7 +17,7 @@ import (
 type RuleStore interface {
 	ReadActiveDetectorRuleset(context.Context) (detector.Activation, error)
 	ReadResourceRules(context.Context) ([]detector.ResourceRule, error)
-	ListResourceRuleJobs(context.Context, int) ([]state.ResourceRuleJobSummary, error)
+	ListResourceRuleJobs(context.Context, int, string) ([]state.ResourceRuleJobSummary, error)
 	ResourceRuleJobStatus(context.Context, int64) (state.ResourceRuleJobSummary, bool, error)
 	ResourceRuleProposal(context.Context, int64) (json.RawMessage, bool, error)
 	ReviewResourceRuleJobRules(context.Context, int64, string, string, []string) error
@@ -108,7 +108,12 @@ func (server *Server) handleRuleDrafts(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusServiceUnavailable, "list rule drafts", errRulesUnavailable)
 		return
 	}
-	drafts, err := server.rules.ListResourceRuleJobs(request.Context(), draftListLimit)
+	resourceID := request.URL.Query().Get("resourceId")
+	if len(resourceID) > 128 {
+		writeError(writer, http.StatusBadRequest, "list rule drafts", errors.New("resource ID must contain at most 128 bytes"))
+		return
+	}
+	drafts, err := server.rules.ListResourceRuleJobs(request.Context(), draftListLimit, resourceID)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "list rule drafts", err)
 		return

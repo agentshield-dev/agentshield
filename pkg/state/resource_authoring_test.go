@@ -446,6 +446,7 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 		}
 	}
 	var newest ResourceRuleJob
+	var oldest ResourceRuleJob
 	ruleIDs := map[int64]string{}
 	for range 3 {
 		job, claimed, err := store.ClaimResourceRuleJob(ctx, "worker", time.Minute, 0)
@@ -467,6 +468,9 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 		if job.ID > newest.ID {
 			newest = job
 		}
+		if oldest.ID == 0 || job.ID < oldest.ID {
+			oldest = job
+		}
 	}
 	if err := store.ReviewResourceRuleJobRules(ctx, newest.ID, ResourceRuleReviewApproved, "operator", []string{ruleIDs[newest.ID]}); err != nil {
 		t.Fatal(err)
@@ -475,12 +479,26 @@ func TestPostgreSQLReadResourceRulesBoundsAfterActiveRules(t *testing.T) {
 	if err != nil || len(allRules) != 3 {
 		t.Fatalf("complete rule inventory=%#v err=%v", allRules, err)
 	}
+	invalidRule := detector.Rule{
+		ID: ruleIDs[oldest.ID], Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: oldest.Context.ResourceID,
+		Type: "resource", Kind: oldest.Context.Kind, Expression: "missing_field == true", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"},
+	}
+	invalidProposal, err := json.Marshal(map[string]any{"rules": []map[string]any{{"rule": invalidRule}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE resource_rule_jobs SET proposal=$2 WHERE job_id=$1`, oldest.ID, invalidProposal); err != nil {
+		t.Fatal(err)
+	}
 	rules, err := store.readResourceRules(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rules) != 2 || rules[0].Mode != detector.RuleModeActive || rules[0].Rule.ID != ruleIDs[newest.ID] {
 		t.Fatalf("bounded rules=%#v, want newest approved rule before shadow overflow", rules)
+	}
+	if err := detector.ValidateResourceRules(rules); err != nil {
+		t.Fatalf("bounded rules included a corrupt rule before later valid rules: %v", err)
 	}
 }
 
@@ -743,7 +761,7 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 	if _, err := store.ReplaceContribution(ctx, contribution); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := store.ListResourceRuleJobs(ctx, 10)
+	jobs, err := store.ListResourceRuleJobs(ctx, 10, "")
 	if err != nil || len(jobs) != 1 || !jobs[0].CurrentRevision {
 		t.Fatalf("jobs=%#v err=%v", jobs, err)
 	}
@@ -793,7 +811,7 @@ func TestPostgreSQLRequestResourceRuleJobReauthorsTheCurrentRevision(t *testing.
 	if _, err := store.ReplaceContribution(ctx, refreshed); err != nil {
 		t.Fatal(err)
 	}
-	if jobs, err := store.ListResourceRuleJobs(ctx, 10); err != nil || len(jobs) != 1 || jobs[0].Status != "completed" || jobs[0].ReviewStatus != ResourceRuleReviewApproved {
+	if jobs, err := store.ListResourceRuleJobs(ctx, 10, resourceID); err != nil || len(jobs) != 1 || jobs[0].Status != "completed" || jobs[0].ReviewStatus != ResourceRuleReviewApproved {
 		t.Fatalf("context refresh changed job execution state: jobs=%#v err=%v", jobs, err)
 	}
 

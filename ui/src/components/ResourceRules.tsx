@@ -17,7 +17,10 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 	const [status, setStatus] = useState('');
 	const [busy, setBusy] = useState(false);
 	const loaded = useApi<RulesResponse>('/api/v1/rules', changes);
-	const drafts = useApi<RuleDraftsResponse>('/api/v1/rule-drafts', changes);
+	const drafts = useApi<RuleDraftsResponse>(
+		`/api/v1/rule-drafts?resourceId=${encodeURIComponent(resourceId)}`,
+		changes
+	);
 	const rules = list(loaded.data?.resourceRules).filter(
 		item => item.rule.scopeResourceId === resourceId
 	);

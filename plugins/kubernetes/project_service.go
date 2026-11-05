@@ -134,16 +134,20 @@ func resourceAuthoringAttribute(key string) bool {
 	}
 	switch key {
 	case "kubernetes/api-version", "kubernetes/name", "kubernetes/namespace",
-		"kubernetes/service-type", "kubernetes/load-balancer-class", "kubernetes/external-traffic-policy",
-		"kubernetes/internal-traffic-policy", "kubernetes/traffic-distribution", "kubernetes/ip-family-policy":
+		"kubernetes/service-type", "kubernetes/external-name", "kubernetes/load-balancer-class",
+		"kubernetes/external-traffic-policy", "kubernetes/internal-traffic-policy", "kubernetes/traffic-distribution",
+		"kubernetes/ip-family-policy", "kubernetes/cluster-addresses", "kubernetes/external-ips", "kubernetes/ports",
+		"kubernetes/load-balancer-source-ranges", "kubernetes/load-balancer-ingress",
+		"kubernetes/ingress-class", "kubernetes/hosts", "kubernetes/backends", "kubernetes/unresolved-backends", "kubernetes/tls",
+		"kubernetes/pod-selector", "kubernetes/policy-types", "kubernetes/ingress-rule-count", "kubernetes/egress-rule-count",
+		"kubernetes/ingress-rules", "kubernetes/egress-rules", "kubernetes/omitted-ingress-rules", "kubernetes/omitted-egress-rules",
+		"kubernetes/gateway-class", "kubernetes/addresses", "kubernetes/listeners", "kubernetes/status-addresses",
+		"kubernetes/hostnames", "kubernetes/parent-refs", "kubernetes/rules", "kubernetes/parent-status", "kubernetes/unresolved-references",
+		"kubernetes/rbac-role-ref-api-group", "kubernetes/rbac-role-ref-kind", "kubernetes/rbac-role-ref-name",
+		"kubernetes/rbac-subjects", "kubernetes/rbac-subjects-omitted":
 		return true
 	}
-	for _, prefix := range []string{"kubernetes/label/", "kubernetes/rbac-", "kubernetes/ingress-", "kubernetes/networkpolicy-", "kubernetes/gateway-", "kubernetes/httproute-"} {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(key, "kubernetes/label/")
 }
 
 func addServiceAttributes(result map[string]string, service *corev1.Service) {

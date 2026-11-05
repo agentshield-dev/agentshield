@@ -621,12 +621,13 @@ func scanResourceRuleJob(row pgx.Row, job *ResourceRuleJobSummary) error {
 		&job.RuleCount, &job.RequestedBy, &job.RequestedAt, &job.CurrentRevision)
 }
 
-// ListResourceRuleJobs returns up to limit (1-1000) jobs, newest first.
-func (s *Store) ListResourceRuleJobs(ctx context.Context, limit int) ([]ResourceRuleJobSummary, error) {
+// ListResourceRuleJobs returns up to limit (1-1000) jobs, newest first. A
+// non-empty resourceID restricts the result to that resource.
+func (s *Store) ListResourceRuleJobs(ctx context.Context, limit int, resourceID string) ([]ResourceRuleJobSummary, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, errors.New("resource job list limit must be between 1 and 1000")
 	}
-	rows, err := s.pool.Query(ctx, `SELECT `+resourceRuleJobColumns+` FROM resource_rule_jobs ORDER BY job_id DESC LIMIT $1`, limit)
+	rows, err := s.pool.Query(ctx, `SELECT `+resourceRuleJobColumns+` FROM resource_rule_jobs WHERE $2='' OR resource_id::text=$2 ORDER BY job_id DESC LIMIT $1`, limit, resourceID)
 	if err != nil {
 		return nil, fmt.Errorf("list Resource rule authoring jobs: %w", err)
 	}
@@ -911,6 +912,7 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 	}
 	defer rows.Close()
 	var result []detector.ResourceRule
+	seen := make(map[string]struct{})
 	for rows.Next() {
 		var resourceID, review string
 		var encoded []byte
@@ -952,7 +954,17 @@ func (s *Store) readResourceRules(ctx context.Context, limit int) ([]detector.Re
 					continue
 				}
 			}
-			result = append(result, detector.ResourceRule{Rule: candidate.Rule, Mode: mode})
+			if _, found := seen[candidate.Rule.ID]; found {
+				slog.WarnContext(ctx, "skip duplicate resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
+				continue
+			}
+			resourceRule := detector.ResourceRule{Rule: candidate.Rule, Mode: mode}
+			if err := detector.ValidateResourceRules([]detector.ResourceRule{resourceRule}); err != nil {
+				slog.WarnContext(ctx, "skip invalid resource rule", "resourceID", resourceID, "ruleID", candidate.Rule.ID)
+				continue
+			}
+			seen[candidate.Rule.ID] = struct{}{}
+			result = append(result, resourceRule)
 			if limit > 0 && len(result) > limit {
 				return result, nil
 			}

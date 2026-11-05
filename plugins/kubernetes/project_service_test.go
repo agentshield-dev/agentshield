@@ -203,6 +203,32 @@ func TestProjectResourceAuthoringAttributesAreDeterministicallyBounded(t *testin
 	}
 }
 
+func TestResourceAuthoringContextTracksSupportedResourceAttributes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  string
+	}{
+		{name: "Ingress", key: "kubernetes/backends"},
+		{name: "NetworkPolicy", key: "kubernetes/ingress-rules"},
+		{name: "HTTPRoute", key: "kubernetes/rules"},
+		{name: "Service", key: "kubernetes/ports"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := func(value string) string {
+				t.Helper()
+				attributes := map[string]string{"kubernetes/name": "example", test.key: value}
+				if err := addResourceAuthoringContext(attributes); err != nil {
+					t.Fatal(err)
+				}
+				return attributes[graph.ResourceAuthoringContextAttribute]
+			}
+			if project(`["first"]`) == project(`["second"]`) {
+				t.Fatalf("%s did not change the resource authoring context", test.key)
+			}
+		})
+	}
+}
+
 func TestProjectResourceAuthoringContextSupportsAppsControllers(t *testing.T) {
 	for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
 		t.Run(kind, func(t *testing.T) {
