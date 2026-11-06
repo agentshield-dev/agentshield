@@ -104,25 +104,25 @@ func TestCELUsesOnlyMinimalInputAndUnknownIsNotExternal(t *testing.T) {
 	}
 }
 
-func TestWorkloadRuleUsesHostAnchorScoping(t *testing.T) {
+func TestScopedRuleUsesHostSubjectScoping(t *testing.T) {
 	rule := testRule()
-	rule.WorkloadResourceID = "deployment-a"
+	rule.ScopeResourceID = "deployment-a"
 	engine, err := New(DefaultConfig(), Ruleset{ID: "workload", Rules: []Rule{rule}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name    string
-		anchors []string
-		want    int
+		name     string
+		subjects []string
+		want     int
 	}{
-		{name: "target deployment", anchors: []string{"deployment-a", "destination"}, want: 1},
-		{name: "different deployment", anchors: []string{"deployment-b", "destination"}},
-		{name: "unrelated event", anchors: []string{"destination", "client"}},
+		{name: "target resource", subjects: []string{"deployment-a"}, want: 1},
+		{name: "different resource", subjects: []string{"deployment-b"}},
+		{name: "resource is only the object", subjects: []string{"client"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			event := testEvent()
-			event.AnchorIDs = test.anchors
+			event.SubjectIDs = test.subjects
 			result, err := engine.Evaluate(context.Background(), []Event{event})
 			if err != nil {
 				t.Fatal(err)

@@ -181,6 +181,45 @@
       "policies": [
         {"id": "docs-static-site-no-outbound-calls", "selector": "relationship:communicates-with", "expression": "true", "rationale": "A static documentation site serves files and calls no cluster services, so any new outbound communication edge is unexpected."}
       ]
+    },
+    {
+      "id": "sso-enumerates-private-repositories",
+      "class": "security",
+      "description": "A compromised SSO server pivots from routine identity-provider discovery to enumerate private source repositories.",
+      "source": "sso-server",
+      "targets": [
+        {"name": "corporate-identity-provider"},
+        {"name": "source-control-api"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "corporate-identity-provider", "method": "GET", "path": "/.well-known/openid-configuration"},
+        {"kind": "request", "target": "corporate-identity-provider", "method": "GET", "path": "/.well-known/jwks.json"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "source-control-api", "method": "GET", "path": "/api/v3/orgs/example-org/repos?visibility=private"}
+      ],
+      "policies": [
+        {"id": "sso-server-identity-provider-only", "selector": "telemetry:active-probe", "expression": "!operation.matches('^GET /(\\\\.well-known/(openid-configuration|jwks\\\\.json)|oauth2/v1/keys)([/?]|$)')", "rationale": "An SSO server reads identity-provider discovery and signing-key endpoints; source-control API access is outside that role."}
+      ]
+    },
+    {
+      "id": "sso-refreshes-signing-keys",
+      "class": "benign",
+      "description": "The SSO server refreshes signing keys from another standard identity-provider endpoint.",
+      "source": "sso-server",
+      "targets": [
+        {"name": "corporate-identity-provider"}
+      ],
+      "baseline": [
+        {"kind": "request", "target": "corporate-identity-provider", "method": "GET", "path": "/.well-known/openid-configuration"},
+        {"kind": "request", "target": "corporate-identity-provider", "method": "GET", "path": "/.well-known/jwks.json"}
+      ],
+      "observed": [
+        {"kind": "request", "target": "corporate-identity-provider", "method": "GET", "path": "/oauth2/v1/keys"}
+      ],
+      "policies": [
+        {"id": "sso-server-identity-provider-only", "selector": "telemetry:active-probe", "expression": "!operation.matches('^GET /(\\\\.well-known/(openid-configuration|jwks\\\\.json)|oauth2/v1/keys)([/?]|$)')", "rationale": "An SSO server reads identity-provider discovery and signing-key endpoints; source-control API access is outside that role."}
+      ]
     }
   ]
 }

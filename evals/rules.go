@@ -7,10 +7,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
+	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 )
 
@@ -18,9 +18,9 @@ import (
 const (
 	// RuleSourcePolicy is the campaign's operator-written policy, run as an active CEL ruleset.
 	RuleSourcePolicy = "policy"
-	// RuleSourceAuthored is the production Deployment rule author's draft for the
+	// RuleSourceAuthored is the production resource rule author's draft for the
 	// source workload, written from its observed behavior at the end of the
-	// baseline phase and run as an approved (active) Deployment rule.
+	// baseline phase and run as an approved (active) resource rule.
 	RuleSourceAuthored = "authored"
 )
 
@@ -38,14 +38,14 @@ type RuleEvaluation struct {
 	Rules     []detector.Rule `json:"rules"`
 	Rationale string          `json:"rationale,omitempty"`
 	// ObservedBehavior is the baseline profile the author was given, if any.
-	ObservedBehavior *state.DeploymentBehavior `json:"observedBehavior,omitempty"`
+	ObservedBehavior *state.WorkloadBehavior `json:"observedBehavior,omitempty"`
 	// Error records a rule that could not be produced, such as a failed authoring call.
 	Error  string      `json:"error,omitempty"`
 	Phases []RulePhase `json:"phases"`
 	// ObservedPathMatch reports a rule finding in the observed window whose signals
 	// anchor both observed endpoints.
 	ObservedPathMatch bool `json:"observedPathMatch"`
-	// NormalPhaseFindings counts rule findings in the setup and baseline windows,
+	// NormalPhaseFindings counts rule findings in the setup and stabilization windows,
 	// which contain only expected activity.
 	NormalPhaseFindings int    `json:"normalPhaseFindings"`
 	Outcome             string `json:"outcome"`
@@ -71,14 +71,14 @@ type ruleWindow struct {
 }
 
 // evaluateRules runs rules through the production detector and rule-finding path
-// over every window and scores them for the campaign class. Workload rules are
-// loaded as approved Deployment rules; other rules form the active ruleset.
-func evaluateRules(ctx context.Context, source, class string, rules []detector.Rule, workloadRules bool, windows []ruleWindow, now time.Time) (RuleEvaluation, error) {
+// over every window and scores them for the campaign class. Resource rules are
+// loaded as approved resource rules; other rules form the active ruleset.
+func evaluateRules(ctx context.Context, source, class string, rules []detector.Rule, resourceRules bool, windows []ruleWindow, now time.Time) (RuleEvaluation, error) {
 	evaluation := RuleEvaluation{Source: source, Rules: rules, Phases: []RulePhase{}}
 	if evaluation.Rules == nil {
 		evaluation.Rules = []detector.Rule{}
 	}
-	engine, err := ruleEngine(source, rules, workloadRules)
+	engine, err := ruleEngine(source, rules, resourceRules)
 	if err != nil {
 		return RuleEvaluation{}, err
 	}
@@ -126,19 +126,19 @@ func evaluateRules(ctx context.Context, source, class string, rules []detector.R
 	return evaluation, nil
 }
 
-func ruleEngine(source string, rules []detector.Rule, workloadRules bool) (*detector.Engine, error) {
-	if !workloadRules {
+func ruleEngine(source string, rules []detector.Rule, resourceRules bool) (*detector.Engine, error) {
+	if !resourceRules {
 		return detector.New(detector.DefaultConfig(), detector.Ruleset{ID: "evals/" + source, Rules: rules})
 	}
 	engine, err := detector.New(detector.DefaultConfig(), detector.DefaultRuleset())
 	if err != nil {
 		return nil, err
 	}
-	overlay := make([]detector.WorkloadRule, 0, len(rules))
+	overlay := make([]detector.ResourceRule, 0, len(rules))
 	for _, rule := range rules {
-		overlay = append(overlay, detector.WorkloadRule{Rule: rule, Mode: detector.RuleModeActive})
+		overlay = append(overlay, detector.ResourceRule{Rule: rule, Mode: detector.RuleModeActive})
 	}
-	return engine, engine.SetWorkloadRules(overlay)
+	return engine, engine.SetResourceRules(overlay)
 }
 
 // policyRules scopes rule policies to the source workload.
@@ -155,9 +155,9 @@ func policyRules(policies []RulePolicy, workloadResourceID string) ([]detector.R
 }
 
 // authorRules drafts rules for the source Deployment with the production author.
-func authorRules(ctx context.Context, author deploymentauthoring.Author, workload state.DeploymentAuthoringContext) ([]detector.Rule, string, error) {
+func authorRules(ctx context.Context, author resourceauthoring.Author, workload state.ResourceAuthoringContext) ([]detector.Rule, string, error) {
 	if author == nil {
-		return nil, "", errors.New("Deployment rule author is required")
+		return nil, "", errors.New("resource rule author is required")
 	}
 	proposal, err := author.Author(ctx, workload)
 	if err != nil {

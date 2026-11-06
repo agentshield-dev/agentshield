@@ -16,7 +16,7 @@ import {
 
 export function requestRegeneration(resourceId: string): Promise<RuleDraftResponse> {
 	return postJSON<RuleDraftResponse>(
-		`/api/v1/workloads/${encodeURIComponent(resourceId)}/rule-drafts`,
+		`/api/v1/resources/${encodeURIComponent(resourceId)}/rule-drafts`,
 		{}
 	);
 }
@@ -24,7 +24,7 @@ export function requestRegeneration(resourceId: string): Promise<RuleDraftRespon
 interface ApprovalDialogProps {
 	draft: RuleDraft;
 	proposal: RuleProposal;
-	onApproved(): void;
+	onApproved(count: number): void;
 	onClose(): void;
 }
 
@@ -34,6 +34,7 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
 	const rules = list(proposal.rules);
+	const [selected, setSelected] = useState(() => new Set(rules.map(item => item.rule.id)));
 
 	useEffect(() => {
 		const element = dialog.current;
@@ -44,8 +45,11 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 		setBusy(true);
 		setError('');
 		try {
-			await postJSON(`/api/v1/rule-drafts/${draft.id}/review`, { decision: 'approved' });
-			onApproved();
+			await postJSON(`/api/v1/rule-drafts/${draft.id}/review`, {
+				decision: 'approved',
+				ruleIds: [...selected]
+			});
+			onApproved(selected.size);
 			dialog.current?.close();
 		} catch (failure) {
 			setError(errorMessage(failure));
@@ -59,26 +63,41 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 			<form method="dialog" className="approval-sheet">
 				<header>
 					<span className="eyebrow">Explicit approval</span>
-					<h2>Activate {rules.length === 1 ? 'one rule' : `${rules.length} rules`}</h2>
+					<h2>Activate {selected.size === 1 ? 'one rule' : `${selected.size} rules`}</h2>
 				</header>
 				<dl className="detail-grid">
-					<dt>Workload</dt>
+					<dt>Resource</dt>
 					<dd>{graph.name(draft.resourceId)}</dd>
 					<dt>Draft</dt>
 					<dd>#{draft.id}</dd>
 					<dt>Effect</dt>
 					<dd>
 						The rules leave shadow mode, and their matches become findings. They replace this
-						workload's previously approved rules.
+						resource's previously approved rules.
 					</dd>
 				</dl>
-				<section className="approval-preview" aria-label="Rules to activate">
-					<h3>Rules to activate</h3>
-					<pre>
-						{rules
-							.map(item => `${ruleSelector(item.rule)}\n  ${item.rule.expression}`)
-							.join('\n\n')}
-					</pre>
+				<section className="approval-preview" aria-label="Select rules to activate">
+					<h3>Select rules to activate</h3>
+					<div className="rule-selection">
+						{rules.map(item => (
+							<label key={item.rule.id}>
+								<input
+									type="checkbox"
+									checked={selected.has(item.rule.id)}
+									onChange={event => {
+										const next = new Set(selected);
+										if (event.target.checked) next.add(item.rule.id);
+										else next.delete(item.rule.id);
+										setSelected(next);
+									}}
+								/>
+								<span>
+									<strong>{ruleSelector(item.rule)}</strong>
+									<code>{item.rule.expression}</code>
+								</span>
+							</label>
+						))}
+					</div>
 				</section>
 				<p className="approval-error" role="alert">
 					{error}
@@ -87,8 +106,13 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 					<button className="button secondary" type="submit" value="cancel">
 						Cancel
 					</button>
-					<button className="button primary" type="button" disabled={busy} onClick={approve}>
-						Approve and activate
+					<button
+						className="button primary"
+						type="button"
+						disabled={busy || selected.size === 0}
+						onClick={approve}
+					>
+						Approve selected
 					</button>
 				</footer>
 			</form>
@@ -164,6 +188,7 @@ export function RuleDraftDetail({
 	const state = draftState(draft);
 	const rules = list(proposal?.rules);
 	const trace = list(proposal?.toolCalls);
+	const approvedRuleIDs = new Set(list(proposal?.approvedRuleIds));
 
 	async function act(action: () => Promise<unknown>, done: string) {
 		setBusy(true);
@@ -203,14 +228,15 @@ export function RuleDraftDetail({
 			) : null}
 			{!draft.currentRevision ? (
 				<div className="stale-note">
-					<strong>Previous revision.</strong> The Deployment no longer runs this Pod template, so
-					its rules are not loaded.
+					<strong>Previous revision.</strong> This draft cannot be newly approved. An earlier
+					approval may remain active until the current revision is approved or the resource leaves
+					the graph.
 				</div>
 			) : null}
 			<dl className="finding-meta">
 				<div>
 					<dt>Trigger</dt>
-					<dd>{draft.requestedBy ? `Requested by ${draft.requestedBy}` : 'New Pod template'}</dd>
+					<dd>{draft.requestedBy ? `Requested by ${draft.requestedBy}` : 'New context'}</dd>
 				</div>
 				<div>
 					<dt>Requested</dt>
@@ -231,6 +257,18 @@ export function RuleDraftDetail({
 					<dd>{draft.ruleCount}</dd>
 				</div>
 			</dl>
+			{proposal?.context ? (
+				<section className="record-section">
+					<h3>Resource context</h3>
+					<pre>
+						{JSON.stringify(
+							{ context: proposal.context, attributes: proposal.attributes },
+							null,
+							2
+						)}
+					</pre>
+				</section>
+			) : null}
 			<section className="remediation-list" aria-label="Draft rules">
 				<h3>Proposed rules</h3>
 				{authoring ? (
@@ -238,7 +276,7 @@ export function RuleDraftDetail({
 						{state === 'queued'
 							? draft.requestedAt
 								? 'Requested; waiting for the authoring worker.'
-								: 'Waiting for the baseline window, while AgentShield observes the workload. Author now skips the wait.'
+								: 'Waiting for the stabilization window. Author now skips the wait.'
 							: state === 'authoring'
 								? 'The AI author is adding rules…'
 								: 'The worker will retry this draft automatically. Author now retries it without waiting.'}
@@ -253,7 +291,14 @@ export function RuleDraftDetail({
 						<article className="remediation-item" key={item.rule.id}>
 							<div className="finding-row-top">
 								<strong>{ruleSelector(item.rule)}</strong>
-								<span className="badge">{item.rule.risk}</span>
+								<div className="badge-row">
+									<span className="badge">{item.rule.risk}</span>
+									{state === 'approved' && proposal?.approvedRuleIds ? (
+										<span className={approvedRuleIDs.has(item.rule.id) ? 'badge good' : 'badge'}>
+											{approvedRuleIDs.has(item.rule.id) ? 'active' : 'not approved'}
+										</span>
+									) : null}
+								</div>
 							</div>
 							<section className="approval-preview">
 								<pre>{item.rule.expression}</pre>
@@ -262,7 +307,7 @@ export function RuleDraftDetail({
 						</article>
 					))
 				) : (
-					<p className="muted">The author abstained: no rule fits this workload.</p>
+					<p className="muted">The author abstained: no rule fits this resource.</p>
 				)}
 			</section>
 			<div className="remediation-actions">
@@ -270,7 +315,7 @@ export function RuleDraftDetail({
 					<button
 						className="button primary"
 						type="button"
-						disabled={busy || !rules.length}
+						disabled={busy || !rules.length || !draft.currentRevision}
 						onClick={() => setApproving(true)}
 					>
 						Approve
@@ -284,7 +329,7 @@ export function RuleDraftDetail({
 						onClick={() =>
 							act(
 								() => postJSON(`/api/v1/rule-drafts/${draft.id}/review`, { decision: 'rejected' }),
-								'Rejected; the rules are no longer loaded.'
+								'Rejected; this draft’s rules are no longer loaded.'
 							)
 						}
 					>
@@ -309,7 +354,7 @@ export function RuleDraftDetail({
 					type="button"
 					onClick={() => onViewGraph(draft.resourceId)}
 				>
-					View workload
+					View resource
 				</button>
 			</div>
 			<p className="remediation-status" role="status">
@@ -330,8 +375,10 @@ export function RuleDraftDetail({
 				<ApprovalDialog
 					draft={draft}
 					proposal={proposal}
-					onApproved={() => {
-						setStatus('Approved; the rules now run in active mode.');
+					onApproved={count => {
+						setStatus(
+							`Approved ${count} ${count === 1 ? 'rule' : 'rules'}; the selection now runs in active mode.`
+						);
 						onChanged();
 						setPoll(value => value + 1);
 					}}

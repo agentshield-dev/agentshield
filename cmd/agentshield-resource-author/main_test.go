@@ -13,12 +13,12 @@ import (
 )
 
 func TestDecodeContext(t *testing.T) {
-	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod","serviceAccountName":"payments-runtime"}`
+	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod","contextSha256":"` + strings.Repeat("a", 64) + `","context":{"workload":{"serviceAccountName":"payments-runtime"}}}`
 	if _, err := decodeContext(strings.NewReader(input)); err != nil {
 		t.Fatal(err)
 	}
 	for _, invalid := range []string{
-		`{"resourceId":"deployment-id","kind":"kubernetes/pod"}`,
+		`{"resourceId":"deployment-id","kind":"kubernetes/pod","contextSha256":"short","context":{}}`,
 		`{"resourceId":"deployment-id","kind":"kubernetes/deployment","unknown":"field"}`,
 		`{"resourceId":"deployment-id","kind":"kubernetes/deployment","labels":{"app":"payments"}}`,
 		`{"resourceId":"deployment-id","kind":"kubernetes/deployment"} {}`,
@@ -52,7 +52,7 @@ func TestRunCallsAuthorWithoutDatabase(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"id":"request-1","model":"test","status":"completed","output":[{"type":"function_call","call_id":"finish-1","name":"finish","arguments":"{\"rationale\":\"No supported rule is justified.\"}"}],"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}`))
 	}))
 	defer server.Close()
-	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod"}`
+	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod","contextSha256":"` + strings.Repeat("a", 64) + `","context":{}}`
 	file := t.TempDir() + "/context.json"
 	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestRunUsesAnthropicMessagesAPI(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"id":"msg-1","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"toolu_finish","name":"finish","input":{"rationale":"No supported rule is justified."}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":2}}`))
 	}))
 	defer server.Close()
-	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod"}`
+	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"payments","namespace":"prod","contextSha256":"` + strings.Repeat("a", 64) + `","context":{}}`
 	file := t.TempDir() + "/context.json"
 	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRunDryRunPrintsExactProviderRequestWithoutProviderIO(t *testing.T) {
 	t.Setenv("AGENTSHIELD_MODEL_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"istiod","namespace":"istio-system","serviceAccountName":"istiod"}`
+	input := `{"resourceId":"deployment-id","kind":"kubernetes/deployment","name":"istiod","namespace":"istio-system","contextSha256":"` + strings.Repeat("a", 64) + `","context":{"workload":{"serviceAccountName":"istiod"}}}`
 	file := t.TempDir() + "/context.json"
 	if err := os.WriteFile(file, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestRunDryRunPrintsExactProviderRequestWithoutProviderIO(t *testing.T) {
 				userMessage := messages[0].(map[string]any)
 				content := userMessage["content"].([]any)
 				if !strings.Contains(content[0].(map[string]any)["text"].(string), `"serviceAccountName":"istiod"`) {
-					t.Errorf("Anthropic request omitted Deployment context")
+					t.Errorf("Anthropic request omitted resource context")
 				}
 				if body["output_config"] != nil || body["tool_choice"].(map[string]any)["type"] != "any" {
 					t.Errorf("Anthropic request must require a tool call without an output format: %#v %#v", body["output_config"], body["tool_choice"])
@@ -160,7 +160,7 @@ func TestRunDryRunPrintsExactProviderRequestWithoutProviderIO(t *testing.T) {
 				}
 				userContent, _ := input[0].(map[string]any)["content"].(string)
 				if !strings.Contains(userContent, `"serviceAccountName":"istiod"`) || strings.Contains(userContent, "labels") {
-					t.Errorf("OpenAI request omitted Deployment context")
+					t.Errorf("OpenAI request omitted resource context")
 				}
 				if body["text"] != nil || body["tool_choice"] != "required" {
 					t.Errorf("OpenAI request must require a tool call without a response format: %#v %#v", body["text"], body["tool_choice"])

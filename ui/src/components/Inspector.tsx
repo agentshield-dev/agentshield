@@ -1,6 +1,6 @@
 import type { AssertionBase, Resource } from '@/api/types';
 import { DetailRows } from '@/components/DetailRows';
-import { WorkloadRules } from '@/components/WorkloadRules';
+import { ResourceRules } from '@/components/ResourceRules';
 import { useGraph } from '@/lib/graph-context';
 import type { Selection } from '@/lib/layout';
 import { label, list, namespace } from '@/lib/model';
@@ -61,6 +61,9 @@ function Details({ selection }: { selection: Selection }) {
 	if (selection.type === 'resource') {
 		const { item } = selection;
 		const assertions = list(item.assertions);
+		const authorable = assertions.some(
+			assertion => assertion.attributes?.['agentshield/resource-authoring-context']
+		);
 		const facets = list(graph.record?.snapshot.facets).filter(
 			facet => facet.resourceId === item.id
 		);
@@ -93,7 +96,7 @@ function Details({ selection }: { selection: Selection }) {
 						<p className="muted">No assertions recorded.</p>
 					)}
 				</section>
-				{item.kind === 'kubernetes/deployment' ? <WorkloadRules workloadId={item.id} /> : null}
+				{authorable ? <ResourceRules resourceId={item.id} /> : null}
 				{facets.length ? (
 					<section className="detail-section">
 						<h3>Facets · {facets.length}</h3>

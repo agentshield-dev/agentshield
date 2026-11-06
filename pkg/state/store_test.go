@@ -1508,7 +1508,7 @@ func integrationStore(t *testing.T) (*Store, *graph.Compiler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.pool.Exec(context.Background(), `TRUNCATE deployment_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := store.pool.Exec(context.Background(), `TRUNCATE resource_rule_jobs, detection_signals, investigation_jobs, contributions, resource_identities, native_events, reasoning_cursors, findings RESTART IDENTITY CASCADE`); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}

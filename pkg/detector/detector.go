@@ -53,7 +53,7 @@ type InvestigationSignal struct {
 	RuleID        string     `json:"ruleId,omitempty"`
 	RuleRevision  uint64     `json:"ruleRevision,omitempty"`
 	RulesetDigest string     `json:"rulesetDigest,omitempty"`
-	// RuleMode is RuleModeShadow for signals from unreviewed workload rules, which are recorded but never investigated.
+	// RuleMode is RuleModeShadow for signals from unreviewed resource rules, which are recorded but never investigated.
 	RuleMode RuleMode `json:"ruleMode,omitempty"`
 }
 
@@ -80,13 +80,19 @@ type Config struct {
 	SensitiveRoleWeights map[string]int
 	// ExternalDestinationWeight adds to the score of a new communication path to a public destination.
 	ExternalDestinationWeight int
-	// SensitiveResourceKinds maps resource kinds whose creation grants privilege or intercepts
-	// admission to the reason recorded on the resulting signal.
-	SensitiveResourceKinds map[string]string
+	SensitiveResourcePolicies []SensitiveResourcePolicy
 	// MinimumScore drops built-in signals below this score. Scores of 3 or more are medium risk
 	// and eligible for agentic investigation; 2 is low risk and recorded only. Values below 1
 	// are treated as 1.
 	MinimumScore int
+}
+
+type SensitiveResourcePolicy struct {
+	Kind                 string
+	RequiredAttributes   map[string]string
+	AnyPresentAttributes []string
+	Risk                 Risk
+	Reasons              []string
 }
 
 // DefaultConfig returns a five-minute window, weights for sensitive roles, and
@@ -98,11 +104,21 @@ func DefaultConfig() Config {
 			graph.NetworkRoleControlPlaneAPI: 3,
 		},
 		ExternalDestinationWeight: 1,
-		SensitiveResourceKinds: map[string]string{
-			"kubernetes/clusterrolebinding":             "rbac_binding",
-			"kubernetes/rolebinding":                    "rbac_binding",
-			"kubernetes/mutatingwebhookconfiguration":   "admission_webhook",
-			"kubernetes/validatingwebhookconfiguration": "admission_webhook",
+		SensitiveResourcePolicies: []SensitiveResourcePolicy{
+			{
+				Kind: "kubernetes/clusterrolebinding", Risk: RiskHigh,
+				RequiredAttributes: map[string]string{
+					"kubernetes/rbac-role-ref-api-group": "rbac.authorization.k8s.io",
+					"kubernetes/rbac-role-ref-kind":      "ClusterRole",
+					"kubernetes/rbac-role-ref-name":      "cluster-admin",
+				},
+				AnyPresentAttributes: []string{"kubernetes/rbac-subjects", "kubernetes/rbac-subjects-omitted"},
+				Reasons:              []string{"sensitive_resource_added", "rbac_binding", "cluster_admin_binding"},
+			},
+			{Kind: "kubernetes/clusterrolebinding", Risk: RiskMedium, Reasons: []string{"sensitive_resource_added", "rbac_binding"}},
+			{Kind: "kubernetes/rolebinding", Risk: RiskMedium, Reasons: []string{"sensitive_resource_added", "rbac_binding"}},
+			{Kind: "kubernetes/mutatingwebhookconfiguration", Risk: RiskMedium, Reasons: []string{"sensitive_resource_added", "admission_webhook"}},
+			{Kind: "kubernetes/validatingwebhookconfiguration", Risk: RiskMedium, Reasons: []string{"sensitive_resource_added", "admission_webhook"}},
 		},
 		MinimumScore: 2,
 	}

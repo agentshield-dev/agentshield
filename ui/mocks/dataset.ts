@@ -108,6 +108,27 @@ function object(
 	};
 	if (namespace) attributes['kubernetes/namespace'] = namespace;
 	if (app) attributes['kubernetes/label/app'] = app;
+	if (
+		[
+			'Deployment',
+			'StatefulSet',
+			'DaemonSet',
+			'Service',
+			'ServiceAccount',
+			'RoleBinding',
+			'ClusterRoleBinding',
+			'Ingress',
+			'NetworkPolicy',
+			'Gateway',
+			'HTTPRoute'
+		].includes(kind)
+	) {
+		attributes['agentshield/resource-authoring-context'] = JSON.stringify({
+			schemaVersion: 'v1',
+			context: {},
+			attributes: { 'kubernetes/name': name }
+		});
+	}
 	const revision = 10000 + (Number.parseInt(digest(uid).slice(0, 5), 16) % 90000);
 	return {
 		id: uuid('resource', claim.immutableKey),
@@ -1122,7 +1143,7 @@ function findingSpecs(world: World): FindingSpec[] {
 		category: 'detection_rule_match',
 		severity: 'medium',
 		rule: { id: `deployment/${orders.id}/rule-1`, revision: 1 },
-		summary: `Detection rule deployment/${orders.id}/rule-1 (revision 1) matched 1 new input(s): workload_rule_match`,
+		summary: `Detection rule deployment/${orders.id}/rule-1 (revision 1) matched 1 new input(s): resource_rule_match`,
 		affected: [orders]
 	});
 	specs.push(

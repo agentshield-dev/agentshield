@@ -62,7 +62,9 @@ export const handlers: HttpHandler[] = [
 		}
 	),
 	http.get('/api/v1/rules', () => respond(() => backend.rules())),
-	http.get('/api/v1/rule-drafts', () => respond(() => backend.ruleDrafts())),
+	http.get('/api/v1/rule-drafts', ({ request }) =>
+		respond(() => backend.ruleDrafts(new URL(request.url).searchParams.get('resourceId') ?? ''))
+	),
 	http.get('/api/v1/rule-drafts/:jobID', ({ params }) =>
 		respond(() => backend.ruleDraft(text(params.jobID)))
 	),
@@ -70,7 +72,7 @@ export const handlers: HttpHandler[] = [
 		const body: unknown = await request.json().catch(() => undefined);
 		return respond(() => backend.reviewRuleDraft(text(params.jobID), body));
 	}),
-	http.post('/api/v1/workloads/:resourceID/rule-drafts', ({ params }) =>
+	http.post('/api/v1/resources/:resourceID/rule-drafts', ({ params }) =>
 		respond(() => backend.requestRuleDraft(text(params.resourceID)), 202)
 	),
 	// Like the service, the stream announces the current graph on connect and every change after.

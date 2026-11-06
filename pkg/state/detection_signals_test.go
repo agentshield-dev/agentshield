@@ -23,7 +23,7 @@ func TestPostgreSQLDetectionSignalsRoundTripIdempotentlyAndPrune(t *testing.T) {
 	}
 	shadow := DetectionSignal{
 		Signal: detector.InvestigationSignal{
-			ID: "signal:shadow", Risk: detector.RiskMedium, Reasons: []string{"workload_rule_match"}, AnchorIDs: []string{"checkout"},
+			ID: "signal:shadow", Risk: detector.RiskMedium, Reasons: []string{"resource_rule_match"}, AnchorIDs: []string{"checkout"},
 			Window: detector.TimeWindow{Start: start, End: start.Add(time.Minute)}, RuleID: "deployment/checkout/rule-1", RuleRevision: 1,
 			RulesetDigest: strings.Repeat("b", 64), RuleMode: detector.RuleModeShadow,
 		},
@@ -44,7 +44,7 @@ func TestPostgreSQLDetectionSignalsRoundTripIdempotentlyAndPrune(t *testing.T) {
 	}
 	got := ruled[0]
 	if got.Investigation != InvestigationShadow || got.Signal.RuleMode != detector.RuleModeShadow || got.Signal.RuleRevision != 1 ||
-		got.ThroughSequence != 7 || !got.Signal.Window.Start.Equal(start) || got.Signal.Reasons[0] != "workload_rule_match" {
+		got.ThroughSequence != 7 || !got.Signal.Window.Start.Equal(start) || got.Signal.Reasons[0] != "resource_rule_match" {
 		t.Fatalf("round trip=%#v", got)
 	}
 	invalid := novelty

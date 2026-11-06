@@ -17,12 +17,12 @@ import type {
 	RelationshipsResponse,
 	Resource,
 	ResourceDetailResponse,
+	ResourceRule,
 	ResourcesResponse,
 	RuleDraftResponse,
 	RuleDraftsResponse,
 	RulesResponse,
-	Snapshot,
-	WorkloadRule
+	Snapshot
 } from '@/api/types';
 import { label, list, securitySemantics } from '@/lib/model';
 import { dataset, digest256, minutesAfter } from './dataset';
@@ -51,7 +51,7 @@ export interface BackendConfig {
 	settleMs: number;
 	// False models a non-loopback service started without --rule-review-api: rule writes return 503.
 	ruleReview: boolean;
-	// How long a requested Deployment rule draft takes to be authored.
+	// How long a requested resource rule draft takes to be authored.
 	authorMs: number;
 }
 
@@ -726,7 +726,7 @@ export class FakeBackend {
 	// Detection rules (pkg/api rules.go). Approved drafts load as active rules; the current
 	// revision's unreviewed draft loads in shadow mode; rejected drafts are not loaded.
 	rules(): RulesResponse {
-		const workloadRules: WorkloadRule[] = [];
+		const resourceRules: ResourceRule[] = [];
 		const resources = new Set(this.ruleJobs.map(job => job.draft.resourceId));
 		for (const resourceId of resources) {
 			const jobs = this.ruleJobs.filter(
@@ -746,22 +746,29 @@ export class FakeBackend {
 				[approved, 'active'],
 				[shadow, 'shadow']
 			] as const) {
-				for (const item of list(job?.proposal?.rules))
-					workloadRules.push({ rule: item.rule, mode });
+				for (const item of list(job?.proposal?.rules)) {
+					if (mode === 'active' && !list(job?.proposal?.approvedRuleIds).includes(item.rule.id))
+						continue;
+					resourceRules.push({ rule: item.rule, mode });
+				}
 			}
 		}
-		return { activation: { revision: 1, rulesetId: 'builtin/v1' }, rules: [], workloadRules };
+		return { activation: { revision: 1, rulesetId: 'builtin/v1' }, rules: [], resourceRules };
 	}
 
-	ruleDrafts(): RuleDraftsResponse {
-		return {
-			drafts: [...this.ruleJobs].map(job => job.draft).sort((left, right) => right.id - left.id)
-		};
+	ruleDrafts(resourceId = ''): RuleDraftsResponse {
+		if (resourceId.length > 128)
+			throw new ApiError(400, 'list rule drafts', 'resource ID must contain at most 128 bytes');
+		const drafts = this.ruleJobs
+			.filter(job => resourceId === '' || job.draft.resourceId === resourceId)
+			.map(job => job.draft)
+			.sort((left, right) => right.id - left.id);
+		return { drafts: drafts.slice(0, 500), ...(drafts.length > 500 ? { truncated: true } : {}) };
 	}
 
 	private ruleJob(id: string, action: string): RuleJob {
 		const job = this.ruleJobs.find(item => String(item.draft.id) === id);
-		if (!job) throw new ApiError(404, action, 'Deployment rule authoring job not found');
+		if (!job) throw new ApiError(404, action, 'Resource rule authoring job not found');
 		return job;
 	}
 
@@ -785,15 +792,38 @@ export class FakeBackend {
 		this.requireRuleReview('review rule draft');
 		const decision =
 			typeof body === 'object' && body !== null && 'decision' in body ? body.decision : undefined;
+		const ruleIds =
+			typeof body === 'object' && body !== null && 'ruleIds' in body && Array.isArray(body.ruleIds)
+				? body.ruleIds.filter((id): id is string => typeof id === 'string')
+				: undefined;
 		if (decision !== 'approved' && decision !== 'rejected') {
 			throw new ApiError(400, 'review rule draft', 'decision must be approved or rejected');
 		}
 		if (job.draft.status !== 'completed') {
+			throw new ApiError(409, 'review rule draft', 'Resource rule job is not reviewable');
+		}
+		if (decision === 'approved' && !job.draft.currentRevision) {
 			throw new ApiError(
 				409,
 				'review rule draft',
-				'Deployment rule job is not a completed proposal'
+				'Resource rule job is not the current resource revision'
 			);
+		}
+		if (decision === 'approved') {
+			const available = new Set(list(job.proposal?.rules).map(item => item.rule.id));
+			if (
+				!ruleIds?.length ||
+				new Set(ruleIds).size !== ruleIds.length ||
+				ruleIds.some(id => !available.has(id))
+			)
+				throw new ApiError(400, 'review rule draft', 'select at least one valid rule');
+		}
+		if (decision === 'rejected' && ruleIds?.length)
+			throw new ApiError(400, 'review rule draft', 'rejected drafts cannot select rules');
+		if (job.proposal) {
+			const { approvedRuleIds: _approvedRuleIds, ...proposal } = job.proposal;
+			job.proposal =
+				decision === 'approved' && ruleIds ? { ...proposal, approvedRuleIds: ruleIds } : proposal;
 		}
 		job.draft = {
 			...job.draft,
@@ -813,16 +843,12 @@ export class FakeBackend {
 			throw new ApiError(
 				404,
 				'regenerate rules',
-				"Deployment rule authoring job not found for the Deployment's current revision"
+				"Resource rule authoring job not found for the resource's current revision"
 			);
 		}
 		// Like the service, a queued or retrying draft is woken; only a running one conflicts.
 		if (job.draft.status === 'running') {
-			throw new ApiError(
-				409,
-				'regenerate rules',
-				'Deployment rule authoring is already in progress'
-			);
+			throw new ApiError(409, 'regenerate rules', 'Resource rule authoring is already in progress');
 		}
 		const requestedAt = new Date().toISOString();
 		job.draft = {

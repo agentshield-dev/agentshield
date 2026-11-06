@@ -2,13 +2,15 @@ package evals
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 )
 
@@ -96,7 +98,7 @@ func TestEvaluateRulesScoresPolicyFindingsByClass(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesIgnoresOtherWorkloadsAndRunsAuthoredRulesAsDeploymentRules(t *testing.T) {
+func TestEvaluateRulesIgnoresOtherWorkloadsAndRunsAuthoredRulesAsResourceRules(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 17, 13, 0, 0, 0, time.UTC)
 	windows, _ := campaignWindows("GET /v1/orders/pending", "GET /v1/secret/data/key")
@@ -109,7 +111,7 @@ func TestEvaluateRulesIgnoresOtherWorkloadsAndRunsAuthoredRulesAsDeploymentRules
 		t.Fatalf("rule scoped to another workload = %+v err=%v", evaluation, err)
 	}
 	authored := rules[0]
-	authored.ID, authored.WorkloadResourceID = "deployment/source/rule-1", "source"
+	authored.ID, authored.ScopeResourceID = "deployment/source/rule-1", "source"
 	evaluation, err = evaluateRules(ctx, RuleSourceAuthored, "security", []detector.Rule{authored}, true, windows, now)
 	if err != nil || evaluation.Outcome != RuleTruePositive || !evaluation.MatchesExpectation {
 		t.Fatalf("authored rule = %+v err=%v", evaluation, err)
@@ -128,35 +130,46 @@ func TestEvaluateRulesIgnoresOtherWorkloadsAndRunsAuthoredRulesAsDeploymentRules
 }
 
 type fakeAuthor struct {
-	seen     state.DeploymentAuthoringContext
-	proposal deploymentauthoring.Proposal
+	seen     state.ResourceAuthoringContext
+	proposal resourceauthoring.Proposal
 	err      error
 }
 
-func (author *fakeAuthor) Author(_ context.Context, workload state.DeploymentAuthoringContext) (deploymentauthoring.Proposal, error) {
-	author.seen = workload
+func (author *fakeAuthor) Author(_ context.Context, resource state.ResourceAuthoringContext) (resourceauthoring.Proposal, error) {
+	author.seen = resource
 	return author.proposal, author.err
 }
 
 func TestAuthorRulesUsesTheProductionAuthoringContext(t *testing.T) {
+	authoringContext, err := graph.NewResourceAuthoringContext(
+		map[string]any{"workload": map[string]any{"serviceAccountName": "checkout-api"}},
+		map[string]string{"kubernetes/service-account-name": "checkout-api"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedContext, err := json.Marshal(authoringContext)
+	if err != nil {
+		t.Fatal(err)
+	}
 	deployment := graph.Resource{ID: "source", Kind: "kubernetes/deployment", Assertions: []graph.ResourceAssertion{{
-		PluginID: "kubernetes", RuleID: "kubernetes.deployment.authoring-context",
-		Attributes: map[string]string{"kubernetes/name": "checkout-api", "kubernetes/namespace": "shop", "kubernetes/service-account-name": "checkout-api", "kubernetes/label/app": "checkout-api"},
+		PluginID: "kubernetes", RuleID: "kubernetes.resource.authoring-context",
+		Attributes: map[string]string{"kubernetes/name": "checkout-api", "kubernetes/namespace": "shop", graph.ResourceAuthoringContextAttribute: string(encodedContext)},
 	}}}
 	rule := detector.Rule{ID: "deployment/source/rule-1"}
-	author := &fakeAuthor{proposal: deploymentauthoring.Proposal{Rationale: "why", Rules: []deploymentauthoring.ProposalRule{{Rule: rule}}}}
-	workload := state.DeploymentAuthoringContextFor(deployment)
-	workload.ObservedBehavior = &state.DeploymentBehavior{Requests: []state.ObservedRequest{}}
-	rules, rationale, err := authorRules(context.Background(), author, workload)
+	author := &fakeAuthor{proposal: resourceauthoring.Proposal{Rationale: "why", Rules: []resourceauthoring.ProposalRule{{Rule: rule}}}}
+	resource := state.ResourceAuthoringContextFor(deployment)
+	resource.ObservedBehavior = &state.WorkloadBehavior{Requests: []state.ObservedRequest{}}
+	rules, rationale, err := authorRules(context.Background(), author, resource)
 	if err != nil || len(rules) != 1 || rules[0].ID != rule.ID || rationale != "why" {
 		t.Fatalf("rules=%+v rationale=%q err=%v", rules, rationale, err)
 	}
-	want := state.DeploymentAuthoringContext{ResourceID: "source", Kind: "kubernetes/deployment", Name: "checkout-api", Namespace: "shop", ServiceAccountName: "checkout-api", ObservedBehavior: workload.ObservedBehavior}
-	if author.seen != want {
+	want := resource
+	if !reflect.DeepEqual(author.seen, want) {
 		t.Fatalf("authoring context = %+v, want %+v", author.seen, want)
 	}
 	author.err = errors.New("model unavailable")
-	if _, _, err := authorRules(context.Background(), author, workload); err == nil {
+	if _, _, err := authorRules(context.Background(), author, resource); err == nil {
 		t.Fatal("authoring error was not returned")
 	}
 	if _, found := findDeployment(graph.Snapshot{Resources: []graph.Resource{deployment}}, "shop", "checkout-api"); !found {

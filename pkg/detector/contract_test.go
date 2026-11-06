@@ -52,7 +52,10 @@ func TestCELSelectorsAreGeneratedFromRegistries(t *testing.T) {
 			t.Fatalf("selector %s does not round-trip", want)
 		}
 	}
-	for _, invalid := range [][2]string{{"telemetry", "communicates-with"}, {"relationship", "network-flow"}, {"resource", "kubernetes/deployment"}} {
+	if !ValidCELRuleKind("resource", "kubernetes/deployment") {
+		t.Fatal("resource selector was rejected")
+	}
+	for _, invalid := range [][2]string{{"telemetry", "communicates-with"}, {"relationship", "network-flow"}, {"resource", "deployment"}} {
 		if ValidCELRuleKind(invalid[0], invalid[1]) {
 			t.Fatalf("invalid selector %v accepted", invalid)
 		}

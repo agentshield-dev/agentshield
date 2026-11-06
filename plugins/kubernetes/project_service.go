@@ -22,8 +22,8 @@ type serviceClusterAddress struct {
 func projectionAttributes(item *unstructured.Unstructured, index objectIndex) (map[string]string, error) {
 	result := attributes(item)
 	switch {
-	case item.GetAPIVersion() == "apps/v1" && item.GetKind() == "Deployment":
-		if err := addDeploymentAttributes(result, item); err != nil {
+	case isAuthorableWorkload(item):
+		if err := addWorkloadAttributes(result, item); err != nil {
 			return nil, err
 		}
 	case item.GetAPIVersion() == "v1" && item.GetKind() == "Service":
@@ -36,12 +36,123 @@ func projectionAttributes(item *unstructured.Unstructured, index objectIndex) (m
 		return ingressAttributes(item, index)
 	case item.GetAPIVersion() == "networking.k8s.io/v1" && item.GetKind() == "NetworkPolicy":
 		return networkPolicyAttributes(item)
+	case item.GetAPIVersion() == "rbac.authorization.k8s.io/v1" && (item.GetKind() == "RoleBinding" || item.GetKind() == "ClusterRoleBinding"):
+		return rbacBindingAttributes(item)
 	case item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "Gateway":
 		return gatewayAttributes(item)
 	case item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && item.GetKind() == "HTTPRoute":
 		return httpRouteAttributes(item, index)
 	}
 	return result, nil
+}
+
+func isAuthorableResource(item *unstructured.Unstructured) bool {
+	if item == nil {
+		return false
+	}
+	if isAuthorableWorkload(item) || item.GetAPIVersion() == "v1" && (item.GetKind() == "ServiceAccount" || item.GetKind() == "Service") {
+		return true
+	}
+	if item.GetAPIVersion() == "rbac.authorization.k8s.io/v1" && (item.GetKind() == "RoleBinding" || item.GetKind() == "ClusterRoleBinding") {
+		return true
+	}
+	return item.GetAPIVersion() == "networking.k8s.io/v1" && (item.GetKind() == "Ingress" || item.GetKind() == "NetworkPolicy") ||
+		item.GetAPIVersion() == "gateway.networking.k8s.io/v1" && (item.GetKind() == "Gateway" || item.GetKind() == "HTTPRoute")
+}
+
+func addResourceAuthoringContext(attributes map[string]string, sourceRevisionSHA256 string) error {
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
+		if resourceAuthoringAttribute(key) {
+			keys = append(keys, key)
+		}
+	}
+	slices.SortFunc(keys, func(left, right string) int {
+		leftLabel := strings.HasPrefix(left, "kubernetes/label/")
+		rightLabel := strings.HasPrefix(right, "kubernetes/label/")
+		if leftLabel != rightLabel {
+			if leftLabel {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(left, right)
+	})
+	selected := make([]string, 0, min(len(keys), graph.ResourceAuthoringAttributesMaxItems))
+	truncated := false
+	for _, key := range keys {
+		value := attributes[key]
+		if len(selected) == graph.ResourceAuthoringAttributesMaxItems || len(key) > 128 || len(value) > 2048 {
+			truncated = true
+			continue
+		}
+		selected = append(selected, key)
+	}
+	context := map[string]any{}
+	if encoded := attributes[workloadContextAttribute]; encoded != "" {
+		var workload map[string]any
+		if err := json.Unmarshal([]byte(encoded), &workload); err != nil {
+			return err
+		}
+		context["workload"] = workload
+		delete(attributes, workloadContextAttribute)
+	}
+	if truncated {
+		context["attributesTruncated"] = true
+	}
+	build := func(count int) (graph.ResourceAuthoringContext, error) {
+		safe := make(map[string]string, count)
+		for _, key := range selected[:count] {
+			safe[key] = attributes[key]
+		}
+		authoringContext, err := graph.NewResourceAuthoringContext(context, safe)
+		if err != nil {
+			return graph.ResourceAuthoringContext{}, err
+		}
+		authoringContext.SourceRevisionSHA256 = sourceRevisionSHA256
+		return authoringContext, authoringContext.Validate()
+	}
+	authoringContext, err := build(len(selected))
+	if err != nil {
+		context["attributesTruncated"] = true
+		low, high := 0, len(selected)
+		for low < high {
+			middle := (low + high + 1) / 2
+			if _, candidateErr := build(middle); candidateErr == nil {
+				low = middle
+			} else {
+				high = middle - 1
+			}
+		}
+		authoringContext, err = build(low)
+	}
+	if err != nil {
+		return err
+	}
+	attributes[graph.ResourceAuthoringContextAttribute] = projectkit.MustCanonicalJSON(authoringContext)
+	return nil
+}
+
+func resourceAuthoringAttribute(key string) bool {
+	if key == "kubernetes/rbac-subjects-sha256" {
+		return false
+	}
+	switch key {
+	case "kubernetes/api-version", "kubernetes/name", "kubernetes/namespace",
+		"kubernetes/service-type", "kubernetes/external-name", "kubernetes/load-balancer-class",
+		"kubernetes/external-traffic-policy", "kubernetes/internal-traffic-policy", "kubernetes/traffic-distribution",
+		"kubernetes/ip-family-policy", "kubernetes/cluster-addresses", "kubernetes/external-ips", "kubernetes/ports",
+		"kubernetes/load-balancer-source-ranges", "kubernetes/load-balancer-ingress",
+		"kubernetes/ingress-class", "kubernetes/hosts", "kubernetes/backends", "kubernetes/unresolved-backends", "kubernetes/tls",
+		"kubernetes/pod-selector", "kubernetes/policy-types", "kubernetes/ingress-rule-count", "kubernetes/egress-rule-count",
+		"kubernetes/ingress-rules", "kubernetes/egress-rules", "kubernetes/omitted-ingress-rules", "kubernetes/omitted-egress-rules",
+		"kubernetes/gateway-class", "kubernetes/addresses", "kubernetes/listeners", "kubernetes/listener-status", "kubernetes/status-addresses",
+		"kubernetes/hostnames", "kubernetes/parent-refs", "kubernetes/rules", "kubernetes/parent-status", "kubernetes/unresolved-references",
+		"kubernetes/rbac-role-ref-api-group", "kubernetes/rbac-role-ref-kind", "kubernetes/rbac-role-ref-name",
+		"kubernetes/rbac-subjects", "kubernetes/rbac-subjects-omitted":
+		return true
+	}
+	return strings.HasPrefix(key, "kubernetes/label/")
 }
 
 func addServiceAttributes(result map[string]string, service *corev1.Service) {

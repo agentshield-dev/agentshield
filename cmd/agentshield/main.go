@@ -1,6 +1,6 @@
 // Command agentshield runs the AgentShield service: discovery plugins, the
 // graph store, telemetry ingestion and rollups, detection with optional
-// agentic investigation and Deployment rule authoring, and the HTTP API and UI.
+// agentic investigation and Resource rule authoring, and the HTTP API and UI.
 //
 // One process observes at most one Kubernetes cluster and one AWS region and
 // persists to PostgreSQL. With --disable-discovery it serves persisted state
@@ -29,13 +29,13 @@ import (
 
 	"github.com/agentshield-dev/agentshield/internal/version"
 	"github.com/agentshield-dev/agentshield/pkg/api"
-	"github.com/agentshield-dev/agentshield/pkg/deploymentauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/detector"
 	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning"
 	"github.com/agentshield-dev/agentshield/pkg/reasoning/modelanalyzer"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
+	"github.com/agentshield-dev/agentshield/pkg/resourceauthoring"
 	"github.com/agentshield-dev/agentshield/pkg/rulescli"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/agentshield-dev/agentshield/pkg/telemetry"
@@ -69,47 +69,47 @@ const (
 )
 
 type options struct {
-	listen                      string
-	databaseURL                 string
-	databaseMaxConns            int
-	databaseMinConns            int
-	checkpointInterval          time.Duration
-	checkpointDeltas            uint64
-	telemetryPath               string
-	clickHouseURL               string
-	clickHouseDatabase          string
-	clickHouseTable             string
-	clickHouseUsername          string
-	disableDiscovery            bool
-	kubernetes                  kubernetesplugin.CLIConfig
-	istio                       istioplugin.CLIConfig
-	agentgateway                agentgatewayplugin.CLIConfig
-	cilium                      ciliumplugin.CLIConfig
-	falco                       falcoplugin.CLIConfig
-	aws                         awsplugin.CLIConfig
-	modelEndpoint               string
-	modelAPIKey                 string
-	modelProviderName           string
-	model                       string
-	modelReasoningEffort        string
-	detectionConsumer           string
-	detectionInterval           time.Duration
-	detectionSignalRetention    time.Duration
-	detectorReloadInterval      time.Duration
-	agenticInvestigation        bool
-	investigationRetrieval      string
-	investigationBatchWindow    time.Duration
-	investigationSampleRate     float64
-	investigationMaxPerHour     int
-	investigationDedupWindow    time.Duration
-	investigationMaxAttempts    int
-	investigationPollInterval   time.Duration
-	deploymentRuleAuthoring     bool
-	deploymentRulePollInterval  time.Duration
-	deploymentRuleAuthorTimeout time.Duration
-	deploymentRuleBaseline      time.Duration
-	ruleReviewAPI               bool
-	modelProvider               reasoning.Provider
+	listen                    string
+	databaseURL               string
+	databaseMaxConns          int
+	databaseMinConns          int
+	checkpointInterval        time.Duration
+	checkpointDeltas          uint64
+	telemetryPath             string
+	clickHouseURL             string
+	clickHouseDatabase        string
+	clickHouseTable           string
+	clickHouseUsername        string
+	disableDiscovery          bool
+	kubernetes                kubernetesplugin.CLIConfig
+	istio                     istioplugin.CLIConfig
+	agentgateway              agentgatewayplugin.CLIConfig
+	cilium                    ciliumplugin.CLIConfig
+	falco                     falcoplugin.CLIConfig
+	aws                       awsplugin.CLIConfig
+	modelEndpoint             string
+	modelAPIKey               string
+	modelProviderName         string
+	model                     string
+	modelReasoningEffort      string
+	detectionConsumer         string
+	detectionInterval         time.Duration
+	detectionSignalRetention  time.Duration
+	detectorReloadInterval    time.Duration
+	agenticInvestigation      bool
+	investigationRetrieval    string
+	investigationBatchWindow  time.Duration
+	investigationSampleRate   float64
+	investigationMaxPerHour   int
+	investigationDedupWindow  time.Duration
+	investigationMaxAttempts  int
+	investigationPollInterval time.Duration
+	resourceRuleAuthoring     bool
+	resourceRulePollInterval  time.Duration
+	resourceRuleAuthorTimeout time.Duration
+	resourceRuleStabilization time.Duration
+	ruleReviewAPI             bool
+	modelProvider             reasoning.Provider
 }
 
 func main() {
@@ -202,15 +202,15 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&config.clickHouseTable, "clickhouse-table", "telemetry_events", "ClickHouse raw telemetry table")
 	flags.StringVar(&config.clickHouseUsername, "clickhouse-username", "default", "ClickHouse user")
 	flags.BoolVar(&config.disableDiscovery, "disable-discovery", false, "serve persisted/replayed state without live discovery")
-	flags.StringVar(&config.modelEndpoint, "model-endpoint", os.Getenv("AGENTSHIELD_MODEL_ENDPOINT"), "model API base endpoint for the model-calling features --agentic-investigation and --deployment-rule-authoring")
+	flags.StringVar(&config.modelEndpoint, "model-endpoint", os.Getenv("AGENTSHIELD_MODEL_ENDPOINT"), "model API base endpoint for the model-calling features --agentic-investigation and --resource-rule-authoring")
 	flags.StringVar(&config.modelAPIKey, "model-api-key", "", "model API key; defaults to AGENTSHIELD_MODEL_API_KEY or the selected provider's API key")
 	flags.StringVar(&config.modelProviderName, "model-provider", "openai", "model API provider: openai or anthropic. --agentic-investigation requires openai (the Responses API)")
 	flags.StringVar(&config.model, "model", envString("AGENTSHIELD_MODEL", reasoning.Model), "model name")
 	flags.StringVar(&config.modelReasoningEffort, "model-reasoning-effort", os.Getenv("AGENTSHIELD_MODEL_REASONING_EFFORT"), "reasoning effort for model calls, for compatible providers")
-	flags.StringVar(&config.detectionConsumer, "detection-consumer", "reasoning/default", "stable durable detection cursor ID; detection runs when --agentic-investigation or --deployment-rule-authoring is enabled")
+	flags.StringVar(&config.detectionConsumer, "detection-consumer", "reasoning/default", "stable durable detection cursor ID; detection runs when --agentic-investigation or --resource-rule-authoring is enabled")
 	flags.DurationVar(&config.detectionInterval, "detection-interval", time.Second, "detection graph polling interval")
 	flags.DurationVar(&config.detectionSignalRetention, "detection-signal-retention", 7*24*time.Hour, "how long recorded detection signals and finished investigation jobs are kept")
-	flags.DurationVar(&config.detectorReloadInterval, "detector-reload-interval", 10*time.Second, "detector ruleset and Deployment rule polling interval")
+	flags.DurationVar(&config.detectorReloadInterval, "detector-reload-interval", 10*time.Second, "detector ruleset and resource rule polling interval")
 	flags.BoolVar(&config.agenticInvestigation, "agentic-investigation", envBool("AGENTSHIELD_AGENTIC_INVESTIGATION", false), "investigate built-in novelty signals with a model agent that may promote findings; calls --model-endpoint (OpenAI Responses API) at most once per admitted investigation job")
 	flags.StringVar(&config.investigationRetrieval, "agentic-investigation-retrieval", envString("AGENTSHIELD_AGENTIC_INVESTIGATION_RETRIEVAL", reasoning.RetrievalModelSelected), "agentic investigation context retrieval: model_selected or deterministic")
 	flags.DurationVar(&config.investigationBatchWindow, "agentic-investigation-batch-window", 30*time.Second, "how long a queued investigation waits so later change windows that share a resource join it")
@@ -219,11 +219,11 @@ func parseOptions(args []string) (options, error) {
 	flags.DurationVar(&config.investigationDedupWindow, "agentic-investigation-dedup-window", time.Hour, "skip an investigation whose signal pattern was already investigated within this window; 0 disables")
 	flags.IntVar(&config.investigationMaxAttempts, "agentic-investigation-max-attempts", 5, "failed investigation attempts before a queued investigation fails permanently")
 	flags.DurationVar(&config.investigationPollInterval, "agentic-investigation-poll-interval", time.Second, "investigation queue polling interval")
-	flags.BoolVar(&config.deploymentRuleAuthoring, "deployment-rule-authoring", envBool("AGENTSHIELD_DEPLOYMENT_RULE_AUTHORING", false), "draft a detector rule for each Kubernetes Deployment Pod template revision with a model agent, from the Deployment's observed behavior, and run approved rules; calls --model-endpoint once per revision")
+	flags.BoolVar(&config.resourceRuleAuthoring, "resource-rule-authoring", envBool("AGENTSHIELD_RESOURCE_RULE_AUTHORING", false), "draft detector rules for resources that publish bounded authoring context, and run approved rules; calls --model-endpoint once per context revision")
 	flags.BoolVar(&config.ruleReviewAPI, "rule-review-api", envBool("AGENTSHIELD_RULE_REVIEW_API", false), "serve the unauthenticated rule review and regenerate API routes on a non-loopback listener; they are always served on a loopback listener. Expose only behind an authenticating proxy or for disposable environments")
-	flags.DurationVar(&config.deploymentRuleBaseline, "deployment-rule-baseline-window", 6*time.Hour, "how long a new Deployment or Pod template revision is observed before its rule is drafted (0 to 24h, bounded by telemetry retention)")
-	flags.DurationVar(&config.deploymentRulePollInterval, "deployment-rule-authoring-poll-interval", time.Second, "Deployment rule authoring queue polling interval")
-	flags.DurationVar(&config.deploymentRuleAuthorTimeout, "deployment-rule-authoring-timeout", 5*time.Minute, "maximum duration for one Deployment rule authoring model call")
+	flags.DurationVar(&config.resourceRuleStabilization, "resource-rule-stabilization-window", 6*time.Hour, "how long a new resource context is observed before its rules are drafted (0 to 24h, bounded by telemetry retention)")
+	flags.DurationVar(&config.resourceRulePollInterval, "resource-rule-authoring-poll-interval", time.Second, "resource rule authoring queue polling interval")
+	flags.DurationVar(&config.resourceRuleAuthorTimeout, "resource-rule-authoring-timeout", 5*time.Minute, "maximum duration for one resource rule authoring model call")
 	for _, register := range []func(*pflag.FlagSet) error{
 		config.kubernetes.RegisterFlags, config.istio.RegisterFlags, config.agentgateway.RegisterFlags,
 		config.cilium.RegisterFlags, config.falco.RegisterFlags, config.aws.RegisterFlags,
@@ -267,7 +267,7 @@ func parseOptions(args []string) (options, error) {
 // the model-calling features: it gates agentic investigation and runs the rules
 // that authoring produces, so it has no standalone mode.
 func (config options) detectionEnabled() bool {
-	return config.agenticInvestigation || config.deploymentRuleAuthoring
+	return config.agenticInvestigation || config.resourceRuleAuthoring
 }
 
 // validateDetectionFeatures checks that each model-calling feature is explicitly
@@ -300,15 +300,15 @@ func (config options) validateDetectionFeatures() error {
 			return errors.New("--agentic-investigation-max-attempts and --agentic-investigation-poll-interval must be positive")
 		}
 	}
-	if config.deploymentRuleAuthoring {
+	if config.resourceRuleAuthoring {
 		if strings.TrimSpace(config.modelEndpoint) == "" {
-			return errors.New("--deployment-rule-authoring requires --model-endpoint, AGENTSHIELD_MODEL_ENDPOINT, or --model-provider anthropic")
+			return errors.New("--resource-rule-authoring requires --model-endpoint, AGENTSHIELD_MODEL_ENDPOINT, or --model-provider anthropic")
 		}
-		if config.deploymentRulePollInterval <= 0 || config.deploymentRuleAuthorTimeout < 30*time.Second {
-			return errors.New("Deployment rule authoring poll interval must be positive and timeout must be at least 30 seconds")
+		if config.resourceRulePollInterval <= 0 || config.resourceRuleAuthorTimeout < 30*time.Second {
+			return errors.New("Resource rule authoring poll interval must be positive and timeout must be at least 30 seconds")
 		}
-		if config.deploymentRuleBaseline < 0 || config.deploymentRuleBaseline > deploymentauthoring.MaxBaselineWindow {
-			return fmt.Errorf("--deployment-rule-baseline-window must be between 0 and %s", deploymentauthoring.MaxBaselineWindow)
+		if config.resourceRuleStabilization < 0 || config.resourceRuleStabilization > resourceauthoring.MaxStabilizationWindow {
+			return fmt.Errorf("--resource-rule-stabilization-window must be between 0 and %s", resourceauthoring.MaxStabilizationWindow)
 		}
 	}
 	return nil
@@ -379,8 +379,8 @@ func newDiscovery(ctx context.Context, config options, runtime *discovery.Runtim
 // returns a pipeline that hands each sink-acknowledged batch to a
 // telemetry.RollupPublisher, which owns rollup generations and retraction.
 func newTelemetryPipeline(store *state.Store, runtime *discovery.RuntimeService, sink telemetry.Sink) (*telemetry.Pipeline, error) {
-	// Retention also bounds the Deployment rule baseline window, which reads telemetry from the graph.
-	rollup := telemetry.NewRollup(telemetry.RollupConfig{Window: time.Minute, Retention: deploymentauthoring.MaxBaselineWindow, MaxSeries: 100_000})
+	// Retention also bounds the Resource rule stabilization window, which reads telemetry from the graph.
+	rollup := telemetry.NewRollup(telemetry.RollupConfig{Window: time.Minute, Retention: resourceauthoring.MaxStabilizationWindow, MaxSeries: 100_000})
 	currentGraph, err := store.Latest(context.Background())
 	initialGraph, err := initialSnapshot(currentGraph, err)
 	if err != nil {
@@ -469,12 +469,12 @@ func newAPIServer(config options, store *state.Store, manager *discovery.Manager
 }
 
 // detectionServices are the detection components. All are nil unless
-// --agentic-investigation or --deployment-rule-authoring is enabled.
+// --agentic-investigation or --resource-rule-authoring is enabled.
 type detectionServices struct {
-	engine           *detector.Engine
-	detection        *reasoning.Service
-	investigation    *reasoning.InvestigationWorker
-	deploymentAuthor *deploymentauthoring.Worker
+	engine         *detector.Engine
+	detection      *reasoning.Service
+	investigation  *reasoning.InvestigationWorker
+	resourceAuthor *resourceauthoring.Worker
 }
 
 // newDetectionServices builds deterministic detection, which never calls a
@@ -482,7 +482,7 @@ type detectionServices struct {
 func newDetectionServices(ctx context.Context, config options, store *state.Store) (detectionServices, error) {
 	var services detectionServices
 	if !config.detectionEnabled() {
-		log.Printf("detection is disabled; pass --agentic-investigation and/or --deployment-rule-authoring to enable it")
+		log.Printf("detection is disabled; pass --agentic-investigation and/or --resource-rule-authoring to enable it")
 		return services, nil
 	}
 	if err := store.EnsureDefaultDetectorRuleset(ctx); err != nil {
@@ -522,29 +522,29 @@ func newDetectionServices(ctx context.Context, config options, store *state.Stor
 	if services.detection, err = reasoning.NewService(store, nil, reasoning.ResultSinks(sinks...), serviceConfig); err != nil {
 		return services, err
 	}
-	if config.deploymentRuleAuthoring {
+	if config.resourceRuleAuthoring {
 		authorModel := config.model
 		// The default model name is an OpenAI model; let the Anthropic client
 		// choose its own default unless the operator named a model.
 		if config.modelProvider == reasoning.ProviderAnthropic && authorModel == reasoning.Model {
 			authorModel = ""
 		}
-		services.deploymentAuthor, err = deploymentauthoring.NewWorker(store, deploymentauthoring.WorkerConfig{
-			ID: fmt.Sprintf("deployment-author/%d", os.Getpid()), PollInterval: config.deploymentRulePollInterval,
-			LeaseDuration: 30 * time.Second, BaselineWindow: config.deploymentRuleBaseline,
-			Author: deploymentauthoring.ModelAuthor{Client: reasoning.Client{
+		services.resourceAuthor, err = resourceauthoring.NewWorker(store, resourceauthoring.WorkerConfig{
+			ID: fmt.Sprintf("resource-author/%d", os.Getpid()), PollInterval: config.resourceRulePollInterval,
+			LeaseDuration: 30 * time.Second, StabilizationWindow: config.resourceRuleStabilization,
+			Author: resourceauthoring.ModelAuthor{Client: reasoning.Client{
 				Endpoint: config.modelEndpoint, APIKey: config.modelAPIKey, Model: authorModel, Provider: config.modelProvider,
-				ReasoningEffort: config.modelReasoningEffort, HTTPClient: &http.Client{Timeout: config.deploymentRuleAuthorTimeout},
+				ReasoningEffort: config.modelReasoningEffort, HTTPClient: &http.Client{Timeout: config.resourceRuleAuthorTimeout},
 			}},
-			ReportError: func(err error) { log.Printf("Deployment rule authoring: %v", err) },
+			ReportError: func(err error) { log.Printf("Resource rule authoring: %v", err) },
 		})
 		if err != nil {
 			return services, err
 		}
 	}
 	status := engine.Status()
-	log.Printf("detection enabled (ruleset=%s, Deployment rules active=%d shadow=%d); agentic investigation=%t, Deployment rule authoring=%t",
-		status.RulesetID, status.ActiveWorkloadRules, status.ShadowWorkloadRules, config.agenticInvestigation, config.deploymentRuleAuthoring)
+	log.Printf("detection enabled (ruleset=%s, Resource rules active=%d shadow=%d); agentic investigation=%t, Resource rule authoring=%t",
+		status.RulesetID, status.ActiveResourceRules, status.ShadowResourceRules, config.agenticInvestigation, config.resourceRuleAuthoring)
 	return services, nil
 }
 
@@ -608,9 +608,9 @@ func serve(config options, httpServer *http.Server, store *state.Store, pipeline
 			return nil
 		})
 	}
-	if detection.deploymentAuthor != nil {
-		goRecover(group, "Deployment rule author", func() error {
-			detection.deploymentAuthor.Run(ctx)
+	if detection.resourceAuthor != nil {
+		goRecover(group, "Resource rule author", func() error {
+			detection.resourceAuthor.Run(ctx)
 			return nil
 		})
 	}

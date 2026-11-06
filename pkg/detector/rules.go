@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/interpreter"
-	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
 // ErrNoActiveRuleset is returned by a [Repository] when no ruleset has been
@@ -29,21 +29,21 @@ var ErrNoActiveRuleset = errors.New("no active detector ruleset")
 var ErrActivationConflict = errors.New("detector ruleset activation revision conflict")
 
 // Rule matches its CEL Expression against inputs selected by PluginID ("*" for
-// any), Type, Kind, and, when set, WorkloadResourceID. (ID, Revision) is
+// any), Type, Kind, and, when set, ScopeResourceID. (ID, Revision) is
 // immutable once stored. WindowSeconds is the signal half-width; zero uses
 // [Config.Window].
 type Rule struct {
-	ID                 string   `json:"id"`
-	Revision           uint64   `json:"revision"`
-	InputVersion       string   `json:"inputVersion"`
-	PluginID           string   `json:"pluginId"`
-	WorkloadResourceID string   `json:"workloadResourceId,omitempty"`
-	Type               string   `json:"type"`
-	Kind               string   `json:"kind"`
-	Expression         string   `json:"expression"`
-	Risk               Risk     `json:"risk"`
-	Reasons            []string `json:"reasons"`
-	WindowSeconds      int64    `json:"windowSeconds"`
+	ID              string   `json:"id"`
+	Revision        uint64   `json:"revision"`
+	InputVersion    string   `json:"inputVersion"`
+	PluginID        string   `json:"pluginId"`
+	ScopeResourceID string   `json:"scopeResourceId,omitempty"`
+	Type            string   `json:"type"`
+	Kind            string   `json:"kind"`
+	Expression      string   `json:"expression"`
+	Risk            Risk     `json:"risk"`
+	Reasons         []string `json:"reasons"`
+	WindowSeconds   int64    `json:"windowSeconds"`
 }
 
 // Ruleset is a complete set of rules. Activating one replaces the entire
@@ -73,7 +73,7 @@ type Result struct {
 	RulesetID           string
 	RulesetDigest       string
 	ActivationRevision  uint64
-	WorkloadRulesDigest string
+	ResourceRulesDigest string
 	// Omitted counts what an evaluation left out to stay within its bounds:
 	// "events" beyond [MaxEvaluationEvents], "oversizedEvents" over 64 KiB, and
 	// rule "signals" beyond [MaxEvaluationSignals]. It is nil when nothing was left out.
@@ -100,12 +100,12 @@ type Status struct {
 	RulesetID           string
 	RulesetDigest       string
 	ActivationRevision  uint64
-	WorkloadRulesDigest string
-	ActiveWorkloadRules int
-	ShadowWorkloadRules int
-	// SkippedWorkloadRules counts invalid workload rules, and groups of rules
-	// over [MaxWorkloadRules], that the loaded overlay left out.
-	SkippedWorkloadRules int
+	ResourceRulesDigest string
+	ActiveResourceRules int
+	ShadowResourceRules int
+	// SkippedResourceRules counts invalid resource rules, and groups of rules
+	// over [MaxResourceRules], that the loaded overlay left out.
+	SkippedResourceRules int
 	LastReloadError      string
 }
 
@@ -144,7 +144,7 @@ func (activation inputActivation) Parent() interpreter.Activation { return nil }
 type Engine struct {
 	config          Config
 	active          atomic.Pointer[compiledRuleset]
-	workload        atomic.Pointer[compiledWorkloadRules]
+	resource        atomic.Pointer[compiledResourceRules]
 	reload          sync.Mutex
 	lastReloadError string
 }
@@ -158,18 +158,18 @@ func New(config Config, ruleset Ruleset) (*Engine, error) {
 	}
 	engine := &Engine{config: normalizedConfig(config)}
 	engine.active.Store(compiled)
-	empty, err := compileWorkloadRules(nil)
+	empty, err := compileResourceRules(nil)
 	if err != nil {
 		return nil, err
 	}
-	engine.workload.Store(empty)
+	engine.resource.Store(empty)
 	return engine, nil
 }
 
 // Load compiles the active ruleset from repository. Unlike [Engine.Reload],
 // a ruleset failure is returned: there is no known-good ruleset to fall back
-// to, so invalid operator rules fail startup. The workload rule overlay never
-// fails startup: invalid workload rules are skipped, and if the overlay cannot
+// to, so invalid operator rules fail startup. The resource rule overlay never
+// fails startup: invalid resource rules are skipped, and if the overlay cannot
 // be read the engine starts without it. Either is recorded for
 // [Engine.Status], and the next reload retries.
 func Load(ctx context.Context, repository Repository, config Config) (*Engine, error) {
@@ -183,21 +183,21 @@ func Load(ctx context.Context, repository Repository, config Config) (*Engine, e
 	}
 	// Safe to set in place: the engine has not been shared yet.
 	engine.active.Load().revision = activation.Revision
-	if workloadRepository, ok := repository.(WorkloadRuleRepository); ok {
-		if err := engine.ReloadWorkloadRules(ctx, workloadRepository); err != nil {
+	if resourceRepository, ok := repository.(ResourceRuleRepository); ok {
+		if err := engine.ReloadResourceRules(ctx, resourceRepository); err != nil {
 			if ctx.Err() != nil {
 				return nil, err
 			}
 			engine.lastReloadError = err.Error()
-			slog.WarnContext(ctx, "workload rules not fully loaded at startup; the next reload retries", "error", err)
+			slog.WarnContext(ctx, "resource rules not fully loaded at startup; the next reload retries", "error", err)
 		}
 	}
 	return engine, nil
 }
 
 // Reload reads the active activation and swaps in its ruleset if it is new.
-// When repository also implements WorkloadRuleRepository, it then refreshes
-// the workload-scoped rules the same way.
+// When repository also implements ResourceRuleRepository, it then refreshes
+// the resource-scoped rules the same way.
 //
 // The candidate is compiled completely before the atomic swap, so an
 // evaluation sees either the old ruleset or the new one, never a mix, and
@@ -219,8 +219,8 @@ func (engine *Engine) Reload(ctx context.Context, repository Repository) (err er
 	if err := engine.reloadRuleset(ctx, repository); err != nil {
 		return err
 	}
-	if workloadRepository, ok := repository.(WorkloadRuleRepository); ok {
-		return engine.reloadWorkloadRules(ctx, workloadRepository)
+	if resourceRepository, ok := repository.(ResourceRuleRepository); ok {
+		return engine.reloadResourceRules(ctx, resourceRepository)
 	}
 	return nil
 }
@@ -258,11 +258,11 @@ func (engine *Engine) Status() Status {
 	engine.reload.Lock()
 	defer engine.reload.Unlock()
 	current := engine.active.Load()
-	workload := engine.workload.Load()
+	resource := engine.resource.Load()
 	return Status{
 		RulesetID: current.id, RulesetDigest: current.digest, ActivationRevision: current.revision,
-		WorkloadRulesDigest: workload.digest, ActiveWorkloadRules: workload.active, ShadowWorkloadRules: workload.shadow,
-		SkippedWorkloadRules: len(workload.skipped), LastReloadError: engine.lastReloadError,
+		ResourceRulesDigest: resource.digest, ActiveResourceRules: resource.active, ShadowResourceRules: resource.shadow,
+		SkippedResourceRules: len(resource.skipped), LastReloadError: engine.lastReloadError,
 	}
 }
 
@@ -288,7 +288,7 @@ func (engine *Engine) RunReloads(ctx context.Context, repository Repository, int
 			}
 			// Log only when the loaded rules change; an unchanged reload is silent.
 			if current := engine.Status(); current.RulesetDigest != loaded.RulesetDigest ||
-				current.ActivationRevision != loaded.ActivationRevision || current.WorkloadRulesDigest != loaded.WorkloadRulesDigest {
+				current.ActivationRevision != loaded.ActivationRevision || current.ResourceRulesDigest != loaded.ResourceRulesDigest {
 				loaded = current
 				logLoaded(ctx, "detector rules reloaded", current)
 			}
@@ -298,11 +298,11 @@ func (engine *Engine) RunReloads(ctx context.Context, repository Repository, int
 
 func logLoaded(ctx context.Context, message string, status Status) {
 	slog.InfoContext(ctx, message, "ruleset", status.RulesetID, "activation_revision", status.ActivationRevision,
-		"active_workload_rules", status.ActiveWorkloadRules, "shadow_workload_rules", status.ShadowWorkloadRules,
-		"skipped_workload_rules", status.SkippedWorkloadRules)
+		"active_resource_rules", status.ActiveResourceRules, "shadow_resource_rules", status.ShadowResourceRules,
+		"skipped_resource_rules", status.SkippedResourceRules)
 }
 
-// Detect returns built-in novelty signals plus signals from the active CEL ruleset and workload rules.
+// Detect returns built-in novelty signals plus signals from the active CEL ruleset and resource rules.
 func (engine *Engine) Detect(ctx context.Context, previous, current graph.Snapshot, observedAt time.Time) (Result, error) {
 	result, err := engine.Evaluate(ctx, Events(previous, current, observedAt))
 	if err != nil {
@@ -322,15 +322,24 @@ func (engine *Engine) Detect(ctx context.Context, previous, current graph.Snapsh
 // given, and counted in [Result.Omitted].
 func (engine *Engine) Evaluate(ctx context.Context, events []Event) (Result, error) {
 	compiled := engine.active.Load()
-	workload := engine.workload.Load()
-	result := Result{RulesetID: compiled.id, RulesetDigest: compiled.digest, ActivationRevision: compiled.revision, WorkloadRulesDigest: workload.digest}
+	resource := engine.resource.Load()
+	result := Result{RulesetID: compiled.id, RulesetDigest: compiled.digest, ActivationRevision: compiled.revision, ResourceRulesDigest: resource.digest}
 	omitted := make(map[string]int)
 	if len(events) > MaxEvaluationEvents {
 		omitted["events"] = len(events) - MaxEvaluationEvents
 		events = events[:MaxEvaluationEvents]
 	}
+	shadowSignals := make([]InvestigationSignal, 0, min(len(events), MaxEvaluationSignals))
 	add := func(signals ...InvestigationSignal) {
 		for _, signal := range signals {
+			if signal.RuleMode == RuleModeShadow {
+				if len(shadowSignals) >= MaxEvaluationSignals {
+					omitted["signals"]++
+					continue
+				}
+				shadowSignals = append(shadowSignals, signal)
+				continue
+			}
 			if len(result.Signals) >= MaxEvaluationSignals {
 				omitted["signals"]++
 				continue
@@ -351,7 +360,7 @@ func (engine *Engine) Evaluate(ctx context.Context, events []Event) (Result, err
 			if rule.PluginID != "*" && rule.PluginID != event.PluginID || rule.Kind != event.Kind {
 				continue
 			}
-			if rule.WorkloadResourceID != "" && !slices.Contains(event.AnchorIDs, rule.WorkloadResourceID) {
+			if rule.ScopeResourceID != "" && !slices.Contains(event.SubjectIDs, rule.ScopeResourceID) {
 				continue
 			}
 			matched, _, err := candidate.match.ContextEval(ctx, inputActivation{input: event.Input})
@@ -367,11 +376,16 @@ func (engine *Engine) Evaluate(ctx context.Context, events []Event) (Result, err
 			}
 			add(newSignal(event, rule, compiled.digest, window))
 		}
-		matched, err := workload.evaluate(ctx, event, engine.config.Window)
+		matched, err := resource.evaluate(ctx, event, engine.config.Window)
 		if err != nil {
 			return Result{}, err
 		}
 		add(matched...)
+	}
+	remaining := MaxEvaluationSignals - len(result.Signals)
+	result.Signals = append(result.Signals, shadowSignals[:min(len(shadowSignals), remaining)]...)
+	if shadowOmitted := len(shadowSignals) - remaining; shadowOmitted > 0 {
+		omitted["signals"] += shadowOmitted
 	}
 	slices.SortFunc(result.Signals, func(left, right InvestigationSignal) int { return strings.Compare(left.ID, right.ID) })
 	result.Signals = slices.CompactFunc(result.Signals, func(left, right InvestigationSignal) bool { return left.ID == right.ID })
@@ -465,7 +479,7 @@ func compileRuleset(ruleset Ruleset) (*compiledRuleset, error) {
 // celCache shares CEL environments per selector, and compiled programs per
 // selector and expression, across the rules of one compilation. A program is
 // stateless and safe for concurrent use, so rules with the same expression,
-// common among model-authored Deployment rules, compile it once.
+// common among model-authored resource rules, compile it once.
 type celCache struct {
 	environments map[string]*cel.Env
 	programs     map[string]cel.Program
@@ -486,8 +500,8 @@ func compileRule(rule Rule, cache *celCache) (compiledRule, error) {
 	if rule.PluginID == "" || len(rule.PluginID) > 128 || rule.Kind == "" || len(rule.Kind) > 128 {
 		return compiledRule{}, fmt.Errorf("rule %s requires bounded plugin and kind selectors", rule.ID)
 	}
-	if len(rule.WorkloadResourceID) > 128 {
-		return compiledRule{}, fmt.Errorf("rule %s workload resource ID exceeds 128 bytes", rule.ID)
+	if len(rule.ScopeResourceID) > 128 {
+		return compiledRule{}, fmt.Errorf("rule %s scope resource ID exceeds 128 bytes", rule.ID)
 	}
 	if !ValidCELRuleKind(rule.Type, rule.Kind) {
 		return compiledRule{}, fmt.Errorf("rule %s uses unsupported input type or kind %q/%q", rule.ID, rule.Type, rule.Kind)

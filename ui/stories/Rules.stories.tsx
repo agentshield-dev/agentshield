@@ -64,13 +64,23 @@ export const ApproveDraft: Story = {
 			await within(document.body).findByRole('dialog', { name: 'Approve rules' })
 		);
 		await expect(dialog.getByRole('heading', { name: 'Activate 3 rules' })).toBeVisible();
-		await userEvent.click(dialog.getByRole('button', { name: 'Approve and activate' }));
-		await canvas.findByText('Approved; the rules now run in active mode.', {}, wait);
+		const selections = dialog.getAllByRole('checkbox');
+		await userEvent.click(selections[1]);
+		await userEvent.click(selections[2]);
+		await expect(dialog.getByRole('heading', { name: 'Activate one rule' })).toBeVisible();
+		await userEvent.click(dialog.getByRole('button', { name: 'Approve selected' }));
+		await canvas.findByText('Approved 1 rule; the selection now runs in active mode.', {}, wait);
 		await canvas.findByText('approved', { selector: '.finding-title .badge' }, wait);
+		await expect(
+			canvas.getByText('active', { selector: '.remediation-item .badge' })
+		).toBeVisible();
+		await expect(
+			canvas.getAllByText('not approved', { selector: '.remediation-item .badge' })
+		).toHaveLength(2);
 
 		await userEvent.click(canvas.getByRole('tab', { name: 'Loaded rules' }));
 		const rules = within(await canvas.findByRole('region', { name: 'Loaded rule list' }, wait));
-		await waitFor(() => expect(rules.getAllByText('active')).toHaveLength(5), wait);
+		await waitFor(() => expect(rules.getAllByText('active')).toHaveLength(3), wait);
 	}
 };
 
@@ -80,7 +90,7 @@ export const RejectDraft: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[2]), level: 2 }, wait);
 		await userEvent.click(await canvas.findByRole('button', { name: 'Reject' }, wait));
-		await canvas.findByText('Rejected; the rules are no longer loaded.', {}, wait);
+		await canvas.findByText('Rejected; this draft’s rules are no longer loaded.', {}, wait);
 		await canvas.findByText('rejected', { selector: '.finding-title .badge' }, wait);
 		await expect(canvas.getByRole('button', { name: 'Approve' })).toBeEnabled();
 	}
@@ -111,7 +121,7 @@ export const RuleReviewDisabled: Story = {
 		const dialog = within(
 			await within(document.body).findByRole('dialog', { name: 'Approve rules' })
 		);
-		await userEvent.click(dialog.getByRole('button', { name: 'Approve and activate' }));
+		await userEvent.click(dialog.getByRole('button', { name: 'Approve selected' }));
 		await dialog.findByText(/rule review is disabled on a non-loopback listener/, {}, wait);
 	}
 };
@@ -145,7 +155,7 @@ export const AuthorQueuedDraftNow: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[4]), level: 2 }, wait);
-		await canvas.findByText(/Waiting for the baseline window/, {}, wait);
+		await canvas.findByText(/Waiting for the stabilization window/, {}, wait);
 		await userEvent.click(canvas.getByRole('button', { name: 'Author now' }));
 		await canvas.findByText('Authoring requested.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
@@ -164,5 +174,37 @@ export const RetryFailedDraft: Story = {
 		await userEvent.click(canvas.getByRole('button', { name: 'Author now' }));
 		await canvas.findByText('Authoring requested.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
+	}
+};
+
+export const DeepLinkedDraftOutsideGlobalPage: Story = {
+	beforeEach: () => {
+		backend.configure({ authorMs: 200 });
+		const originalDrafts = backend.ruleDrafts.bind(backend);
+		const originalDraft = backend.ruleDraft.bind(backend);
+		const target = originalDraft('1');
+		const newer = Array.from({ length: 500 }, (_, index) => ({
+			...target.draft,
+			id: 501 - index
+		}));
+		backend.ruleDrafts = resourceId =>
+			resourceId ? originalDrafts(resourceId) : { drafts: newer, truncated: true };
+		backend.ruleDraft = id => {
+			const numericID = Number(id);
+			return numericID >= 2 && numericID <= 501
+				? { ...target, draft: { ...target.draft, id: numericID } }
+				: originalDraft(id);
+		};
+		window.history.replaceState(null, '', '#rules/drafts/1');
+		return () => {
+			backend.ruleDrafts = originalDrafts;
+			backend.ruleDraft = originalDraft;
+		};
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Draft #1', {}, wait);
+		await canvas.findByRole('heading', { name: name(workloads[0]), level: 2 }, wait);
+		await expect(canvasElement.querySelectorAll('.finding-row.active')).toHaveLength(0);
 	}
 };

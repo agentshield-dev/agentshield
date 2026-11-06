@@ -9,8 +9,8 @@ var testIdentityScheme = IdentityScheme{Group: "test.agentshield.io", Version: "
 
 func TestCompileIsOrderAndDuplicateIndependent(t *testing.T) {
 	compiler := testCompiler(t)
-	a := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "a"}
-	b := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "b"}
+	a := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "a"}
+	b := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "b"}
 	resourceA := assertion(a, "machine", "event-a")
 	resourceB := assertion(b, "machine", "event-b")
 	relation := RelationshipAssertion{
@@ -60,8 +60,8 @@ func TestCompileIsOrderAndDuplicateIndependent(t *testing.T) {
 
 func TestCompileOmitsTelemetryUntilCrossContributionEndpointsAreObserved(t *testing.T) {
 	compiler := testCompiler(t)
-	subject := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "subject"}
-	object := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "object"}
+	subject := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "subject"}
+	object := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "object"}
 	input := Input{Telemetry: []TelemetryAssertion{{
 		EventID: "probe", Kind: "active-probe", Subject: subject, Object: object,
 		Operation: "GET /", Outcome: "allowed", Coverage: "l7", Count: 1,
@@ -108,9 +108,9 @@ func TestIdentitySchemesDoNotSilentlyMerge(t *testing.T) {
 
 func TestAddingHubEdgePreservesExistingRelationshipIDs(t *testing.T) {
 	compiler := testCompiler(t)
-	service := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "service"}
-	firstNode := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "node-1"}
-	secondNode := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "node-2"}
+	service := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "service"}
+	firstNode := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "node-1"}
+	secondNode := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "node-2"}
 	base := Input{
 		Resources:     []ResourceAssertion{assertion(service, "service", "service"), assertion(firstNode, "machine", "node-1")},
 		Relationships: []RelationshipAssertion{relationship(service, firstNode)},
@@ -132,8 +132,8 @@ func TestAddingHubEdgePreservesExistingRelationshipIDs(t *testing.T) {
 
 func TestCompileRetainsUnresolvedReferencesAndResolvesThemLater(t *testing.T) {
 	compiler := testCompiler(t)
-	service := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "service"}
-	policy := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "policy"}
+	service := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "service"}
+	policy := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "policy"}
 	input := Input{
 		Facets: []FacetAssertion{{
 			Resource: service, Kind: "protection", Key: "mesh", PluginID: "test", SourceID: "fixture",
@@ -167,7 +167,7 @@ func TestCompileRetainsUnresolvedReferencesAndResolvesThemLater(t *testing.T) {
 
 func TestCompileQuarantinesConflictingResourceKinds(t *testing.T) {
 	compiler := testCompiler(t)
-	claim := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "shared"}
+	claim := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "shared"}
 	first := assertion(claim, "machine", "machine")
 	second := assertion(claim, "service", "service")
 	snapshot, err := compiler.Compile(Input{Resources: []ResourceAssertion{first, second}})
@@ -217,7 +217,7 @@ func relationship(subject, object IdentityClaim) RelationshipAssertion {
 }
 
 func TestCompileRejectsUnregisteredPredicate(t *testing.T) {
-	claim := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "lab", ImmutableKey: "resource"}
+	claim := IdentityClaim{Scheme: testIdentityScheme, AuthorityID: "test", ImmutableKey: "resource"}
 	_, err := testCompiler(t).Compile(Input{Relationships: []RelationshipAssertion{{
 		Subject: claim, Predicate: Predicate("plugin-specific"), Object: claim,
 		PluginID: "test", SourceID: "fixture", RuleID: "test.edge",

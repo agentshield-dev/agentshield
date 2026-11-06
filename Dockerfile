@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     ./cmd/agentshield \
     ./cmd/agentshield-reasoning-mcp \
     ./cmd/agentshield-detector-rules \
-    ./cmd/agentshield-deployment-author
+    ./cmd/agentshield-resource-author
 
 # distroless/static supplies CA certificates and a nonroot user (65532, the same UID the evals
 # image uses) and nothing else. The digest pins ca-certificates 20250419+deb13u1 or later, which

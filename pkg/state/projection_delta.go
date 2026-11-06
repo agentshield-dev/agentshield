@@ -105,7 +105,10 @@ func reconcileProjectionDelta(ctx context.Context, tx pgx.Tx, compiler *graph.Co
 		return nil, fmt.Errorf("compile affected graph: %w", err)
 	}
 	after := filterScopedSnapshot(compiled, scope)
-	changedResources, _ := projectionChanges(before.Resources, after.Resources, func(item graph.Resource) string { return item.ID })
+	changedResources, removedResources := projectionChanges(before.Resources, after.Resources, func(item graph.Resource) string { return item.ID })
+	for _, resourceID := range removedResources {
+		changedResources = append(changedResources, graph.Resource{ID: resourceID})
+	}
 	if err := replaceCurrentProjection(ctx, tx, before, after, now, unresolvedRetention); err != nil {
 		return nil, err
 	}
@@ -125,7 +128,10 @@ func reconcileFullProjection(ctx context.Context, tx pgx.Tx, compiler *graph.Com
 	if err != nil {
 		return nil, fmt.Errorf("compile current graph: %w", err)
 	}
-	changedResources, _ := projectionChanges(before.Resources, after.Resources, func(item graph.Resource) string { return item.ID })
+	changedResources, removedResources := projectionChanges(before.Resources, after.Resources, func(item graph.Resource) string { return item.ID })
+	for _, resourceID := range removedResources {
+		changedResources = append(changedResources, graph.Resource{ID: resourceID})
+	}
 	if err := replaceCurrentProjection(ctx, tx, before, after, now, unresolvedRetention); err != nil {
 		return nil, err
 	}

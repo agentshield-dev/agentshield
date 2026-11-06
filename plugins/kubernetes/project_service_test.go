@@ -1,14 +1,34 @@
 package kubernetes
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/agentshield-dev/agentshield/pkg/graph"
+	"github.com/agentshield-dev/agentshield/pkg/state"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func projectedWorkloadContext(t *testing.T, assertion graph.ResourceAssertion) resourceAuthoringContext {
+	t.Helper()
+	authoringContext, err := graph.DecodeResourceAuthoringContext(assertion.Attributes[graph.ResourceAuthoringContextAttribute])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var context struct {
+		Workload resourceAuthoringContext `json:"workload"`
+	}
+	if err := json.Unmarshal(authoringContext.Context, &context); err != nil {
+		t.Fatal(err)
+	}
+	return context.Workload
+}
 
 func TestProjectServiceVariants(t *testing.T) {
 	tests := []struct {
@@ -65,30 +85,257 @@ func TestProjectServiceVariants(t *testing.T) {
 	}
 }
 
-func TestProjectDeploymentAuthoringContextIsMinimal(t *testing.T) {
+func TestProjectResourceAuthoringContextIsBoundedAndSecretSafe(t *testing.T) {
+	automount := false
 	deployment := testObject("apps/v1", "Deployment", "prod", "payments", "deployment-uid", map[string]any{"spec": map[string]any{
 		"template": map[string]any{"spec": map[string]any{
-			"serviceAccountName": "payments-runtime",
+			"serviceAccountName":           "payments-runtime",
+			"automountServiceAccountToken": automount,
+			"hostNetwork":                  true,
+			"securityContext":              map[string]any{"runAsNonRoot": true, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
 			"containers": []any{map[string]any{
 				"name": "api", "image": "registry.example/payments:v4",
-				"env": []any{map[string]any{"name": "API_TOKEN", "value": "literal-secret-must-not-leak"}},
+				"securityContext": map[string]any{
+					"allowPrivilegeEscalation": false,
+					"readOnlyRootFilesystem":   true,
+					"capabilities":             map[string]any{"add": []any{"NET_ADMIN"}, "drop": []any{"ALL"}},
+				},
+				"ports": []any{map[string]any{"name": "https", "containerPort": int64(8443), "protocol": "TCP"}},
+				"env": []any{
+					map[string]any{"name": "API_TOKEN", "value": "literal-secret-must-not-leak"},
+					map[string]any{"name": "DB_PASSWORD", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "payments-db", "key": "password-key-must-not-leak"}}},
+				},
+				"envFrom": []any{map[string]any{"configMapRef": map[string]any{"name": "payments-settings"}}},
 			}},
+			"volumes": []any{
+				map[string]any{"name": "credentials", "secret": map[string]any{"secretName": "payments-tls", "items": []any{map[string]any{"key": "private-key-must-not-leak", "path": "tls.key"}}}},
+				map[string]any{"name": "host", "hostPath": map[string]any{"path": "/var/run/containerd.sock", "type": "Socket"}},
+			},
 		}}}})
+	deployment.SetLabels(map[string]string{"security-sha256": "policy-name"})
 	input, err := Project("cluster", "source", []*unstructured.Unstructured{deployment})
 	if err != nil {
 		t.Fatal(err)
 	}
 	resource := resourceOfKind(t, input, "kubernetes/deployment")
-	if resource.RuleID != "kubernetes.deployment.authoring-context" {
-		t.Fatalf("deployment provenance=%s", resource.RuleID)
+	if resource.RuleID != "kubernetes.resource.authoring-context" {
+		t.Fatalf("workload provenance=%s", resource.RuleID)
 	}
-	if resource.Attributes["kubernetes/service-account-name"] != "payments-runtime" {
-		t.Fatalf("attributes=%#v", resource.Attributes)
+	encoded := resource.Attributes[graph.ResourceAuthoringContextAttribute]
+	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for key, value := range resource.Attributes {
-		if strings.Contains(value, "literal-secret-must-not-leak") || strings.Contains(value, "registry.example") {
-			t.Fatalf("attribute %s leaked container spec: %s", key, value)
+	if authoringContext.Attributes["kubernetes/label/security-sha256"] != "policy-name" {
+		t.Fatalf("authoring attributes=%#v", authoringContext.Attributes)
+	}
+	context := projectedWorkloadContext(t, resource)
+	if context.SchemaVersion != "v1" || context.ServiceAccountName != "payments-runtime" || context.AutomountServiceAccountToken == nil || *context.AutomountServiceAccountToken {
+		t.Fatalf("identity context=%#v", context)
+	}
+	if !context.HostNetwork || context.PodSecurityContext == nil || context.PodSecurityContext.RunAsNonRoot == nil || !*context.PodSecurityContext.RunAsNonRoot {
+		t.Fatalf("pod security context=%#v", context)
+	}
+	if len(context.Containers) != 1 || context.Containers[0].Image != "registry.example/payments:v4" || len(context.Containers[0].Ports) != 1 || len(context.Containers[0].CapabilitiesAdded) != 1 {
+		t.Fatalf("container context=%#v", context.Containers)
+	}
+	if context.HostPathCount != 1 || !slices.Equal(context.HostPathTypes, []string{"Socket"}) {
+		t.Fatalf("host path posture=count:%d types:%#v", context.HostPathCount, context.HostPathTypes)
+	}
+	wantReferences := []workloadResourceReference{
+		{Kind: "ConfigMap", Usage: "envFrom", Count: 1},
+		{Kind: "Secret", Usage: "env", Count: 1},
+		{Kind: "Secret", Usage: "volume", Count: 1},
+	}
+	if !slices.Equal(context.References, wantReferences) {
+		t.Fatalf("references=%#v, want %#v", context.References, wantReferences)
+	}
+	for _, forbidden := range []string{"literal-secret-must-not-leak", "password-key-must-not-leak", "private-key-must-not-leak", "payments-db", "payments-settings", "payments-tls", "/var/run/containerd.sock"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("authoring context leaked %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestResourceAuthoringSourceRevisionUsesResourceVersionWithObjectFallback(t *testing.T) {
+	first := testObject("v1", "Service", "demo", "service", "service", map[string]any{"spec": map[string]any{"type": "ClusterIP"}})
+	second := first.DeepCopy()
+	second.Object["spec"] = map[string]any{"type": "LoadBalancer"}
+	first.SetResourceVersion("10")
+	second.SetResourceVersion("10")
+	if resourceAuthoringSourceRevision(first) != resourceAuthoringSourceRevision(second) {
+		t.Fatal("equal resource versions produced different source revisions")
+	}
+	first.SetResourceVersion("")
+	second.SetResourceVersion("")
+	if resourceAuthoringSourceRevision(first) == resourceAuthoringSourceRevision(second) {
+		t.Fatal("different objects without resource versions produced the same source revision")
+	}
+}
+
+func TestProjectResourceAuthoringAttributesAreDeterministicallyBounded(t *testing.T) {
+	labels := make(map[string]string)
+	for index := range graph.ResourceAuthoringAttributesMaxItems + 12 {
+		labels[fmt.Sprintf("label-%03d", index)] = "value"
+	}
+	longLabel := strings.Repeat("a", 60) + "." + strings.Repeat("b", 60) + ".example/security"
+	labels[longLabel] = "value"
+	project := func(labels map[string]string) graph.ResourceAuthoringContext {
+		t.Helper()
+		deployment := testObject("apps/v1", "Deployment", "prod", "payments", "deployment-uid", map[string]any{"spec": map[string]any{
+			"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "api", "image": "registry.example/payments:v4"}}}},
+		}})
+		deployment.SetLabels(labels)
+		input, err := Project("cluster", "source", []*unstructured.Unstructured{deployment})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded := resourceOfKind(t, input, "kubernetes/deployment").Attributes[graph.ResourceAuthoringContextAttribute]
+		context, err := graph.DecodeResourceAuthoringContext(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return context
+	}
+	first := project(labels)
+	reversed := make(map[string]string, len(labels))
+	for index := graph.ResourceAuthoringAttributesMaxItems + 11; index >= 0; index-- {
+		reversed[fmt.Sprintf("label-%03d", index)] = "value"
+	}
+	reversed[longLabel] = "value"
+	second := project(reversed)
+	if !maps.Equal(first.Attributes, second.Attributes) || !bytes.Equal(first.Context, second.Context) {
+		t.Fatal("attribute insertion order changed the bounded authoring context")
+	}
+	if len(first.Attributes) != graph.ResourceAuthoringAttributesMaxItems || first.Attributes["kubernetes/name"] != "payments" {
+		t.Fatalf("bounded attributes=%#v", first.Attributes)
+	}
+	if _, found := first.Attributes["kubernetes/label/"+longLabel]; found {
+		t.Fatal("an oversized attribute key remained in authoring context")
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(first.Context, &metadata); err != nil || metadata["attributesTruncated"] != true {
+		t.Fatalf("context=%s err=%v", first.Context, err)
+	}
+}
+
+func TestResourceAuthoringContextTracksSupportedResourceAttributes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  string
+	}{
+		{name: "Ingress", key: "kubernetes/backends"},
+		{name: "NetworkPolicy", key: "kubernetes/ingress-rules"},
+		{name: "HTTPRoute", key: "kubernetes/rules"},
+		{name: "Gateway status", key: "kubernetes/listener-status"},
+		{name: "Service", key: "kubernetes/ports"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := func(value string) string {
+				t.Helper()
+				attributes := map[string]string{"kubernetes/name": "example", test.key: value}
+				if err := addResourceAuthoringContext(attributes, strings.Repeat("a", 64)); err != nil {
+					t.Fatal(err)
+				}
+				return attributes[graph.ResourceAuthoringContextAttribute]
+			}
+			if project(`["first"]`) == project(`["second"]`) {
+				t.Fatalf("%s did not change the resource authoring context", test.key)
+			}
+		})
+	}
+}
+
+func TestProjectResourceAuthoringContextSupportsAppsControllers(t *testing.T) {
+	for _, kind := range []string{"Deployment", "StatefulSet", "DaemonSet"} {
+		t.Run(kind, func(t *testing.T) {
+			workload := testObject("apps/v1", kind, "demo", "worker", strings.ToLower(kind)+"-uid", map[string]any{
+				"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "worker", "image": "example/worker:v1"}},
+				}}},
+			})
+			input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := resourceOfKind(t, input, "kubernetes/"+strings.ToLower(kind))
+			if resource.Attributes[graph.ResourceAuthoringContextAttribute] == "" {
+				t.Fatalf("resource=%#v", resource)
+			}
+		})
+	}
+}
+
+func TestProjectResourceAuthoringContextReportsTruncation(t *testing.T) {
+	ports := make([]any, maxWorkloadContainerItems+1)
+	for index := range ports {
+		ports[index] = map[string]any{"containerPort": int64(index + 1)}
+	}
+	containers := make([]any, maxWorkloadContainers+1)
+	for index := range containers {
+		containerPorts := []any(nil)
+		if index == 0 {
+			containerPorts = ports
+		}
+		containers[index] = map[string]any{"name": "container-" + strconv.Itoa(index), "image": "example/image:v1", "ports": containerPorts}
+	}
+	workload := testObject("apps/v1", "Deployment", "demo", "bounded", "bounded-uid", map[string]any{
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": containers}}},
+	})
+	input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := resourceOfKind(t, input, "kubernetes/deployment")
+	context := projectedWorkloadContext(t, resource)
+	if !context.Truncated || len(context.Containers) != maxWorkloadContainers || len(context.Containers[0].Ports) != maxWorkloadContainerItems {
+		t.Fatalf("bounded context=%#v", context)
+	}
+}
+
+func TestProjectLargestResourceAuthoringContextRoundTripsThroughState(t *testing.T) {
+	ports := make([]any, maxWorkloadContainerItems)
+	capabilities := make([]any, maxWorkloadContainerItems)
+	for index := range ports {
+		ports[index] = map[string]any{"name": "port-" + strconv.Itoa(index), "containerPort": int64(index + 1), "protocol": "TCP"}
+		capabilities[index] = "CAP_" + strconv.Itoa(index)
+	}
+	containers := make([]any, maxWorkloadContainers)
+	for index := range containers {
+		containers[index] = map[string]any{
+			"name": "container-" + strconv.Itoa(index), "image": strings.Repeat("i", maxWorkloadStringLength), "ports": ports,
+			"securityContext": map[string]any{"capabilities": map[string]any{"add": capabilities, "drop": capabilities}},
+		}
+	}
+	workload := testObject("apps/v1", "Deployment", "demo", "largest", "largest-uid", map[string]any{
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"serviceAccountName": "largest", "containers": containers}}},
+	})
+	labels := make(map[string]string, graph.ResourceAuthoringAttributesMaxItems)
+	for index := range graph.ResourceAuthoringAttributesMaxItems {
+		labels[fmt.Sprintf("bulk-%03d", index)] = strings.Repeat("v", 63)
+	}
+	workload.SetLabels(labels)
+	input, err := Project("cluster", "source", []*unstructured.Unstructured{workload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := resourceOfKind(t, input, "kubernetes/deployment")
+	encoded := assertion.Attributes[graph.ResourceAuthoringContextAttribute]
+	if len(encoded) > graph.ResourceAuthoringContextMaxBytes {
+		t.Fatalf("encoded authoring context=%d bytes, limit=%d", len(encoded), graph.ResourceAuthoringContextMaxBytes)
+	}
+	authoringContext, err := graph.DecodeResourceAuthoringContext(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(authoringContext.Context, &metadata); err != nil || metadata["attributesTruncated"] != true || len(authoringContext.Attributes) >= graph.ResourceAuthoringAttributesMaxItems {
+		t.Fatalf("bounded authoring context=%#v err=%v", authoringContext, err)
+	}
+	projected := projectedWorkloadContext(t, assertion)
+	context := state.ResourceAuthoringContextFor(graph.Resource{ID: "largest", Kind: assertion.Kind, Assertions: []graph.ResourceAssertion{assertion}})
+	if !projected.Truncated || context.ContextSHA256 == "" || !strings.Contains(string(context.Context), `"truncated":true`) {
+		t.Fatalf("projected=%#v state context=%#v", projected, context)
 	}
 }
 
@@ -352,7 +599,7 @@ func compileInput(t *testing.T, input graph.Input) {
 }
 
 func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
-	digest := func(mutate func(template map[string]any)) string {
+	project := func(mutate func(template map[string]any)) (string, string) {
 		t.Helper()
 		template := map[string]any{
 			"metadata": map[string]any{"labels": map[string]any{"app": "payments"}, "annotations": map[string]any{"team": "payments"}},
@@ -366,27 +613,48 @@ func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		value := resourceOfKind(t, input, "kubernetes/deployment").Attributes["kubernetes/pod-template-sha256"]
+		attributes := resourceOfKind(t, input, "kubernetes/deployment").Attributes
+		value := attributes["kubernetes/pod-template-sha256"]
 		if len(value) != 64 {
 			t.Fatalf("pod template digest = %q", value)
 		}
-		return value
+		return value, attributes[graph.ResourceAuthoringContextAttribute]
 	}
-	base := digest(nil)
-	restarted := digest(func(template map[string]any) {
+	base, baseContext := project(nil)
+	restarted, _ := project(func(template map[string]any) {
 		template["metadata"].(map[string]any)["annotations"].(map[string]any)["kubectl.kubernetes.io/restartedAt"] = "2026-10-18T00:00:00Z"
 	})
 	if restarted != base {
 		t.Fatal("a rollout restart annotation changed the Pod template digest")
 	}
-	if digest(func(template map[string]any) {
+	if changed, _ := project(func(template map[string]any) {
 		template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "registry.example/payments:v5"
-	}) == base {
+	}); changed == base {
 		t.Fatal("an image change did not change the Pod template digest")
 	}
-	if digest(func(template map[string]any) {
+	if changed, _ := project(func(template map[string]any) {
 		template["metadata"].(map[string]any)["labels"].(map[string]any)["version"] = "v5"
-	}) == base {
+	}); changed == base {
 		t.Fatal("a Pod label change did not change the Pod template digest")
+	}
+	environmentDigest, environmentContext := project(func(template map[string]any) {
+		template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"] = []any{map[string]any{"name": "LOG_LEVEL", "value": "debug"}}
+	})
+	if environmentDigest == base {
+		t.Fatal("an environment value change did not change the Pod template digest")
+	}
+	if environmentContext == baseContext {
+		t.Fatal("an unprojected environment value did not change the source revision")
+	}
+	baseAuthoring, err := graph.DecodeResourceAuthoringContext(baseContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentAuthoring, err := graph.DecodeResourceAuthoringContext(environmentContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(baseAuthoring.Context, environmentAuthoring.Context) || !maps.Equal(baseAuthoring.Attributes, environmentAuthoring.Attributes) {
+		t.Fatal("an unprojected environment value entered model-visible authoring context")
 	}
 }

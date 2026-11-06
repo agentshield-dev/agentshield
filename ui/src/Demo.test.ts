@@ -1,9 +1,61 @@
 import { describe, expect, it } from 'vitest';
 import { list } from '@/lib/model';
-import { FakeBackend } from '../mocks/backend';
+import { ApiError, FakeBackend } from '../mocks/backend';
 import { demoScenario } from '../mocks/scenarios';
 
 describe('demo scenarios', () => {
+	it('filters rule drafts by resource before applying list bounds', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts)[0];
+		if (!draft) throw new Error('expected a rule draft');
+		const filtered = list(backend.ruleDrafts(draft.resourceId).drafts);
+		expect(filtered.length).toBeGreaterThan(0);
+		expect(filtered.every(item => item.resourceId === draft.resourceId)).toBe(true);
+	});
+
+	it('requires explicit selections when loading approved rules', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts).find(item => item.reviewStatus === 'approved');
+		if (!draft) throw new Error('expected an approved rule draft');
+		const proposal = backend.ruleDraft(String(draft.id)).proposal;
+		expect(list(proposal?.approvedRuleIds)).not.toHaveLength(0);
+		if (proposal) delete proposal.approvedRuleIds;
+		expect(
+			list(backend.rules().resourceRules).filter(
+				item => item.mode === 'active' && item.rule.scopeResourceId === draft.resourceId
+			)
+		).toHaveLength(0);
+	});
+
+	it('requires explicit rule selection when approving a draft', () => {
+		const backend = new FakeBackend();
+		const draft = list(backend.ruleDrafts().drafts).find(
+			item => item.status === 'completed' && item.reviewStatus === 'pending' && item.ruleCount > 0
+		);
+		if (!draft) throw new Error('expected a pending completed rule draft');
+		let failure: unknown;
+		try {
+			backend.reviewRuleDraft(String(draft.id), { decision: 'approved' });
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(ApiError);
+		expect((failure as ApiError).status).toBe(400);
+		draft.currentRevision = false;
+		const proposal = backend.ruleDraft(String(draft.id)).proposal;
+		failure = undefined;
+		try {
+			backend.reviewRuleDraft(String(draft.id), {
+				decision: 'approved',
+				ruleIds: list(proposal?.rules).map(item => item.rule.id)
+			});
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(ApiError);
+		expect((failure as ApiError).status).toBe(409);
+	});
+
 	it('replaces findings and announces the updated graph', () => {
 		const backend = new FakeBackend();
 		const events: number[] = [];

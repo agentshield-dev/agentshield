@@ -10,7 +10,7 @@ binary="$CACHE_DIR/agentshield-evals"
 image="agentshield-evals:$CLUSTER_IDENTITY"
 manifest="$EVAL_DIR/manifests/agentshield.yaml.tmpl"
 
-# Detector-only runs make no model calls, so they drop the Deployment rule authoring lines.
+# Detector-only runs make no model calls, so they drop the resource rule authoring lines.
 render_agentshield() {
   local authoring=()
   if detector_only; then
@@ -39,7 +39,7 @@ case "$action" in
     cp "$binary" "$image_context/agentshield"
     docker build --quiet --tag "$image" --file "$EVAL_DIR/config/agentshield.Dockerfile" "$image_context" >/dev/null
     kind load docker-image --name "$CLUSTER_NAME" "$image" >/dev/null
-    # Deployment rule authoring calls OpenAI with the key the eval already requires.
+    # Resource rule authoring calls OpenAI with the key the eval already requires.
     # A redeploy without the key reuses the Secret an earlier run stored.
     if ! detector_only; then
       if [[ -n "${OPENAI_API_KEY:-}" ]]; then
@@ -47,7 +47,7 @@ case "$action" in
         printf '%s' "$OPENAI_API_KEY" | kube -n agentshield-system create secret generic agentshield-model \
           --from-file=OPENAI_API_KEY=/dev/stdin --dry-run=client -o yaml | kube apply -f - >/dev/null
       elif ! kube -n agentshield-system get secret agentshield-model >/dev/null 2>&1; then
-        fail "OPENAI_API_KEY is required for Deployment rule authoring"
+        fail "OPENAI_API_KEY is required for resource rule authoring"
       fi
     fi
     render_agentshield | kube apply -f -
