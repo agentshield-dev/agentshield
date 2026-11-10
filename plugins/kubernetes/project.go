@@ -227,12 +227,16 @@ func attributes(item *unstructured.Unstructured) map[string]string {
 			if decoded.Value.Status.PodIP != "" {
 				result["kubernetes/pod-ip"] = decoded.Value.Status.PodIP
 			}
-			addresses := make([]string, 0, len(decoded.Value.Status.PodIPs)+1)
-			addresses = append(addresses, decoded.Value.Status.PodIP)
-			for _, podIP := range decoded.Value.Status.PodIPs {
-				addresses = append(addresses, podIP.IP)
+			// A host-network Pod's IP is the Node's address, shared by every
+			// such Pod and the backing machine, so the Pod does not own it.
+			if !decoded.Value.Spec.HostNetwork {
+				addresses := make([]string, 0, len(decoded.Value.Status.PodIPs)+1)
+				addresses = append(addresses, decoded.Value.Status.PodIP)
+				for _, podIP := range decoded.Value.Status.PodIPs {
+					addresses = append(addresses, podIP.IP)
+				}
+				setNetworkMetadata(result, graph.NetworkRoleWorkload, addresses)
 			}
-			setNetworkMetadata(result, graph.NetworkRoleWorkload, addresses)
 		}
 	}
 	if item.GetAPIVersion() == "v1" && item.GetKind() == "Node" {

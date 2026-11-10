@@ -658,3 +658,27 @@ func TestProjectDeploymentPodTemplateDigestTracksRevisions(t *testing.T) {
 		t.Fatal("an unprojected environment value entered model-visible authoring context")
 	}
 }
+
+func TestProjectHostNetworkPodDoesNotExposeNodeAddress(t *testing.T) {
+	pod := testObject("v1", "Pod", "kube-system", "kube-proxy", "kube-proxy", map[string]any{
+		"spec":   map[string]any{"hostNetwork": true},
+		"status": map[string]any{"podIP": "10.142.0.5", "podIPs": []any{map[string]any{"ip": "10.142.0.5"}}},
+	})
+	input, err := ProjectWithNetworkID("cluster", "network-a", "source", []*unstructured.Unstructured{pod})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := resourceOfKind(t, input, "kubernetes/pod")
+	if workload.Attributes["kubernetes/pod-ip"] != "10.142.0.5" {
+		t.Fatalf("host-network Pod lost its pod-ip attribute: %#v", workload.Attributes)
+	}
+	if _, found := workload.Attributes["network/addresses"]; found {
+		t.Fatalf("host-network Pod claims the Node address: %#v", workload.Attributes)
+	}
+	for _, relationship := range input.Relationships {
+		if relationship.Predicate == graph.PredicateExposes {
+			t.Fatalf("host-network Pod exposes an address: %#v", relationship)
+		}
+	}
+	compileInput(t, input)
+}
