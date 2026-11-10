@@ -192,3 +192,62 @@ func TestGatewayAndHTTPRouteTransportAndBackendPosture(t *testing.T) {
 	}
 	compileInput(t, input)
 }
+
+func TestProjectHTTPRouteCrossNamespaceParent(t *testing.T) {
+	namespace := func(name string, labels map[string]any) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "v1", "kind": "Namespace",
+			"metadata": map[string]any{"name": name, "uid": "ns-" + name, "labels": labels},
+		}}
+	}
+	gatewayWith := func(namespaces map[string]any) *unstructured.Unstructured {
+		listener := map[string]any{"name": "http", "port": int64(80), "protocol": "HTTP"}
+		if namespaces != nil {
+			listener["allowedRoutes"] = map[string]any{"namespaces": namespaces}
+		}
+		return testObject("gateway.networking.k8s.io/v1", "Gateway", "gateway-system", "edge", "gateway", map[string]any{
+			"spec": map[string]any{"gatewayClassName": "prod", "listeners": []any{listener}},
+		})
+	}
+	route := testObject("gateway.networking.k8s.io/v1", "HTTPRoute", "apps", "hook", "route", map[string]any{
+		"spec": map[string]any{"parentRefs": []any{map[string]any{"name": "edge", "namespace": "gateway-system"}}},
+	})
+	for _, test := range []struct {
+		name       string
+		namespaces map[string]any
+		labels     map[string]any
+		attached   bool
+	}{
+		{name: "from all", namespaces: map[string]any{"from": "All"}, attached: true},
+		{name: "default same", namespaces: nil, attached: false},
+		{name: "explicit same", namespaces: map[string]any{"from": "Same"}, attached: false},
+		{name: "selector match", namespaces: map[string]any{"from": "Selector", "selector": map[string]any{"matchLabels": map[string]any{"edge": "true"}}}, labels: map[string]any{"edge": "true"}, attached: true},
+		{name: "selector miss", namespaces: map[string]any{"from": "Selector", "selector": map[string]any{"matchLabels": map[string]any{"edge": "true"}}}, labels: map[string]any{"edge": "false"}, attached: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gateway := gatewayWith(test.namespaces)
+			objects := []*unstructured.Unstructured{namespace("apps", test.labels), namespace("gateway-system", nil), gateway, route}
+			input, err := Project("cluster", "source", objects)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attached := false
+			for _, relationship := range input.Relationships {
+				if relationship.Subject == ClaimFor("cluster", route) && relationship.Predicate == graph.PredicateMemberOf && relationship.Object == ClaimFor("cluster", gateway) {
+					attached = true
+				}
+			}
+			if attached != test.attached {
+				t.Fatalf("member-of attached = %t, want %t", attached, test.attached)
+			}
+			unresolved := resourceOfKind(t, input, "kubernetes/httproute").Attributes["kubernetes/unresolved-references"]
+			if test.attached && unresolved != "" && unresolved != "[]" {
+				t.Fatalf("unresolved references = %s", unresolved)
+			}
+			if !test.attached && unresolved != `["parent:gateway.networking.k8s.io/Gateway:gateway-system/edge"]` {
+				t.Fatalf("unresolved references = %s", unresolved)
+			}
+			compileInput(t, input)
+		})
+	}
+}
