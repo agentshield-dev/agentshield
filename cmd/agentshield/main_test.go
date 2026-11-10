@@ -17,6 +17,7 @@ import (
 	awsplugin "github.com/agentshield-dev/agentshield/plugins/aws"
 	ciliumplugin "github.com/agentshield-dev/agentshield/plugins/cilium"
 	falcoplugin "github.com/agentshield-dev/agentshield/plugins/falco"
+	gcpplugin "github.com/agentshield-dev/agentshield/plugins/gcp"
 	istioplugin "github.com/agentshield-dev/agentshield/plugins/istio"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 	"github.com/spf13/pflag"
@@ -177,7 +178,7 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := []string{kubernetesplugin.PluginID, awsplugin.PluginID}
+	ids := []string{kubernetesplugin.PluginID, awsplugin.PluginID, gcpplugin.PluginID}
 	for _, plugin := range consumers {
 		ids = append(ids, plugin.Descriptor().ID)
 	}
@@ -198,7 +199,9 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 	if err := discovery.RegisterIdentitySchemes(registry, compiledInDescriptors()...); err != nil {
 		t.Fatal(err)
 	}
-	for _, definition := range []graph.SchemeDefinition{kubernetesplugin.IdentitySchemeDefinition(), awsplugin.IdentitySchemeDefinition()} {
+	for _, definition := range []graph.SchemeDefinition{
+		kubernetesplugin.IdentitySchemeDefinition(), awsplugin.IdentitySchemeDefinition(), gcpplugin.IdentitySchemeDefinition(),
+	} {
 		if err := registry.Register(definition); err == nil {
 			t.Fatalf("identity scheme %q was not registered", definition.Scheme)
 		}
@@ -209,7 +212,7 @@ func TestPluginCLIFlagsAreNamespacedAndCollisionFree(t *testing.T) {
 	flags := pflag.NewFlagSet("agentshield", pflag.ContinueOnError)
 	configs := []interface{ RegisterFlags(*pflag.FlagSet) error }{
 		&kubernetesplugin.CLIConfig{}, &istioplugin.CLIConfig{}, &agentgatewayplugin.CLIConfig{},
-		&ciliumplugin.CLIConfig{}, &falcoplugin.CLIConfig{}, &awsplugin.CLIConfig{},
+		&ciliumplugin.CLIConfig{}, &falcoplugin.CLIConfig{}, &awsplugin.CLIConfig{}, &gcpplugin.CLIConfig{},
 	}
 	for _, config := range configs {
 		if err := config.RegisterFlags(flags); err != nil {
@@ -219,6 +222,7 @@ func TestPluginCLIFlagsAreNamespacedAndCollisionFree(t *testing.T) {
 	for _, name := range []string{
 		"kubernetes-cluster-id", "istio-cluster-id", "agentgateway-cluster-id", "cilium-cluster-id",
 		"falco-cluster-id", "falco-source-id", "aws-region", "aws-firehose-stream-arn",
+		"gcp-project", "gcp-region", "gcp-poll-interval",
 	} {
 		if flags.Lookup(name) == nil {
 			t.Errorf("expected plugin-owned flag --%s", name)
@@ -254,6 +258,19 @@ func TestParseOptionsRequiresAWSRegionForAWSReceivers(t *testing.T) {
 		if _, err := parseOptions([]string{flag}); err == nil || !strings.Contains(err.Error(), "--aws-region") {
 			t.Errorf("parseOptions(%q) error = %v, want an --aws-region requirement", flag, err)
 		}
+	}
+}
+
+func TestParseOptionsValidatesGCPOptions(t *testing.T) {
+	if _, err := parseOptions([]string{"--gcp-region=us-east1"}); err == nil || !strings.Contains(err.Error(), "--gcp-project") {
+		t.Errorf("region without project error = %v, want a --gcp-project requirement", err)
+	}
+	if _, err := parseOptions([]string{"--gcp-project=example", "--gcp-poll-interval=0s"}); err == nil || !strings.Contains(err.Error(), "--gcp-poll-interval") {
+		t.Errorf("zero poll interval error = %v, want a --gcp-poll-interval error", err)
+	}
+	config, err := parseOptions([]string{"--gcp-project=example", "--gcp-region=us-east1", "--gcp-poll-interval=2m"})
+	if err != nil || config.gcp.Project != "example" || config.gcp.Region != "us-east1" {
+		t.Fatalf("parseOptions = %+v, %v", config.gcp, err)
 	}
 }
 

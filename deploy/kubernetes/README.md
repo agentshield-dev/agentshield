@@ -86,7 +86,8 @@ applies backpressure rather than dropping events; see
 ## Process requirements
 
 Run one AgentShield process per database and leave `replicaCount` at `1`.
-One process can discover one Kubernetes cluster and one AWS region.
+One process can discover one Kubernetes cluster, one AWS region, and one GCP
+project.
 Multiple replicas would duplicate provider rollups and share the default
 reasoning consumer ID. Prepared remediations, the collection hub, and
 telemetry rollups are held in process memory, not shared between replicas.
@@ -120,3 +121,23 @@ non-loopback listener.
 See [Configuration](https://agent-shield.dev/docs/operations/configuration/) for every flag,
 and the [AWS plugin](https://agent-shield.dev/docs/plugins/aws/#vpc-flow-log-telemetry) for
 Firehose ingestion setup.
+
+## GCP discovery
+
+Set `discovery.gcp.project` to a project ID or number to enable GCP Compute
+Engine discovery. The plugin uses Application Default Credentials only; do
+not mount a service account key. On GKE, bind the chart's Kubernetes service
+account to a Google service account with Workload Identity and grant that
+account `roles/compute.networkViewer` on the project:
+
+```bash
+helm upgrade --install agentshield deploy/kubernetes \
+  --namespace agentshield-system \
+  --set image.tag=0.1.0 \
+  --set discovery.gcp.project=example-project \
+  --set-string 'serviceAccount.annotations.iam\.gke\.io/gcp-service-account=agentshield@example-project.iam.gserviceaccount.com'
+```
+
+With Workload Identity Federation for GKE you can instead grant the role
+directly to the Kubernetes service account principal and leave
+`serviceAccount.annotations` empty.

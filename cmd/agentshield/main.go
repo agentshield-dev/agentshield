@@ -2,9 +2,9 @@
 // graph store, telemetry ingestion and rollups, detection with optional
 // agentic investigation and Resource rule authoring, and the HTTP API and UI.
 //
-// One process observes at most one Kubernetes cluster and one AWS region and
-// persists to PostgreSQL. With --disable-discovery it serves persisted state
-// only. The HTTP API is unauthenticated; the default listener is loopback, and
+// One process observes at most one Kubernetes cluster, one AWS region, and one
+// GCP project and persists to PostgreSQL. With --disable-discovery it serves
+// persisted state only. The HTTP API is unauthenticated; the default listener is loopback, and
 // the remediation endpoints act only with live discovery on a loopback
 // listener. Elsewhere they return 503. Flags and environment variables are
 // documented at https://agent-shield.dev/docs/operations/configuration/.
@@ -43,6 +43,7 @@ import (
 	awsplugin "github.com/agentshield-dev/agentshield/plugins/aws"
 	ciliumplugin "github.com/agentshield-dev/agentshield/plugins/cilium"
 	falcoplugin "github.com/agentshield-dev/agentshield/plugins/falco"
+	gcpplugin "github.com/agentshield-dev/agentshield/plugins/gcp"
 	istioplugin "github.com/agentshield-dev/agentshield/plugins/istio"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -53,6 +54,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
+	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v3"
+	compute "google.golang.org/api/compute/v1"
 	k8sdiscovery "k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -87,6 +90,7 @@ type options struct {
 	cilium                    ciliumplugin.CLIConfig
 	falco                     falcoplugin.CLIConfig
 	aws                       awsplugin.CLIConfig
+	gcp                       gcpplugin.CLIConfig
 	modelEndpoint             string
 	modelAPIKey               string
 	modelProviderName         string
@@ -227,6 +231,7 @@ func parseOptions(args []string) (options, error) {
 	for _, register := range []func(*pflag.FlagSet) error{
 		config.kubernetes.RegisterFlags, config.istio.RegisterFlags, config.agentgateway.RegisterFlags,
 		config.cilium.RegisterFlags, config.falco.RegisterFlags, config.aws.RegisterFlags,
+		config.gcp.RegisterFlags,
 	} {
 		if err := register(flags); err != nil {
 			return options{}, err
@@ -241,6 +246,12 @@ func parseOptions(args []string) (options, error) {
 	if strings.TrimSpace(config.aws.Region) == "" &&
 		(strings.TrimSpace(config.aws.EventsQueueURL) != "" || strings.TrimSpace(config.aws.FirehoseStreamARN) != "") {
 		return options{}, errors.New("AWS events queue and Firehose options require --aws-region")
+	}
+	if strings.TrimSpace(config.gcp.Project) == "" && strings.TrimSpace(config.gcp.Region) != "" {
+		return options{}, errors.New("--gcp-region requires --gcp-project")
+	}
+	if _, err := config.gcp.PollDuration(); err != nil {
+		return options{}, err
 	}
 	if config.checkpointInterval <= 0 || config.checkpointDeltas == 0 {
 		return options{}, errors.New("contribution checkpoint interval and delta count must be positive")
@@ -349,12 +360,13 @@ func openStore(ctx context.Context, config options) (*state.Store, error) {
 
 // compiledInDescriptors returns the static descriptor of every plugin built
 // into this binary. Plugins are compiled in; there is no dynamic plugin
-// registration. Today only Kubernetes and AWS declare identity schemes;
+// registration. Today only Kubernetes, AWS, and GCP declare identity schemes;
 // Kubernetes-backed plugins reuse the Kubernetes and built-in graph schemes.
 func compiledInDescriptors() []discovery.Descriptor {
 	return []discovery.Descriptor{
 		kubernetesplugin.Descriptor(), istioplugin.Descriptor(), agentgatewayplugin.Descriptor(),
 		ciliumplugin.Descriptor(), falcoplugin.Descriptor(), awsplugin.Descriptor(),
+		gcpplugin.Descriptor(),
 	}
 }
 
@@ -700,6 +712,13 @@ func discoveryPlugins(ctx context.Context, config options) ([]discovery.Plugin, 
 		}
 		plugins = append(plugins, awsDiscovery)
 	}
+	if strings.TrimSpace(config.gcp.Project) != "" {
+		gcpDiscovery, err := gcpDiscoveryPlugin(ctx, config.gcp)
+		if err != nil {
+			return nil, err
+		}
+		plugins = append(plugins, gcpDiscovery)
+	}
 	if !config.kubernetes.Disabled {
 		kubernetesPlugins, err := kubernetesDiscoveryPlugins(config, discovery.IdentityReferenceResolvers(plugins...))
 		if err != nil {
@@ -708,7 +727,7 @@ func discoveryPlugins(ctx context.Context, config options) ([]discovery.Plugin, 
 		plugins = append(plugins, kubernetesPlugins...)
 	}
 	if len(plugins) == 0 {
-		return nil, errors.New("discovery enabled without a Kubernetes or AWS source")
+		return nil, errors.New("discovery enabled without a Kubernetes, AWS, or GCP source")
 	}
 	return plugins, nil
 }
@@ -842,6 +861,41 @@ func awsDiscoveryPlugin(ctx context.Context, pluginConfig awsplugin.CLIConfig) (
 		return nil, err
 	}
 	return plugin, nil
+}
+
+// gcpDiscoveryPlugin authenticates with Application Default Credentials only
+// and binds the source to the project number the API reports.
+func gcpDiscoveryPlugin(ctx context.Context, pluginConfig gcpplugin.CLIConfig) (discovery.Plugin, error) {
+	service, err := compute.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create GCP Compute client: %w", err)
+	}
+	// Compute's Project.Id is an internal ID, not the project number.
+	resourceManager, err := cloudresourcemanager.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create GCP Resource Manager client: %w", err)
+	}
+	project, err := resourceManager.Projects.Get("projects/" + strings.TrimSpace(pluginConfig.Project)).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("get GCP project: %w", err)
+	}
+	projectNumber, found := strings.CutPrefix(project.Name, "projects/")
+	if !found || project.ProjectId == "" {
+		return nil, fmt.Errorf("get GCP project: unexpected resource name %q", project.Name)
+	}
+	region := strings.TrimSpace(pluginConfig.Region)
+	sourceID, err := gcpplugin.SourceID(projectNumber, region)
+	if err != nil {
+		return nil, err
+	}
+	pollInterval, err := pluginConfig.PollDuration()
+	if err != nil {
+		return nil, err
+	}
+	return gcpplugin.New(gcpplugin.Config{
+		ProjectID: project.ProjectId, ProjectNumber: projectNumber, Region: region, SourceID: sourceID,
+		Compute: gcpplugin.NewComputeAPI(service), PollInterval: pollInterval,
+	})
 }
 
 func telemetrySink(config options) (telemetry.Sink, func() error, error) {
