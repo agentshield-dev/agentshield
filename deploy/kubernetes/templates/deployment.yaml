@@ -43,6 +43,9 @@ spec:
             - {{ printf "--istio-root-namespace=%s" .Values.discovery.istio.rootNamespace | quote }}
             - {{ printf "--agentgateway-cluster-id=%s" .Values.discovery.agentgateway.clusterID | quote }}
             - {{ printf "--agentgateway-source-id=%s" .Values.discovery.agentgateway.sourceID | quote }}
+            - {{ printf "--kgateway-cluster-id=%s" .Values.discovery.kgateway.clusterID | quote }}
+            - {{ printf "--kgateway-source-id=%s" .Values.discovery.kgateway.sourceID | quote }}
+            - {{ printf "--kgateway-controller-names=%s" .Values.discovery.kgateway.controllerNames | quote }}
             - {{ printf "--cilium-cluster-id=%s" .Values.discovery.cilium.clusterID | quote }}
             - {{ printf "--cilium-source-id=%s" .Values.discovery.cilium.sourceID | quote }}
             - {{ printf "--falco-cluster-id=%s" .Values.discovery.falco.clusterID | quote }}
@@ -50,6 +53,9 @@ spec:
             - {{ printf "--telemetry-jsonl=%s" .Values.telemetry.jsonlPath | quote }}
             {{- if .Values.discovery.kubernetes.networkID }}
             - {{ printf "--kubernetes-network-id=%s" .Values.discovery.kubernetes.networkID | quote }}
+            {{- end }}
+            {{- if .Values.discovery.kgateway.networkID }}
+            - {{ printf "--kgateway-network-id=%s" .Values.discovery.kgateway.networkID | quote }}
             {{- end }}
             {{- if .Values.discovery.istio.networkID }}
             - {{ printf "--istio-network-id=%s" .Values.discovery.istio.networkID | quote }}

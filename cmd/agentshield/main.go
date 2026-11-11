@@ -44,6 +44,7 @@ import (
 	ciliumplugin "github.com/agentshield-dev/agentshield/plugins/cilium"
 	falcoplugin "github.com/agentshield-dev/agentshield/plugins/falco"
 	istioplugin "github.com/agentshield-dev/agentshield/plugins/istio"
+	kgatewayplugin "github.com/agentshield-dev/agentshield/plugins/kgateway"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -84,6 +85,7 @@ type options struct {
 	kubernetes                kubernetesplugin.CLIConfig
 	istio                     istioplugin.CLIConfig
 	agentgateway              agentgatewayplugin.CLIConfig
+	kgateway                  kgatewayplugin.CLIConfig
 	cilium                    ciliumplugin.CLIConfig
 	falco                     falcoplugin.CLIConfig
 	aws                       awsplugin.CLIConfig
@@ -226,7 +228,7 @@ func parseOptions(args []string) (options, error) {
 	flags.DurationVar(&config.resourceRuleAuthorTimeout, "resource-rule-authoring-timeout", 5*time.Minute, "maximum duration for one resource rule authoring model call")
 	for _, register := range []func(*pflag.FlagSet) error{
 		config.kubernetes.RegisterFlags, config.istio.RegisterFlags, config.agentgateway.RegisterFlags,
-		config.cilium.RegisterFlags, config.falco.RegisterFlags, config.aws.RegisterFlags,
+		config.kgateway.RegisterFlags, config.cilium.RegisterFlags, config.falco.RegisterFlags, config.aws.RegisterFlags,
 	} {
 		if err := register(flags); err != nil {
 			return options{}, err
@@ -354,7 +356,7 @@ func openStore(ctx context.Context, config options) (*state.Store, error) {
 func compiledInDescriptors() []discovery.Descriptor {
 	return []discovery.Descriptor{
 		kubernetesplugin.Descriptor(), istioplugin.Descriptor(), agentgatewayplugin.Descriptor(),
-		ciliumplugin.Descriptor(), falcoplugin.Descriptor(), awsplugin.Descriptor(),
+		kgatewayplugin.Descriptor(), ciliumplugin.Descriptor(), falcoplugin.Descriptor(), awsplugin.Descriptor(),
 	}
 }
 
@@ -796,6 +798,13 @@ func kubernetesConsumerPlugins(config options, actions kubernetesplugin.WriteTra
 	if err != nil {
 		return nil, err
 	}
+	kgateway, err := kgatewayplugin.New(kgatewayplugin.Config{
+		ClusterID: config.kgateway.ClusterID, NetworkID: config.kgateway.NetworkID, SourceID: config.kgateway.SourceID,
+		ControllerNames: kgatewayplugin.SplitList(config.kgateway.ControllerNames),
+	})
+	if err != nil {
+		return nil, err
+	}
 	cilium, err := ciliumplugin.New(ciliumplugin.Config{ClusterID: config.cilium.ClusterID, SourceID: config.cilium.SourceID, Actions: actions})
 	if err != nil {
 		return nil, err
@@ -804,7 +813,7 @@ func kubernetesConsumerPlugins(config options, actions kubernetesplugin.WriteTra
 	if err != nil {
 		return nil, err
 	}
-	return []discovery.Plugin{istio, agentgateway, cilium, falco}, nil
+	return []discovery.Plugin{istio, agentgateway, kgateway, cilium, falco}, nil
 }
 
 func awsDiscoveryPlugin(ctx context.Context, pluginConfig awsplugin.CLIConfig) (discovery.Plugin, error) {

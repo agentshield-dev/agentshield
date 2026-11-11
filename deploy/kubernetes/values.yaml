@@ -37,6 +37,11 @@ discovery:
   agentgateway:
     clusterID: example-cluster
     sourceID: kubernetes/example-cluster
+  kgateway:
+    clusterID: example-cluster
+    networkID: ""
+    sourceID: kubernetes/example-cluster
+    controllerNames: kgateway.dev/kgateway
   cilium:
     clusterID: example-cluster
     sourceID: kubernetes/example-cluster
