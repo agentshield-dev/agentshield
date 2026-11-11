@@ -33,7 +33,7 @@ kubectl -n agentshield-system rollout status deployment/agentshield-agentshield
 ```
 
 The sample defaults use stable `example-cluster` IDs for the Kubernetes,
-Istio, agentgateway, and Cilium plugin configurations. Override each
+Istio, agentgateway, kgateway, and Cilium plugin configurations. Override each
 independently through `values.yaml` or `--set
 discovery.<plugin>.clusterID=...`; plugins that must refer to the same
 Kubernetes object need the same stable cluster authority. Do not change an

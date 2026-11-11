@@ -1,0 +1,8 @@
+edge HTTPRoute apps/artifacts governed-by TrafficPolicy apps/login governance/authorization/custom/service/ingress
+edge HTTPRoute apps/dashboard governed-by TrafficPolicy apps/login governance/authorization/custom/service/ingress
+facet authorization-posture/kgateway-trafficpolicy on TrafficPolicy apps/login governance/authorization/custom/service/ingress
+facet kgateway-coverage/capabilities on Gateway gateway-system/edge -
+facet kgateway-gateway-service/service-type on Gateway gateway-system/edge exposure/network-access/internal/gateway/ingress
+resource kubernetes/gatewayextension GatewayExtension apps/extauth
+resource kubernetes/gatewayparameters GatewayParameters gateway-system/edge
+resource kubernetes/trafficpolicy TrafficPolicy apps/login
