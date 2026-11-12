@@ -124,7 +124,7 @@ func (p *Plugin) Run(ctx context.Context, runtime discovery.Runtime) error {
 		return false, nil
 	}
 	reconcile := func() (bool, error) {
-		next, captureErr := capture(ctx, p.config.EC2, p.config.Region)
+		next, captureErr := capture(ctx, p.config.EC2, p.config.Region, p.config.SourceID)
 		if captureErr != nil {
 			return retainDegraded(captureErr)
 		}
@@ -269,7 +269,7 @@ func publishCollection[T any](ctx context.Context, runtime discovery.Runtime, so
 	slices.Sort(deleted)
 	for _, key := range deleted {
 		if err := runtime.Publish(ctx, discovery.Change{
-			EventID: eventID(collection, key, old[key], "delete"), PluginID: PluginID, SourceID: sourceID,
+			EventID: eventID(sourceID, collection, key, old[key], "delete"), PluginID: PluginID, SourceID: sourceID,
 			Collection: collection, Key: key, Revision: old[key], Generation: generation,
 			Operation: discovery.OperationDelete, ObservedAt: observedAt,
 		}); err != nil {
@@ -291,6 +291,6 @@ func instancesCollection(region string) string {
 	return "aws/ec2/" + region + "/instances"
 }
 
-func eventID(collection, key, revision, operation string) string {
-	return PluginID + ":" + collection + ":" + key + ":" + revision + ":" + operation
+func eventID(sourceID, collection, key, revision, operation string) string {
+	return PluginID + ":" + sourceID + ":" + collection + ":" + key + ":" + revision + ":" + operation
 }

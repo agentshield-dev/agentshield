@@ -40,7 +40,7 @@ func TestPluginPublishesReplacementAndRetraction(t *testing.T) {
 	for _, change := range runtime.changes {
 		if change.Operation == discovery.OperationDelete && change.Key == "eni-1" {
 			deleted = true
-			if change.EventID != eventID(networkInterfacesCollection("us-east-1"), "eni-1", change.Revision, "delete") {
+			if change.EventID != eventID("aws/aws/111111111111/us-east-1", networkInterfacesCollection("us-east-1"), "eni-1", change.Revision, "delete") {
 				t.Fatalf("unstable delete event ID %q", change.EventID)
 			}
 		}
@@ -53,6 +53,31 @@ func TestPluginPublishesReplacementAndRetraction(t *testing.T) {
 	}
 	if !ordered(runtime.operations, "publish", "replace", "ready", "ready", "ready") {
 		t.Fatalf("initial operation order = %v", runtime.operations)
+	}
+}
+
+func TestPluginEventIDsAreSourceScoped(t *testing.T) {
+	// A Shared VPC owner and participant can both describe the same ENI.
+	ids := make(map[string]string)
+	for _, sourceID := range []string{"aws/aws/111111111111/us-east-1", "aws/aws/222222222222/us-east-1"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		runtime := &recordingRuntime{cancelAfterReplacements: 1, cancel: cancel}
+		plugin, err := New(Config{Partition: "aws", Region: "us-east-1", SourceID: sourceID, EC2: &changingEC2{}, PollInterval: time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plugin.Run(ctx, runtime); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run error = %v", err)
+		}
+		if len(runtime.changes) == 0 {
+			t.Fatal("no changes published")
+		}
+		for _, change := range runtime.changes {
+			if other, found := ids[change.EventID]; found && other != sourceID {
+				t.Fatalf("event ID %q published by %s and %s", change.EventID, other, sourceID)
+			}
+			ids[change.EventID] = sourceID
+		}
 	}
 }
 

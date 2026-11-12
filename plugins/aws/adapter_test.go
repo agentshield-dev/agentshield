@@ -13,7 +13,7 @@ import (
 
 func TestCapturePaginatesAndCanonicalizes(t *testing.T) {
 	client := &pagedEC2{}
-	snapshot, err := capture(context.Background(), client, "us-east-1")
+	snapshot, err := capture(context.Background(), client, "us-east-1", "source")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestCaptureBoundsEachDescribeCall(t *testing.T) {
 	previous := describeTimeout
 	describeTimeout = 10 * time.Millisecond
 	t.Cleanup(func() { describeTimeout = previous })
-	if _, err := capture(context.Background(), stalledEC2{}, "us-east-1"); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := capture(context.Background(), stalledEC2{}, "us-east-1", "source"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("capture error = %v, want deadline exceeded", err)
 	}
 }
