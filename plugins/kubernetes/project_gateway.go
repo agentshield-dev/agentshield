@@ -10,7 +10,9 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/plugins/internal/projectkit"
 	kubernetesapi "github.com/agentshield-dev/agentshield/plugins/kubernetes/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 func gatewayAttributes(item *unstructured.Unstructured) (map[string]string, error) {
@@ -129,11 +131,18 @@ func projectGatewayAPI(clusterID, sourceID string, index objectIndex, input *gra
 			kind := defaultValue(parent.Kind, "Gateway")
 			name := parent.Name
 			namespace := defaultValue(parent.Namespace, route.GetNamespace())
-			if group != "gateway.networking.k8s.io" || kind != "Gateway" || namespace != route.GetNamespace() || name == "" {
+			if group != "gateway.networking.k8s.io" || kind != "Gateway" || name == "" {
 				continue
 			}
 			gateway := index.gatewaysByName[namespacedName(namespace, name)]
 			if gateway == nil {
+				continue
+			}
+			listeners, err := attachedListeners(route.GetNamespace(), parent, gateway, index)
+			if err != nil {
+				return err
+			}
+			if len(listeners) == 0 {
 				continue
 			}
 			properties := map[string]string{"sectionName": parent.SectionName}
@@ -212,23 +221,17 @@ func httpRouteTransportFacet(clusterID, sourceID string, item *unstructured.Unst
 		kind := defaultValue(parent.Kind, "Gateway")
 		namespace := defaultValue(parent.Namespace, route.Namespace)
 		gatewayObject := index.gatewaysByName[namespacedName(namespace, parent.Name)]
-		if group != "gateway.networking.k8s.io" || kind != "Gateway" || namespace != route.Namespace || gatewayObject == nil {
+		if group != "gateway.networking.k8s.io" || kind != "Gateway" || gatewayObject == nil {
 			unresolved++
 			continue
 		}
-		decoded, err := kubernetesapi.GatewayObject(gatewayObject)
+		matched, err := attachedListeners(route.Namespace, parent, gatewayObject, index)
 		if err != nil {
 			return graph.FacetAssertion{}, err
 		}
 		evidence = append(evidence, gatewayObject)
-		matched := 0
-		for _, listener := range decoded.Value.Spec.Listeners {
-			if parent.SectionName == "" || listener.Name == parent.SectionName {
-				listeners = append(listeners, listener)
-				matched++
-			}
-		}
-		if matched == 0 {
+		listeners = append(listeners, matched...)
+		if len(matched) == 0 {
 			unresolved++
 		}
 	}
@@ -370,7 +373,12 @@ func routeUnresolvedReferences(route *kubernetesapi.HTTPRoute, index objectIndex
 		kind := defaultValue(parent.Kind, "Gateway")
 		name := parent.Name
 		namespace := defaultValue(parent.Namespace, route.Namespace)
-		if group != "gateway.networking.k8s.io" || kind != "Gateway" || namespace != route.Namespace || name == "" || index.gatewaysByName[namespacedName(namespace, name)] == nil {
+		gateway := index.gatewaysByName[namespacedName(namespace, name)]
+		if group != "gateway.networking.k8s.io" || kind != "Gateway" || name == "" || gateway == nil {
+			result = append(result, "parent:"+group+"/"+kind+":"+namespace+"/"+name)
+			continue
+		}
+		if listeners, err := attachedListeners(route.Namespace, parent, gateway, index); err != nil || len(listeners) == 0 {
 			result = append(result, "parent:"+group+"/"+kind+":"+namespace+"/"+name)
 		}
 	}
@@ -390,6 +398,55 @@ func routeUnresolvedReferences(route *kubernetesapi.HTTPRoute, index objectIndex
 	}
 	slices.Sort(result)
 	return result
+}
+
+// attachedListeners returns the parent's listeners whose allowedRoutes admit
+// a route from routeNamespace.
+func attachedListeners(routeNamespace string, parent kubernetesapi.ParentReference, gateway *unstructured.Unstructured, index objectIndex) ([]kubernetesapi.GatewayListener, error) {
+	decoded, err := kubernetesapi.GatewayObject(gateway)
+	if err != nil {
+		return nil, err
+	}
+	var result []kubernetesapi.GatewayListener
+	for _, listener := range decoded.Value.Spec.Listeners {
+		if parent.SectionName != "" && listener.Name != parent.SectionName {
+			continue
+		}
+		if parent.Port != nil && listener.Port != *parent.Port {
+			continue
+		}
+		if listenerAdmitsNamespace(listener, gateway.GetNamespace(), routeNamespace, index) {
+			result = append(result, listener)
+		}
+	}
+	return result, nil
+}
+
+func listenerAdmitsNamespace(listener kubernetesapi.GatewayListener, gatewayNamespace, routeNamespace string, index objectIndex) bool {
+	from := "Same"
+	var selector *metav1.LabelSelector
+	if listener.AllowedRoutes != nil && listener.AllowedRoutes.Namespaces != nil {
+		from = defaultValue(listener.AllowedRoutes.Namespaces.From, from)
+		selector = listener.AllowedRoutes.Namespaces.Selector
+	}
+	switch from {
+	case "All":
+		return true
+	case "Same":
+		return routeNamespace == gatewayNamespace
+	case "Selector":
+		namespace := index.namespacesByName[routeNamespace]
+		if selector == nil || namespace == nil {
+			return false
+		}
+		parsed, err := metav1.LabelSelectorAsSelector(selector)
+		if err != nil {
+			return false
+		}
+		return parsed.Matches(labels.Set(namespace.GetLabels()))
+	default:
+		return false
+	}
 }
 
 func defaultValue(value, fallback string) string {
