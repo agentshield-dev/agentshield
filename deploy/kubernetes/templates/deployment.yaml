@@ -69,6 +69,15 @@ spec:
             {{- if .Values.discovery.aws.firehoseStreamARN }}
             - {{ printf "--aws-firehose-stream-arn=%s" .Values.discovery.aws.firehoseStreamARN | quote }}
             {{- end }}
+            {{- if .Values.discovery.gcp.project }}
+            - {{ printf "--gcp-project=%s" .Values.discovery.gcp.project | quote }}
+            {{- end }}
+            {{- if .Values.discovery.gcp.region }}
+            - {{ printf "--gcp-region=%s" .Values.discovery.gcp.region | quote }}
+            {{- end }}
+            {{- if .Values.discovery.gcp.pollInterval }}
+            - {{ printf "--gcp-poll-interval=%s" .Values.discovery.gcp.pollInterval | quote }}
+            {{- end }}
             {{- if .Values.telemetry.clickhouse.enabled }}
             - {{ printf "--clickhouse-url=%s" (required "telemetry.clickhouse.url is required when ClickHouse is enabled" .Values.telemetry.clickhouse.url) | quote }}
             - {{ printf "--clickhouse-database=%s" .Values.telemetry.clickhouse.database | quote }}
