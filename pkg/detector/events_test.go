@@ -273,12 +273,14 @@ func TestResourceRuleUsesProviderNeutralGovernance(t *testing.T) {
 		direction string
 		service   bool
 		direct    bool
+		l4        bool
 		want      int
 	}{
 		{name: "Kubernetes NetworkPolicy", plugin: "kubernetes", domain: graph.SecurityDomainNetworkAccess, direction: "ingress"},
 		{name: "CiliumNetworkPolicy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "ingress"},
 		{name: "bidirectional network policy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "bidirectional"},
-		{name: "Istio AuthorizationPolicy", plugin: "istio", domain: graph.SecurityDomainAuthorization, direction: "ingress", want: 1},
+		{name: "Istio L4 AuthorizationPolicy", plugin: "istio", domain: graph.SecurityDomainAuthorization, direction: "ingress", l4: true},
+		{name: "Istio L7 AuthorizationPolicy", plugin: "istio", domain: graph.SecurityDomainAuthorization, direction: "ingress", want: 1},
 		{name: "egress network policy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "egress", want: 1},
 		{name: "no governance", want: 1},
 		{name: "Service exposed Pod", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "ingress", service: true},
@@ -313,12 +315,19 @@ func TestResourceRuleUsesProviderNeutralGovernance(t *testing.T) {
 				if test.direct {
 					subjectID = "resource"
 				}
+				assertions := []graph.RelationshipAssertion{{PluginID: test.plugin, SourceID: "cluster", RuleID: "policy", Properties: semanticAttributes(t, graph.SecuritySemantics{
+					Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassGovernance, Domain: test.domain,
+					State: graph.SecurityStateDeclared, Effect: effect, Scope: "workload", Direction: test.direction, Coverage: "complete",
+				})}}
+				if test.l4 {
+					assertions = append(assertions, graph.RelationshipAssertion{PluginID: test.plugin, SourceID: "cluster", RuleID: "network-access", Properties: semanticAttributes(t, graph.SecuritySemantics{
+						Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassGovernance, Domain: graph.SecurityDomainNetworkAccess,
+						State: graph.SecurityStateDeclared, Effect: "restrict", Scope: "workload", Direction: "ingress", Coverage: "partial", Protocols: []string{"TCP"},
+					})})
+				}
 				relationships = append(relationships, graph.Relationship{
 					SubjectID: subjectID, Predicate: graph.PredicateGovernedBy, ObjectID: "policy",
-					Assertions: []graph.RelationshipAssertion{{PluginID: test.plugin, SourceID: "cluster", RuleID: "policy", Properties: semanticAttributes(t, graph.SecuritySemantics{
-						Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassGovernance, Domain: test.domain,
-						State: graph.SecurityStateDeclared, Effect: effect, Scope: "workload", Direction: test.direction, Coverage: "complete",
-					})}},
+					Assertions: assertions,
 				})
 			}
 			if err := engine.SetResourceRules([]ResourceRule{{Rule: rule, Mode: RuleModeActive}}); err != nil {

@@ -58,14 +58,17 @@ func TestAuthorizationPolicyScopesAndRuleForms(t *testing.T) {
 	targetScopes := map[string]bool{}
 	for _, relation := range result.Input.Relationships {
 		if relation.Predicate == "governed-by" && len(relation.Qualifier) >= len("istio-authz-") && relation.Qualifier[:len("istio-authz-")] == "istio-authz-" {
-			qualifiers[relation.Qualifier]++
 			semantics, err := graph.DecodeSecuritySemantics(relation.Properties)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if semantics != nil && semantics.Domain == graph.SecurityDomainNetworkAccess {
+				continue
+			}
 			if semantics == nil || semantics.Domain != graph.SecurityDomainAuthorization || semantics.State != graph.SecurityStateDeclared || semantics.Coverage != "partial" {
 				t.Fatalf("authorization semantics = %#v", semantics)
 			}
+			qualifiers[relation.Qualifier]++
 			if relation.Qualifier == "istio-authz-targetref" {
 				targetScopes[semantics.Scope] = true
 			}
@@ -140,6 +143,9 @@ func TestRootNamespaceSelectorPoliciesMatchPodsInEveryNamespace(t *testing.T) {
 		if err != nil || semantics == nil {
 			t.Fatalf("governance semantics = %#v, err = %v", semantics, err)
 		}
+		if semantics.Domain == graph.SecurityDomainNetworkAccess {
+			continue
+		}
 		if relation.Object.ImmutableKey == "security.istio.io/v1/authorizationpolicy/policy-root-selector" && semantics.Scope != "mesh" {
 			t.Fatalf("root selector policy scope = %q", semantics.Scope)
 		}
@@ -167,5 +173,55 @@ func TestAuthorizationRuleBreadthTreatsAnyEmptyRuleAsAllRequests(t *testing.T) {
 	}
 	if got := authorizationRuleBreadth(nil); got != "no-requests" {
 		t.Fatalf("omitted rule breadth = %q", got)
+	}
+}
+
+func TestL4AuthorizationPolicyAlsoProjectsNetworkAccessGovernance(t *testing.T) {
+	namespace := testObject("v1", "Namespace", "", "demo", "ns-demo", nil)
+	pod := testObject("v1", "Pod", "demo", "app", "pod", nil)
+	pod.SetLabels(map[string]string{"app": "demo"})
+	l4 := testObject("security.istio.io/v1", "AuthorizationPolicy", "demo", "l4", "policy-l4", map[string]any{
+		"selector": map[string]any{"matchLabels": map[string]any{"app": "demo"}},
+		"rules": []any{map[string]any{
+			"from": []any{map[string]any{"source": map[string]any{"principals": []any{"cluster.local/ns/demo/sa/client"}}}},
+			"to":   []any{map[string]any{"operation": map[string]any{"ports": []any{"8080"}}}},
+		}},
+	})
+	l7 := testObject("security.istio.io/v1", "AuthorizationPolicy", "demo", "l7", "policy-l7", map[string]any{
+		"selector": map[string]any{"matchLabels": map[string]any{"app": "demo"}},
+		"rules": []any{map[string]any{
+			"to": []any{map[string]any{"operation": map[string]any{"methods": []any{"GET"}}}},
+		}},
+	})
+	dryRun := testObject("security.istio.io/v1", "AuthorizationPolicy", "demo", "dry-run", "policy-dry-run", map[string]any{
+		"selector": map[string]any{"matchLabels": map[string]any{"app": "demo"}},
+		"rules":    []any{map[string]any{}},
+	})
+	dryRun.SetAnnotations(map[string]string{"istio.io/dry-run": "true"})
+	result, err := ProjectObserved(testContext(), testObserved(namespace, pod, l4, l7, dryRun))
+	if err != nil {
+		t.Fatal(err)
+	}
+	domains := map[string][]graph.SecurityDomain{}
+	for _, relation := range result.Input.Relationships {
+		if relation.Predicate != graph.PredicateGovernedBy {
+			continue
+		}
+		semantics, err := graph.DecodeSecuritySemantics(relation.Properties)
+		if err != nil || semantics == nil {
+			t.Fatalf("governance semantics = %#v, err = %v", semantics, err)
+		}
+		domains[relation.Object.ImmutableKey] = append(domains[relation.Object.ImmutableKey], semantics.Domain)
+	}
+	l4Domains := domains["security.istio.io/v1/authorizationpolicy/policy-l4"]
+	slices.Sort(l4Domains)
+	if !slices.Equal(l4Domains, []graph.SecurityDomain{graph.SecurityDomainAuthorization, graph.SecurityDomainNetworkAccess}) {
+		t.Fatalf("L4 policy domains = %v", l4Domains)
+	}
+	if l7Domains := domains["security.istio.io/v1/authorizationpolicy/policy-l7"]; !slices.Equal(l7Domains, []graph.SecurityDomain{graph.SecurityDomainAuthorization}) {
+		t.Fatalf("L7 policy domains = %v", l7Domains)
+	}
+	if dryRunDomains := domains["security.istio.io/v1/authorizationpolicy/policy-dry-run"]; !slices.Equal(dryRunDomains, []graph.SecurityDomain{graph.SecurityDomainAuthorization}) {
+		t.Fatalf("dry-run policy domains = %v", dryRunDomains)
 	}
 }

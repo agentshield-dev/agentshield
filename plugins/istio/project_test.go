@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -32,7 +33,13 @@ func TestProjectForNetworkUsesNetworkAuthorityAndRootNamespace(t *testing.T) {
 	}
 	for _, relation := range input.Relationships {
 		if relation.Qualifier == "istio-authz-mesh" {
-			meshGovernance++
+			semantics, err := graph.DecodeSecuritySemantics(relation.Properties)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if semantics != nil && semantics.Domain == graph.SecurityDomainAuthorization {
+				meshGovernance++
+			}
 		}
 	}
 	if !foundNetworkClaim {
