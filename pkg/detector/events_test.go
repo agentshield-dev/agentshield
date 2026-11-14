@@ -255,6 +255,92 @@ func TestEventsAttachAuthoringControllersToPodActivity(t *testing.T) {
 	}
 }
 
+func TestResourceRuleUsesProviderNeutralGovernance(t *testing.T) {
+	rule := Rule{
+		ID: "deployment-without-ingress-governance", Revision: 1, InputVersion: InputVersion, PluginID: "*", ScopeResourceID: "deployment",
+		Type: "resource", Kind: "kubernetes/deployment",
+		Expression: "!governance_truncated && !governance.exists(g, g.domain == 'network-access' && g.effect == 'restrict' && g.direction in ['ingress', 'bidirectional'])",
+		Risk:       RiskMedium, Reasons: []string{"missing_ingress_governance"},
+	}
+	engine, err := New(DefaultConfig(), Ruleset{ID: "governance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		plugin    string
+		domain    graph.SecurityDomain
+		direction string
+		service   bool
+		direct    bool
+		want      int
+	}{
+		{name: "Kubernetes NetworkPolicy", plugin: "kubernetes", domain: graph.SecurityDomainNetworkAccess, direction: "ingress"},
+		{name: "CiliumNetworkPolicy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "ingress"},
+		{name: "bidirectional network policy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "bidirectional"},
+		{name: "Istio AuthorizationPolicy", plugin: "istio", domain: graph.SecurityDomainAuthorization, direction: "ingress", want: 1},
+		{name: "egress network policy", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "egress", want: 1},
+		{name: "no governance", want: 1},
+		{name: "Service exposed Pod", plugin: "cilium", domain: graph.SecurityDomainNetworkAccess, direction: "ingress", service: true},
+		{name: "directly governed arbitrary resource", plugin: "vendor", domain: graph.SecurityDomainNetworkAccess, direction: "ingress", direct: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resource := resourceWithAuthoringContext(t, "deployment", "kubernetes/deployment", nil)
+			resources := []graph.Resource{resource, {ID: "pod", Kind: "kubernetes/pod"}, {ID: "policy", Kind: "policy"}}
+			relationships := []graph.Relationship{{SubjectID: "deployment", Predicate: graph.PredicateInstantiates, ObjectID: "pod"}}
+			if test.service {
+				resource = resourceWithAuthoringContext(t, "service", "kubernetes/service", nil)
+				resources[0] = resource
+				relationships = []graph.Relationship{{SubjectID: "service", Predicate: graph.PredicateExposes, ObjectID: "pod"}}
+				rule.ScopeResourceID = "service"
+				rule.Kind = "kubernetes/service"
+			} else if test.direct {
+				resource = resourceWithAuthoringContext(t, "resource", "vendor/resource", nil)
+				resources[0] = resource
+				relationships = nil
+				rule.ScopeResourceID = "resource"
+				rule.Kind = "vendor/resource"
+			} else {
+				rule.ScopeResourceID = "deployment"
+				rule.Kind = "kubernetes/deployment"
+			}
+			if test.plugin != "" {
+				effect := "restrict"
+				if test.domain == graph.SecurityDomainAuthorization {
+					effect = "allow"
+				}
+				subjectID := "pod"
+				if test.direct {
+					subjectID = "resource"
+				}
+				relationships = append(relationships, graph.Relationship{
+					SubjectID: subjectID, Predicate: graph.PredicateGovernedBy, ObjectID: "policy",
+					Assertions: []graph.RelationshipAssertion{{PluginID: test.plugin, SourceID: "cluster", RuleID: "policy", Properties: semanticAttributes(t, graph.SecuritySemantics{
+						Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassGovernance, Domain: test.domain,
+						State: graph.SecurityStateDeclared, Effect: effect, Scope: "workload", Direction: test.direction, Coverage: "complete",
+					})}},
+				})
+			}
+			if err := engine.SetResourceRules([]ResourceRule{{Rule: rule, Mode: RuleModeActive}}); err != nil {
+				t.Fatal(err)
+			}
+			result, err := engine.Detect(context.Background(), graph.Snapshot{}, graph.Snapshot{Resources: resources, Relationships: relationships}, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var matches int
+			for _, signal := range result.Signals {
+				if signal.RuleID == rule.ID {
+					matches++
+				}
+			}
+			if matches != test.want {
+				t.Fatalf("rule matches=%d, want %d; signals=%#v", matches, test.want, result.Signals)
+			}
+		})
+	}
+}
+
 func resourceWithAuthoringContext(t *testing.T, id, kind string, attributes map[string]string, sourceRevision ...string) graph.Resource {
 	t.Helper()
 	context, err := graph.NewResourceAuthoringContext(map[string]any{}, attributes)

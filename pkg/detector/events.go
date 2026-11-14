@@ -12,19 +12,21 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/telemetry"
 )
 
-// InputVersion is the [Input] contract version rules must declare. A change
-// to the meaning of any input field requires a new version.
-const InputVersion = "v1"
+const InputVersion = "v2"
+
+const maxInputGovernance = 64
 
 // Input holds every CEL variable; CELEnvironment declares only the subset a selector populates.
 type Input struct {
-	Operation             string            `json:"operation" cel_description:"Normalized operation of the observed activity; values depend on the selector."`
-	Outcome               string            `json:"outcome" cel_description:"Normalized outcome of the observed activity; values depend on the selector."`
-	DestinationIPClass    string            `json:"destination_ip_class" cel_description:"Class of the destination IP address. The raw address is never exposed."`
-	DestinationRole       string            `json:"destination_role" cel_description:"Cluster role of the destination, from the graph's known resource addresses."`
-	DestinationResourceID string            `json:"destination_resource_id" cel_description:"Stable graph resource ID of the destination."`
-	ProcessClass          string            `json:"process_class" cel_description:"Class of the process the subject workload started."`
-	Attributes            map[string]string `json:"attributes,omitempty" cel_description:"Bounded normalized attributes of the changed resource."`
+	Operation             string              `json:"operation" cel_description:"Normalized operation of the observed activity; values depend on the selector."`
+	Outcome               string              `json:"outcome" cel_description:"Normalized outcome of the observed activity; values depend on the selector."`
+	DestinationIPClass    string              `json:"destination_ip_class" cel_description:"Class of the destination IP address. The raw address is never exposed."`
+	DestinationRole       string              `json:"destination_role" cel_description:"Cluster role of the destination, from the graph's known resource addresses."`
+	DestinationResourceID string              `json:"destination_resource_id" cel_description:"Stable graph resource ID of the destination."`
+	ProcessClass          string              `json:"process_class" cel_description:"Class of the process the subject workload started."`
+	Attributes            map[string]string   `json:"attributes,omitempty" cel_description:"Bounded normalized attributes of the changed resource."`
+	Governance            []map[string]string `json:"governance,omitempty" cel_description:"Provider-neutral governance semantics attached to the input subject or its workload. Empty means none are represented in the graph snapshot, not that every provider was observed."`
+	GovernanceTruncated   bool                `json:"governance_truncated" cel_description:"Whether governance entries were omitted by the input bound."`
 }
 
 // Event is one rule-evaluation input. ID is stable for the same edge owner or
@@ -74,8 +76,64 @@ func Events(previous, current graph.Snapshot, observedAt time.Time) []Event {
 	events = append(events, newRelationshipEvents(previous, current, resources, roles, observedAt.UTC())...)
 	events = append(events, novelTelemetryEvents(previous, current, resources, roles)...)
 	attachWorkloadAnchors(events, current, resources)
+	attachGovernance(events, current)
 	slices.SortFunc(events, func(left, right Event) int { return strings.Compare(left.ID, right.ID) })
 	return events
+}
+
+func attachGovernance(events []Event, snapshot graph.Snapshot) {
+	bySubject := make(map[string][]map[string]string)
+	resources := resourcesByID(snapshot)
+	workloadsByPod := workloadControllersByPod(snapshot, resources)
+	servicesByPod := make(map[string][]string)
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Predicate == graph.PredicateExposes && relationship.ResolutionStatus != graph.ResolutionUnresolved {
+			servicesByPod[relationship.ObjectID] = append(servicesByPod[relationship.ObjectID], relationship.SubjectID)
+		}
+	}
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Predicate != graph.PredicateGovernedBy || relationship.ResolutionStatus == graph.ResolutionUnresolved {
+			continue
+		}
+		targets := append([]string{relationship.SubjectID}, workloadsByPod[relationship.SubjectID]...)
+		targets = append(targets, servicesByPod[relationship.SubjectID]...)
+		slices.Sort(targets)
+		targets = slices.Compact(targets)
+		for _, assertion := range relationship.Assertions {
+			semantics, err := graph.DecodeSecuritySemantics(assertion.Properties)
+			if err != nil || semantics == nil || semantics.Class != graph.SecurityClassGovernance {
+				continue
+			}
+			for _, target := range targets {
+				bySubject[target] = append(bySubject[target], map[string]string{
+					"domain": string(semantics.Domain), "effect": semantics.Effect, "state": string(semantics.State),
+					"scope": semantics.Scope, "direction": semantics.Direction, "coverage": semantics.Coverage,
+				})
+			}
+		}
+	}
+	for index := range events {
+		var values []map[string]string
+		for _, subjectID := range events[index].SubjectIDs {
+			values = append(values, bySubject[subjectID]...)
+		}
+		slices.SortFunc(values, compareGovernance)
+		values = slices.CompactFunc(values, func(left, right map[string]string) bool { return compareGovernance(left, right) == 0 })
+		if len(values) > maxInputGovernance {
+			events[index].Input.GovernanceTruncated = true
+			values = values[:maxInputGovernance]
+		}
+		events[index].Input.Governance = values
+	}
+}
+
+func compareGovernance(left, right map[string]string) int {
+	for _, field := range []string{"domain", "effect", "state", "scope", "direction", "coverage"} {
+		if compared := strings.Compare(left[field], right[field]); compared != 0 {
+			return compared
+		}
+	}
+	return 0
 }
 
 func newResourceEvents(previous, current graph.Snapshot, observedAt time.Time) []Event {
@@ -220,6 +278,14 @@ func destinationIPClass(value string) string {
 }
 
 func attachWorkloadAnchors(events []Event, snapshot graph.Snapshot, resources map[string]graph.Resource) {
+	workloadsByPod := workloadControllersByPod(snapshot, resources)
+	for index := range events {
+		events[index].AnchorIDs = withWorkloads(events[index].AnchorIDs, workloadsByPod)
+		events[index].SubjectIDs = withWorkloads(events[index].SubjectIDs, workloadsByPod)
+	}
+}
+
+func workloadControllersByPod(snapshot graph.Snapshot, resources map[string]graph.Resource) map[string][]string {
 	instances := make(map[string][]string)
 	for _, relationship := range snapshot.Relationships {
 		if relationship.Predicate == graph.PredicateInstantiates && relationship.ResolutionStatus != graph.ResolutionUnresolved {
@@ -251,10 +317,7 @@ func attachWorkloadAnchors(events []Event, snapshot graph.Snapshot, resources ma
 			queue = append(queue, instances[instance]...)
 		}
 	}
-	for index := range events {
-		events[index].AnchorIDs = withWorkloads(events[index].AnchorIDs, workloadsByPod)
-		events[index].SubjectIDs = withWorkloads(events[index].SubjectIDs, workloadsByPod)
-	}
+	return workloadsByPod
 }
 
 // withWorkloads adds supported controllers that instantiate any of ids, sorted and deduplicated.

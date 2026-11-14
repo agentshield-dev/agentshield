@@ -144,7 +144,7 @@ func TestRulesRejectInvalidDefinitions(t *testing.T) {
 			case "type":
 				rule.Type = "resource"
 			case "version":
-				rule.InputVersion = "v2"
+				rule.InputVersion = "v1"
 			case "risk":
 				rule.Risk = "unexpected"
 			case "window":
