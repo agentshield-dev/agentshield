@@ -115,12 +115,14 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 			if err != nil {
 				return graph.Input{}, err
 			}
-			backend, matched, err := discovery.ResolveIdentityReference(decoded.Value.Spec.ProviderID, resolvers...)
-			if err != nil {
-				return graph.Input{}, fmt.Errorf("resolve Node %s provider ID: %w", item.GetName(), err)
-			}
-			if matched {
-				input.Relationships = append(input.Relationships, relationshipAssertion(sourceID, "kubernetes.node.backed-by-provider", itemClaim, graph.PredicateBackedBy, backend, "provider-id", nil, item))
+			for _, reference := range nodeIdentityReferences(decoded.Value.Spec.ProviderID, item.GetAnnotations()) {
+				backend, matched, err := discovery.ResolveIdentityReference(reference, resolvers...)
+				if err != nil {
+					return graph.Input{}, fmt.Errorf("resolve Node %s provider ID: %w", item.GetName(), err)
+				}
+				if matched {
+					input.Relationships = append(input.Relationships, relationshipAssertion(sourceID, "kubernetes.node.backed-by-provider", itemClaim, graph.PredicateBackedBy, backend, "provider-id", nil, item))
+				}
 			}
 		}
 	}
@@ -155,6 +157,17 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 		}
 	}
 	return input, nil
+}
+
+// nodeIdentityReferences returns the Node's provider ID and, for GKE, the
+// provider ID qualified by the immutable instance ID annotation.
+func nodeIdentityReferences(providerID string, annotations map[string]string) []string {
+	providerID = strings.TrimSpace(providerID)
+	references := []string{providerID}
+	if id := strings.TrimSpace(annotations["container.googleapis.com/instance_id"]); id != "" && strings.HasPrefix(strings.ToLower(providerID), "gce://") {
+		references = append(references, providerID+"?instance_id="+id)
+	}
+	return references
 }
 
 func resourceAuthoringSourceRevision(item *unstructured.Unstructured) string {

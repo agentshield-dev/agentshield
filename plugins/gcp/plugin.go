@@ -76,10 +76,11 @@ func SourceID(projectNumber, region string) (string, error) {
 // SourceID returns the configured source ID.
 func (p *Plugin) SourceID() string { return p.config.SourceID }
 
-// ResolveIdentityReference resolves a Kubernetes Node spec.providerID of the
-// form gce://<project-id>/<zone>/<instance-name> to an instance claim in this
-// source's project. It reports false for other references so other resolvers
-// may claim them.
+// ResolveIdentityReference resolves a Kubernetes Node reference of the form
+// gce://<project-id>/<zone>/<instance-name>?instance_id=<numeric-id> to an
+// instance claim in this source's project. It reports false for other
+// references, including a name-only provider ID, so other resolvers may claim
+// them.
 func (p *Plugin) ResolveIdentityReference(reference string) (graph.IdentityClaim, bool, error) {
 	return instanceClaimFromProviderID(p.config.ProjectID, p.config.ProjectNumber, p.config.Region, reference)
 }

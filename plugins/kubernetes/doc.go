@@ -35,7 +35,8 @@
 // relationships and network-exposure, transport-posture, policy-targeting, and
 // route-backends facets. Node-to-cloud-instance backed-by edges are emitted
 // only when a configured IdentityReferenceResolver (for example the AWS
-// plugin) resolves the Node's spec.providerID.
+// plugin) resolves the Node's spec.providerID, or for GKE the provider ID
+// qualified by the container.googleapis.com/instance_id annotation.
 //
 // # Failure behavior
 //

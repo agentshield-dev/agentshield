@@ -84,6 +84,37 @@ func TestProjectPodRunsOnObservedNode(t *testing.T) {
 	}
 }
 
+func TestProjectGKENodeBackedByInstanceID(t *testing.T) {
+	const providerID = "gce://example-project/us-east1-b/gke-pool-1-abcd"
+	backend := graph.IdentityClaim{Scheme: graph.IdentityScheme{Group: "cloud.google.com", Version: "v1", Kind: "Resource"}, AuthorityID: "111111111111", ImmutableKey: "compute/instance/4387310753745515807"}
+	var offered []string
+	resolver := identityResolverFunc(func(reference string) (graph.IdentityClaim, bool, error) {
+		offered = append(offered, reference)
+		return backend, reference == providerID+"?instance_id=4387310753745515807", nil
+	})
+	for name, annotations := range map[string]map[string]string{
+		"with instance ID":    {"container.googleapis.com/instance_id": "4387310753745515807"},
+		"without instance ID": nil,
+	} {
+		offered = nil
+		node := testObject("v1", "Node", "", "gke-pool-1-abcd", "node", map[string]any{"spec": map[string]any{"providerID": providerID}})
+		node.SetAnnotations(annotations)
+		input, err := projectWithIdentityResolvers("cluster", "cluster", "source", []*unstructured.Unstructured{node}, []discovery.IdentityReferenceResolver{resolver})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var backedBy int
+		for _, relationship := range input.Relationships {
+			if relationship.Predicate == graph.PredicateBackedBy && relationship.Subject == ClaimFor("cluster", node) && relationship.Object == backend {
+				backedBy++
+			}
+		}
+		if want := len(annotations); backedBy != want || offered[0] != providerID {
+			t.Fatalf("%s: backed-by edges = %d, want %d; offered %q", name, backedBy, want, offered)
+		}
+	}
+}
+
 func TestProjectDeterministicUnderShuffledInput(t *testing.T) {
 	namespace := testObject("v1", "Namespace", "", "demo", "namespace", nil)
 	account := testObject("v1", "ServiceAccount", "demo", "default", "account", nil)

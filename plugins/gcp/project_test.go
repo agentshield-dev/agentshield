@@ -255,20 +255,23 @@ func TestGCPIdentitySchemeRejectsInvalidAuthority(t *testing.T) {
 	}
 	normalize := IdentitySchemeDefinition().Normalize
 	normalized, err := normalize(graph.IdentityClaim{
-		Scheme: resourceScheme, AuthorityID: " 111111111111 ", ImmutableKey: " Compute/US-EAST1-B /Instance/Web-1/Network-Interface/NIC0 ",
+		Scheme: resourceScheme, AuthorityID: " 111111111111 ", ImmutableKey: " Compute/Instance /1001/Network-Interface/NIC0 ",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normalized.ImmutableKey != "compute/us-east1-b/instance/web-1/network-interface/nic0" {
+	if normalized.ImmutableKey != "compute/instance/1001/network-interface/nic0" {
 		t.Fatalf("normalized key = %q", normalized.ImmutableKey)
 	}
 	for _, key := range []string{
 		"storage/global/bucket/example",
 		"compute/global/firewall/allow-ssh",
-		"compute/global/instance/web",
-		"compute/us-east1-b/instance/web/network-interface/eth0",
-		"compute/us-east1-b/instance",
+		"compute/instance/web",
+		"compute/instance/0123",
+		"compute/us-east1-b/instance/web",
+		"compute/us-east1-b/instance/1001",
+		"compute/instance/1001/network-interface/eth0",
+		"compute/instance",
 	} {
 		if _, err := normalize(graph.IdentityClaim{Scheme: resourceScheme, AuthorityID: testProjectNumber, ImmutableKey: key}); err == nil {
 			t.Fatalf("GCP identity scheme accepted %q", key)
@@ -278,21 +281,50 @@ func TestGCPIdentitySchemeRejectsInvalidAuthority(t *testing.T) {
 
 func TestInstanceClaimFromKubernetesProviderID(t *testing.T) {
 	plugin := &Plugin{config: Config{ProjectID: "example-project", ProjectNumber: testProjectNumber, Region: "us-east1", SourceID: "gcp/111111111111/us-east1"}}
-	claim, matched, err := plugin.ResolveIdentityReference("gce://example-project/us-east1-b/gke-pool-1-abcd")
-	if err != nil || !matched || claim.AuthorityID != testProjectNumber || claim.ImmutableKey != "compute/us-east1-b/instance/gke-pool-1-abcd" {
+	claim, matched, err := plugin.ResolveIdentityReference("gce://example-project/us-east1-b/gke-pool-1-abcd?instance_id=4387310753745515807")
+	if err != nil || !matched || claim.AuthorityID != testProjectNumber || claim.ImmutableKey != "compute/instance/4387310753745515807" {
 		t.Fatalf("claim = %#v, matched = %t, err = %v", claim, matched, err)
 	}
 	for _, reference := range []string{
 		"aws:///us-east-1a/i-123",
-		"gce://other-project/us-east1-b/vm",
-		"gce://example-project/europe-west1-b/vm",
-		"gce://example-project/us-east1-b",
-		"gce://example-project/us-east1-b/vm/extra",
-		"gce://example-project/us-east1-b/VM_1",
+		"gce://example-project/us-east1-b/gke-pool-1-abcd",
+		"gce://example-project/us-east1-b/vm?instance_id=",
+		"gce://example-project/us-east1-b/vm?instance_id=abc",
+		"gce://example-project/us-east1-b/vm?instance_id=0123",
+		"gce://other-project/us-east1-b/vm?instance_id=1001",
+		"gce://example-project/europe-west1-b/vm?instance_id=1001",
+		"gce://example-project/us-east1-b?instance_id=1001",
+		"gce://example-project/us-east1-b/vm/extra?instance_id=1001",
+		"gce://example-project/us-east1-b/VM_1?instance_id=1001",
 	} {
 		if _, matched, err := plugin.ResolveIdentityReference(reference); err != nil || matched {
 			t.Fatalf("%s matched: %t, err = %v", reference, matched, err)
 		}
+	}
+}
+
+func TestInstanceIdentityFollowsNumericID(t *testing.T) {
+	project := func(instance Instance) (graph.IdentityClaim, graph.IdentityClaim) {
+		t.Helper()
+		instance.EventID = "event"
+		instance.NetworkInterfaces = []NetworkInterface{{Name: "nic0", Network: testNetwork}}
+		result, err := Project(testScope(), Snapshot{Instances: []Instance{instance}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resourceByKind(t, result.Input, "gcp/compute-instance").Claim, resourceByKind(t, result.Input, "gcp/compute-network-interface").Claim
+	}
+	original, originalNIC := project(Instance{ID: "1001", Name: "web-1", Zone: "us-east1-b"})
+	if original.ImmutableKey != "compute/instance/1001" || originalNIC.ImmutableKey != "compute/instance/1001/network-interface/nic0" {
+		t.Fatalf("keys = %q, %q", original.ImmutableKey, originalNIC.ImmutableKey)
+	}
+	renamed, renamedNIC := project(Instance{ID: "1001", Name: "web-renamed", Zone: "us-east1-b"})
+	if renamed != original || renamedNIC != originalNIC {
+		t.Fatalf("rename changed identity: %#v, %#v", renamed, renamedNIC)
+	}
+	reused, reusedNIC := project(Instance{ID: "1002", Name: "web-1", Zone: "us-east1-b"})
+	if reused == original || reusedNIC == originalNIC {
+		t.Fatalf("reused name kept identity: %#v, %#v", reused, reusedNIC)
 	}
 }
 

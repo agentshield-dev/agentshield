@@ -18,15 +18,17 @@
 //
 // Resources use the cloud.google.com/v1 Resource scheme. The authority is the
 // numeric project number. Firewall keys are compute/global/firewall/<id> with
-// the immutable numeric ID. Instance keys are compute/<zone>/instance/<name>,
-// and network interface keys append /network-interface/<nic>, because
-// Kubernetes Node provider IDs and VPC Flow Logs name instances by zone and
-// name, never by numeric ID; the numeric ID is the gcp/instance-id attribute.
-// The source ID gcp/<project-number>[/<region>] identifies the observer.
-// [Plugin.ResolveIdentityReference] turns a Kubernetes Node's
-// gce://<project-id>/<zone>/<name> provider ID into an instance claim without
-// reading the snapshot, so Kubernetes can assert Node backed-by instance in
-// any publication order.
+// the immutable numeric ID. Instance keys are compute/instance/<id> with the
+// immutable numeric instance ID, and network interface keys append
+// /network-interface/<nic>. Names and zones are attributes, so a rename keeps
+// one identity and a reused name gets a new one. The source ID
+// gcp/<project-number>[/<region>] identifies the observer.
+// [Plugin.ResolveIdentityReference] resolves the reference that Kubernetes
+// builds from a GKE Node's gce://<project-id>/<zone>/<name> provider ID and
+// its container.googleapis.com/instance_id annotation, as
+// gce://<project-id>/<zone>/<name>?instance_id=<id>, without reading the
+// snapshot, so Kubernetes can assert Node backed-by instance in any
+// publication order. A name-only provider ID resolves to nothing.
 //
 // # Graph output and failure behavior
 //

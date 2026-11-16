@@ -26,8 +26,8 @@ var resourceScheme = graph.IdentityScheme{Group: "cloud.google.com", Version: "v
 
 // IdentitySchemeDefinition normalizes cloud.google.com/v1 Resource claims: a
 // numeric project number authority and a lowercased key of one of the forms
-// compute/<zone>/instance/<name>,
-// compute/<zone>/instance/<name>/network-interface/<nic>, or
+// compute/instance/<numeric-id>,
+// compute/instance/<numeric-id>/network-interface/<nic>, or
 // compute/global/firewall/<numeric-id>.
 func IdentitySchemeDefinition() graph.SchemeDefinition {
 	return graph.SchemeDefinition{
@@ -48,7 +48,7 @@ func IdentitySchemeDefinition() graph.SchemeDefinition {
 }
 
 func validResourceKey(parts []string) bool {
-	if len(parts) < 4 || parts[0] != "compute" {
+	if len(parts) < 3 || parts[0] != "compute" {
 		return false
 	}
 	for _, part := range parts {
@@ -59,10 +59,10 @@ func validResourceKey(parts []string) bool {
 	switch {
 	case len(parts) == 4 && parts[1] == "global" && parts[2] == "firewall":
 		return validNumericID(parts[3])
-	case len(parts) == 4 && parts[2] == "instance":
-		return parts[1] != "global"
-	case len(parts) == 6 && parts[2] == "instance" && parts[4] == "network-interface":
-		return parts[1] != "global" && strings.HasPrefix(parts[5], "nic")
+	case len(parts) == 3 && parts[1] == "instance":
+		return validNumericID(parts[2])
+	case len(parts) == 5 && parts[1] == "instance" && parts[3] == "network-interface":
+		return validNumericID(parts[2]) && strings.HasPrefix(parts[4], "nic")
 	default:
 		return false
 	}
@@ -92,7 +92,7 @@ func Project(scope ProjectionContext, snapshot Snapshot) (ProjectionResult, erro
 	firewalls := slices.Clone(snapshot.Firewalls)
 	subnetworks := slices.Clone(snapshot.Subnetworks)
 	slices.SortFunc(instances, func(left, right Instance) int {
-		return cmp.Or(strings.Compare(left.Zone, right.Zone), strings.Compare(left.Name, right.Name))
+		return compareNumericIDs(left.ID, right.ID)
 	})
 	slices.SortFunc(firewalls, compareFirewallPrecedence)
 	subnetworkIndex := make(map[string]Subnetwork, len(subnetworks))
@@ -400,11 +400,11 @@ func boundedFirewallPermissions(permissions []Permission) ([]Permission, int) {
 }
 
 func instanceClaim(scope ProjectionContext, instance Instance) graph.IdentityClaim {
-	return resourceClaim(scope.ProjectNumber, "compute/"+instance.Zone+"/instance/"+instance.Name)
+	return resourceClaim(scope.ProjectNumber, "compute/instance/"+instance.ID)
 }
 
 func networkInterfaceClaim(scope ProjectionContext, instance Instance, nic string) graph.IdentityClaim {
-	return resourceClaim(scope.ProjectNumber, "compute/"+instance.Zone+"/instance/"+instance.Name+"/network-interface/"+nic)
+	return resourceClaim(scope.ProjectNumber, "compute/instance/"+instance.ID+"/network-interface/"+nic)
 }
 
 func firewallClaim(scope ProjectionContext, firewall Firewall) graph.IdentityClaim {
@@ -415,23 +415,30 @@ func resourceClaim(projectNumber, key string) graph.IdentityClaim {
 	return graph.IdentityClaim{Scheme: resourceScheme, AuthorityID: projectNumber, ImmutableKey: key}
 }
 
-// instanceClaimFromProviderID resolves gce://<project-id>/<zone>/<name>. A
-// reference to another project or to a zone outside the region filter is no
-// match rather than an error, because it belongs to another source and one
-// Node must not fail the whole Kubernetes projection.
-func instanceClaimFromProviderID(projectID, projectNumber, region, providerID string) (graph.IdentityClaim, bool, error) {
-	providerID = strings.TrimSpace(providerID)
-	if !strings.HasPrefix(strings.ToLower(providerID), "gce://") {
+// instanceIDReferenceParameter is how a Kubernetes Node reference carries
+// GKE's container.googleapis.com/instance_id annotation.
+const instanceIDReferenceParameter = "?instance_id="
+
+// instanceClaimFromProviderID resolves
+// gce://<project-id>/<zone>/<name>?instance_id=<numeric-id>. A name-only
+// provider ID is no match, because names are mutable and reusable. A reference
+// to another project or to a zone outside the region filter is no match rather
+// than an error, because it belongs to another source and one Node must not
+// fail the whole Kubernetes projection.
+func instanceClaimFromProviderID(projectID, projectNumber, region, reference string) (graph.IdentityClaim, bool, error) {
+	reference = strings.TrimSpace(reference)
+	if !strings.HasPrefix(strings.ToLower(reference), "gce://") {
 		return graph.IdentityClaim{}, false, nil
 	}
-	parts := strings.Split(providerID[len("gce://"):], "/")
-	if len(parts) != 3 || parts[0] != projectID || !validGCPName(parts[1]) || !validGCPName(parts[2]) {
+	providerID, instanceID, found := strings.Cut(reference[len("gce://"):], instanceIDReferenceParameter)
+	parts := strings.Split(providerID, "/")
+	if !found || !validNumericID(instanceID) || len(parts) != 3 || parts[0] != projectID || !validGCPName(parts[1]) || !validGCPName(parts[2]) {
 		return graph.IdentityClaim{}, false, nil
 	}
 	if region != "" && zoneRegion(parts[1]) != region {
 		return graph.IdentityClaim{}, false, nil
 	}
-	claim, err := IdentitySchemeDefinition().Normalize(resourceClaim(projectNumber, "compute/"+parts[1]+"/instance/"+parts[2]))
+	claim, err := IdentitySchemeDefinition().Normalize(resourceClaim(projectNumber, "compute/instance/"+instanceID))
 	if err != nil {
 		return graph.IdentityClaim{}, false, err
 	}
