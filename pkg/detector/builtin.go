@@ -235,6 +235,7 @@ func detectTopologyChanges(previous, current graph.Snapshot, observedAt time.Tim
 
 	currentGovernance := governancePostures(current)
 	for subjectID, postures := range governancePostures(previous) {
+		// Only a retained subject missing at least one prior governance posture has lost governance.
 		if _, retained := currentResources[subjectID]; !retained || governancePosturesRetained(postures, currentGovernance[subjectID]) {
 			continue
 		}
@@ -243,17 +244,23 @@ func detectTopologyChanges(previous, current graph.Snapshot, observedAt time.Tim
 	return signals
 }
 
-const genericGovernancePosture = "*"
+type governancePosture struct {
+	domain    graph.SecurityDomain
+	effect    string
+	direction string
+}
 
-func governancePostures(snapshot graph.Snapshot) map[string]map[string]struct{} {
-	result := make(map[string]map[string]struct{})
+var genericGovernancePosture governancePosture
+
+func governancePostures(snapshot graph.Snapshot) map[string]map[governancePosture]struct{} {
+	result := make(map[string]map[governancePosture]struct{})
 	for _, relationship := range snapshot.Relationships {
 		if relationship.Predicate != graph.PredicateGovernedBy || relationship.ResolutionStatus == graph.ResolutionUnresolved {
 			continue
 		}
 		postures := result[relationship.SubjectID]
 		if postures == nil {
-			postures = make(map[string]struct{})
+			postures = make(map[governancePosture]struct{})
 			result[relationship.SubjectID] = postures
 		}
 		typed := false
@@ -264,7 +271,7 @@ func governancePostures(snapshot graph.Snapshot) map[string]map[string]struct{} 
 			}
 			typed = true
 			for _, direction := range governanceDirections(semantics.Direction) {
-				postures[string(semantics.Domain)+"\x00"+semantics.Effect+"\x00"+direction] = struct{}{}
+				postures[governancePosture{domain: semantics.Domain, effect: semantics.Effect, direction: direction}] = struct{}{}
 			}
 		}
 		if !typed {
@@ -281,7 +288,7 @@ func governanceDirections(direction string) []string {
 	return []string{direction}
 }
 
-func governancePosturesRetained(previous, current map[string]struct{}) bool {
+func governancePosturesRetained(previous, current map[governancePosture]struct{}) bool {
 	if _, retained := current[genericGovernancePosture]; retained {
 		return true
 	}

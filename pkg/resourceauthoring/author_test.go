@@ -34,7 +34,7 @@ func TestBuildProposalAppliesHostOwnedScopeAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := detector.Rule{
-		ID: "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-aaaaaaaaaaaa/r-3bc851528c0197f3a8bbed70925eef794b9da07b64ad976a4f8f375ac17fda28", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: "deployment-id",
+		ID: "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-aaaaaaaaaaaa/r-1653ce7b06c875e78ad70e7d21895fc22d06531c4637a8c1f0218a781a6ccaf6", Revision: 1, InputVersion: detector.InputVersion, PluginID: "*", ScopeResourceID: "deployment-id",
 		Type: "relationship", Kind: "communicates-with", Expression: "destination_ip_class == 'public'",
 		Risk: detector.RiskMedium, Reasons: []string{draftReason}, WindowSeconds: draftWindowSeconds,
 	}
@@ -405,7 +405,7 @@ func TestDraftRuleIDsAreScopedToTheContextRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := proposal.Rules[0].Rule.ID, "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-abababababab/r-1c360a27045566757d454d6752ea1d71703fb2bbf0affc3c5ca9a46f9ce0835f"; got != want {
+	if got, want := proposal.Rules[0].Rule.ID, "deployment/1a6e56990dae2f0b7bfff93dc0e91948/v-abababababab/r-42e0b61c24c44c92d2c59b7192473f5eaeb68590df3247befd4c09569dc6f247"; got != want {
 		t.Fatalf("rule ID = %q, want %q", got, want)
 	}
 	for _, kind := range []string{"kubernetes/statefulset", "kubernetes/daemonset"} {
@@ -414,7 +414,7 @@ func TestDraftRuleIDsAreScopedToTheContextRevision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := proposal.Rules[0].Rule.ID, strings.TrimPrefix(kind, "kubernetes/")+"/1a6e56990dae2f0b7bfff93dc0e91948/v-abababababab/r-1c360a27045566757d454d6752ea1d71703fb2bbf0affc3c5ca9a46f9ce0835f"; got != want {
+		if got, want := proposal.Rules[0].Rule.ID, strings.TrimPrefix(kind, "kubernetes/")+"/1a6e56990dae2f0b7bfff93dc0e91948/v-abababababab/r-42e0b61c24c44c92d2c59b7192473f5eaeb68590df3247befd4c09569dc6f247"; got != want {
 			t.Fatalf("rule ID = %q, want %q", got, want)
 		}
 	}
@@ -471,7 +471,7 @@ func TestDraftRuleIDsFollowLogicAcrossReordering(t *testing.T) {
 		{name: "reasons", mutate: func(rule *detector.Rule) { rule.Reasons = []string{"different_reason"} }},
 		{name: "window", mutate: func(rule *detector.Rule) { rule.WindowSeconds++ }},
 		{name: "plugin", mutate: func(rule *detector.Rule) { rule.PluginID = "kubernetes" }},
-		{name: "input version", mutate: func(rule *detector.Rule) { rule.InputVersion = "v1" }},
+		{name: "input version", mutate: func(rule *detector.Rule) { rule.InputVersion = "v2" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			changed := base

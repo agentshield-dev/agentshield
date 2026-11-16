@@ -12,7 +12,9 @@ import (
 	"github.com/agentshield-dev/agentshield/pkg/telemetry"
 )
 
-const InputVersion = "v2"
+// InputVersion is the [Input] contract version rules must declare. Breaking
+// changes are allowed while the contract remains v1.
+const InputVersion = "v1"
 
 const maxInputGovernance = 64
 
