@@ -36,23 +36,23 @@ func nextPage[T any](ctx context.Context, fetch func(context.Context, ...func(*e
 	return fetch(ctx)
 }
 
-func capture(ctx context.Context, client EC2API, region string) (Snapshot, error) {
-	interfaces, err := captureNetworkInterfaces(ctx, client, region)
+func capture(ctx context.Context, client EC2API, region, sourceID string) (Snapshot, error) {
+	interfaces, err := captureNetworkInterfaces(ctx, client, region, sourceID)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	instances, err := captureInstances(ctx, client, region)
+	instances, err := captureInstances(ctx, client, region, sourceID)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	groups, err := captureSecurityGroups(ctx, client, region)
+	groups, err := captureSecurityGroups(ctx, client, region, sourceID)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	return Snapshot{NetworkInterfaces: interfaces, Instances: instances, SecurityGroups: groups}, nil
 }
 
-func captureInstances(ctx context.Context, client EC2API, region string) ([]Instance, error) {
+func captureInstances(ctx context.Context, client EC2API, region, sourceID string) ([]Instance, error) {
 	paginator := ec2.NewDescribeInstancesPaginator(client, &ec2.DescribeInstancesInput{MaxResults: awsdk.Int32(1000)})
 	var result []Instance
 	for paginator.HasMorePages() {
@@ -72,7 +72,7 @@ func captureInstances(ctx context.Context, client EC2API, region string) ([]Inst
 				if value.State != nil {
 					item.State = string(value.State.Name)
 				}
-				if err := finalizeInstance(&item, region); err != nil {
+				if err := finalizeInstance(&item, region, sourceID); err != nil {
 					return nil, err
 				}
 				result = append(result, item)
@@ -83,7 +83,7 @@ func captureInstances(ctx context.Context, client EC2API, region string) ([]Inst
 	return result, nil
 }
 
-func captureNetworkInterfaces(ctx context.Context, client EC2API, region string) ([]NetworkInterface, error) {
+func captureNetworkInterfaces(ctx context.Context, client EC2API, region, sourceID string) ([]NetworkInterface, error) {
 	paginator := ec2.NewDescribeNetworkInterfacesPaginator(client, &ec2.DescribeNetworkInterfacesInput{MaxResults: awsdk.Int32(1000)})
 	var result []NetworkInterface
 	for paginator.HasMorePages() {
@@ -118,7 +118,7 @@ func captureNetworkInterfaces(ctx context.Context, client EC2API, region string)
 				}
 			}
 			item.SecurityGroupIDs = uniqueSorted(item.SecurityGroupIDs)
-			if err := finalizeNetworkInterface(&item, region); err != nil {
+			if err := finalizeNetworkInterface(&item, region, sourceID); err != nil {
 				return nil, err
 			}
 			result = append(result, item)
@@ -128,7 +128,7 @@ func captureNetworkInterfaces(ctx context.Context, client EC2API, region string)
 	return result, nil
 }
 
-func captureSecurityGroups(ctx context.Context, client EC2API, region string) ([]SecurityGroup, error) {
+func captureSecurityGroups(ctx context.Context, client EC2API, region, sourceID string) ([]SecurityGroup, error) {
 	paginator := ec2.NewDescribeSecurityGroupsPaginator(client, &ec2.DescribeSecurityGroupsInput{MaxResults: awsdk.Int32(1000)})
 	var result []SecurityGroup
 	for paginator.HasMorePages() {
@@ -142,7 +142,7 @@ func captureSecurityGroups(ctx context.Context, client EC2API, region string) ([
 				VPCID: awsdk.ToString(value.VpcId), Name: awsdk.ToString(value.GroupName),
 				Ingress: normalizeRules(value.IpPermissions), Egress: normalizeRules(value.IpPermissionsEgress),
 			}
-			if err := finalizeSecurityGroup(&item, region); err != nil {
+			if err := finalizeSecurityGroup(&item, region, sourceID); err != nil {
 				return nil, err
 			}
 			result = append(result, item)
@@ -152,7 +152,7 @@ func captureSecurityGroups(ctx context.Context, client EC2API, region string) ([
 	return result, nil
 }
 
-func finalizeNetworkInterface(item *NetworkInterface, region string) error {
+func finalizeNetworkInterface(item *NetworkInterface, region, sourceID string) error {
 	if strings.TrimSpace(item.ID) == "" || !validAccountID(item.OwnerID) {
 		return fmt.Errorf("EC2 network interface in %s requires ID and 12-digit owner account", region)
 	}
@@ -161,11 +161,11 @@ func finalizeNetworkInterface(item *NetworkInterface, region string) error {
 		return err
 	}
 	item.Revision = revision
-	item.EventID = eventID(networkInterfacesCollection(region), item.ID, revision, "upsert")
+	item.EventID = eventID(sourceID, networkInterfacesCollection(region), item.ID, revision, "upsert")
 	return nil
 }
 
-func finalizeInstance(item *Instance, region string) error {
+func finalizeInstance(item *Instance, region, sourceID string) error {
 	if strings.TrimSpace(item.ID) == "" || !validAccountID(item.OwnerID) {
 		return fmt.Errorf("EC2 instance in %s requires ID and 12-digit owner account", region)
 	}
@@ -174,11 +174,11 @@ func finalizeInstance(item *Instance, region string) error {
 		return err
 	}
 	item.Revision = revision
-	item.EventID = eventID(instancesCollection(region), item.ID, revision, "upsert")
+	item.EventID = eventID(sourceID, instancesCollection(region), item.ID, revision, "upsert")
 	return nil
 }
 
-func finalizeSecurityGroup(item *SecurityGroup, region string) error {
+func finalizeSecurityGroup(item *SecurityGroup, region, sourceID string) error {
 	if strings.TrimSpace(item.ID) == "" || !validAccountID(item.OwnerID) {
 		return fmt.Errorf("EC2 security group in %s requires ID and 12-digit owner account", region)
 	}
@@ -187,7 +187,7 @@ func finalizeSecurityGroup(item *SecurityGroup, region string) error {
 		return err
 	}
 	item.Revision = revision
-	item.EventID = eventID(securityGroupsCollection(region), item.ID, revision, "upsert")
+	item.EventID = eventID(sourceID, securityGroupsCollection(region), item.ID, revision, "upsert")
 	return nil
 }
 
