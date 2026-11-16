@@ -105,7 +105,7 @@ func Descriptor() discovery.Descriptor {
 	slices.Sort(consumes[1:])
 	return discovery.Descriptor{
 		ID: PluginID, Version: "0.1.0", Description: "Istio registry, routing, policy, mTLS, ambient, and waypoint semantics", Icon: "istio",
-		OwnedAPIGroups: []string{"networking.istio.io", "security.istio.io"}, Consumes: consumes, Publishes: []string{CollectionProjection},
+		OwnedAPIGroups: []string{"*.istio.io"}, Consumes: consumes, Publishes: []string{CollectionProjection},
 	}
 }
 

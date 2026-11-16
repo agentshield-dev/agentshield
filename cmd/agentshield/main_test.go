@@ -165,14 +165,23 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 		if _, found := descriptors[descriptor.ID]; found {
 			t.Fatalf("duplicate compiled-in plugin %q", descriptor.ID)
 		}
-		if descriptor.Icon == "" {
-			t.Fatalf("compiled-in plugin %q has no icon", descriptor.ID)
-		}
 		descriptors[descriptor.ID] = descriptor
 	}
+	for pluginID, want := range map[string]string{
+		agentgatewayplugin.PluginID: "agentgateway",
+		awsplugin.PluginID:          "aws",
+		ciliumplugin.PluginID:       "cilium",
+		falcoplugin.PluginID:        "falco",
+		istioplugin.PluginID:        "istio",
+		kubernetesplugin.PluginID:   "kubernetes",
+	} {
+		if got := descriptors[pluginID].Icon; got != want {
+			t.Fatalf("compiled-in plugin %q icon = %q, want %q", pluginID, got, want)
+		}
+	}
 	for pluginID, want := range map[string][]string{
-		ciliumplugin.PluginID: {"cilium.io"},
-		istioplugin.PluginID:  {"networking.istio.io", "security.istio.io"},
+		ciliumplugin.PluginID: {"*.cilium.io"},
+		istioplugin.PluginID:  {"*.istio.io"},
 	} {
 		if got := descriptors[pluginID].OwnedAPIGroups; !slices.Equal(got, want) {
 			t.Fatalf("compiled-in plugin %q owns API groups %v, want %v", pluginID, got, want)

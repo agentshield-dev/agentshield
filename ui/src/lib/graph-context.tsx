@@ -1,6 +1,6 @@
 import { createContext, type ReactNode, useContext, useMemo } from 'react';
 import type { GraphRecord, List, PluginMetadata, Resource } from '@/api/types';
-import { label, list, resourceAPIGroup, resourcePluginIDs } from '@/lib/model';
+import { apiGroupMatches, label, list, resourceAPIGroup, resourcePluginIDs } from '@/lib/model';
 
 interface Graph {
 	record: GraphRecord | undefined;
@@ -34,18 +34,18 @@ export function GraphProvider({
 	const value = useMemo<Graph>(() => {
 		const resources = new Map(list(record?.snapshot.resources).map(item => [item.id, item]));
 		const pluginMetadata = new Map(list(plugins).map(item => [item.id, item]));
-		const apiGroupOwners = new Map<string, PluginMetadata[]>();
-		for (const plugin of list(plugins)) {
-			for (const group of list(plugin.ownedApiGroups)) {
-				apiGroupOwners.set(group, [...(apiGroupOwners.get(group) ?? []), plugin]);
-			}
-		}
+		const apiGroupOwners = list(plugins).flatMap(plugin =>
+			list(plugin.ownedApiGroups).map(pattern => ({ pattern, plugin }))
+		);
 		const resource = (id: string) => resources.get(id);
 		return {
 			record,
 			resource,
 			owners: item => {
-				const declared = apiGroupOwners.get(resourceAPIGroup(item) ?? '');
+				const group = resourceAPIGroup(item) ?? '';
+				const declared = apiGroupOwners
+					.filter(owner => apiGroupMatches(owner.pattern, group))
+					.map(owner => owner.plugin);
 				if (declared?.length) return declared;
 				const kindOwner = pluginMetadata.get(item.kind.split('/', 1)[0]);
 				if (kindOwner) return [kindOwner];

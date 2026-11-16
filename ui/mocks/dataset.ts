@@ -44,7 +44,7 @@ const PLUGINS: readonly PluginMetadata[] = [
 		version: '0.1.1',
 		description: 'Cilium CNI state and Hubble flow semantics',
 		icon: 'cilium',
-		ownedApiGroups: ['cilium.io']
+		ownedApiGroups: ['*.cilium.io']
 	},
 	{
 		id: 'falco',
@@ -58,7 +58,7 @@ const PLUGINS: readonly PluginMetadata[] = [
 		version: '0.1.0',
 		description: 'Istio registry, routing, policy, mTLS, ambient, and waypoint semantics',
 		icon: 'istio',
-		ownedApiGroups: ['networking.istio.io', 'security.istio.io']
+		ownedApiGroups: ['*.istio.io']
 	},
 	{
 		id: 'kubernetes',

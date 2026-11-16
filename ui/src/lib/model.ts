@@ -96,6 +96,13 @@ export function resourceAPIGroup(resource: Resource): string | undefined {
 	return undefined;
 }
 
+export function apiGroupMatches(pattern: string, group: string): boolean {
+	if (pattern === group) return true;
+	if (!pattern.startsWith('*.')) return false;
+	const root = pattern.slice(2);
+	return group === root || group.endsWith(`.${root}`);
+}
+
 export function securitySemantics(assertion: AssertionBase): SecuritySemantics | null {
 	const value =
 		assertion.properties?.[SECURITY_SEMANTICS_KEY] ||
