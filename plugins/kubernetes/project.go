@@ -139,6 +139,13 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 		if node := index.nodesByName[decoded.Value.Spec.NodeName]; node != nil {
 			input.Relationships = append(input.Relationships, relationshipAssertion(sourceID, "kubernetes.pod.runs-on-node", claimFor(clusterID, pod), graph.PredicateRunsOn, claimFor(clusterID, node), "", nil, pod, node))
 		}
+		if decoded.Value.Spec.HostNetwork {
+			posture, err := hostNetworkPostureFacet(clusterID, sourceID, pod, &decoded.Value)
+			if err != nil {
+				return graph.Input{}, err
+			}
+			input.Facets = append(input.Facets, posture)
+		}
 	}
 	if err := projectServices(clusterID, sourceID, index, &input); err != nil {
 		return graph.Input{}, err
