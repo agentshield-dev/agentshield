@@ -45,8 +45,10 @@
 // listener. Host PID/IPC, privileged, NET_ADMIN, NET_RAW, SYS_ADMIN, and
 // explicit unconfined-seccomp counts across regular, init, and ephemeral
 // containers stay provider-native attributes, because the neutral vocabulary
-// has no kernel-privilege domain. They describe configuration, not observed
-// sockets, packet capture, iptables changes, or syscalls. NetworkPolicy
+// has no kernel-privilege domain. Capability counts reflect declared grants
+// after drops; runtime default capabilities are not inferred. They describe
+// configuration, not observed sockets, packet capture, iptables changes, or
+// syscalls. NetworkPolicy
 // enforcement on such Pods is CNI-dependent, so their governed-by edges use
 // rule kubernetes.networkpolicy.host-network-target with effect and coverage
 // unknown and kubernetes/network-policy-applicability=implementation-defined.

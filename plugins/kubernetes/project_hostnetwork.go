@@ -15,11 +15,13 @@ import (
 const networkPolicyApplicabilityAttribute = "kubernetes/network-policy-applicability"
 
 type hostNetworkContainer struct {
-	Kind              string               `json:"kind"`
-	Privileged        bool                 `json:"privileged,omitempty"`
-	CapabilitiesAdded []string             `json:"capabilitiesAdded,omitempty"`
-	Seccomp           string               `json:"seccomp,omitempty"`
-	Ports             []graph.SecurityPort `json:"ports,omitempty"`
+	Kind                string               `json:"kind"`
+	Privileged          bool                 `json:"privileged,omitempty"`
+	CapabilitiesAdded   []string             `json:"capabilitiesAdded,omitempty"`
+	CapabilitiesDropped []string             `json:"capabilitiesDropped,omitempty"`
+	Seccomp             string               `json:"seccomp,omitempty"`
+	SeccompProfile      string               `json:"seccompProfile,omitempty"`
+	Ports               []graph.SecurityPort `json:"ports,omitempty"`
 }
 
 // isHostNetworkPod reports spec.hostNetwork; Pods that fail to decode already
@@ -64,6 +66,9 @@ func hostNetworkPostureFacet(clusterID, sourceID string, object *unstructured.Un
 	}
 	declared := len(uniquePorts(ports))
 	protocols, ports, _ = boundedSecurityDetails(protocols, ports)
+	if ports == nil {
+		ports = []graph.SecurityPort{}
+	}
 	result["kubernetes/host-network-ports"] = projectkit.MustCanonicalJSON(ports)
 	if omitted := declared - len(ports); omitted > 0 {
 		result["kubernetes/omitted-host-network-values"] = strconv.Itoa(omitted)
@@ -91,22 +96,20 @@ func hostNetworkPostureFacet(clusterID, sourceID string, object *unstructured.Un
 // hostNetworkContainers normalizes regular, init, and ephemeral containers.
 // Container seccomp overrides the Pod's; only explicit profiles are recorded.
 func hostNetworkContainers(pod *corev1.Pod) []hostNetworkContainer {
-	podSeccomp := ""
+	podSeccomp, podProfile := "", ""
 	if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.SeccompProfile != nil {
-		podSeccomp = string(pod.Spec.SecurityContext.SeccompProfile.Type)
+		podSeccomp, podProfile = string(pod.Spec.SecurityContext.SeccompProfile.Type), stringPointerValue(pod.Spec.SecurityContext.SeccompProfile.LocalhostProfile)
 	}
 	normalize := func(kind string, securityContext *corev1.SecurityContext, declared []corev1.ContainerPort) hostNetworkContainer {
-		result := hostNetworkContainer{Kind: kind, Seccomp: podSeccomp}
+		result := hostNetworkContainer{Kind: kind, Seccomp: podSeccomp, SeccompProfile: podProfile}
 		if securityContext != nil {
 			result.Privileged = securityContext.Privileged != nil && *securityContext.Privileged
 			if securityContext.Capabilities != nil {
-				for _, capability := range securityContext.Capabilities.Add {
-					result.CapabilitiesAdded = append(result.CapabilitiesAdded, strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(string(capability))), "CAP_"))
-				}
-				result.CapabilitiesAdded = uniqueSorted(result.CapabilitiesAdded)
+				result.CapabilitiesAdded = normalizedCapabilities(securityContext.Capabilities.Add)
+				result.CapabilitiesDropped = normalizedCapabilities(securityContext.Capabilities.Drop)
 			}
 			if securityContext.SeccompProfile != nil {
-				result.Seccomp = string(securityContext.SeccompProfile.Type)
+				result.Seccomp, result.SeccompProfile = string(securityContext.SeccompProfile.Type), stringPointerValue(securityContext.SeccompProfile.LocalhostProfile)
 			}
 		}
 		for _, port := range declared {
@@ -134,11 +137,33 @@ func hostNetworkContainers(pod *corev1.Pod) []hostNetworkContainer {
 	return result
 }
 
-// hasCapability treats privileged containers and ALL as holding every capability.
+// hasCapability reports a declared grant: privileged holds everything, add ALL
+// or the named capability grants it, and an explicit drop of that capability
+// removes it (drop ALL does not undo an explicit add, as in the CRI runtimes).
+// Runtime default capabilities are not inferred.
 func hasCapability(capability string) func(hostNetworkContainer) bool {
 	return func(container hostNetworkContainer) bool {
-		return container.Privileged || slices.Contains(container.CapabilitiesAdded, capability) || slices.Contains(container.CapabilitiesAdded, "ALL")
+		if container.Privileged {
+			return true
+		}
+		added := slices.Contains(container.CapabilitiesAdded, capability) || slices.Contains(container.CapabilitiesAdded, "ALL")
+		return added && !slices.Contains(container.CapabilitiesDropped, capability)
 	}
+}
+
+func normalizedCapabilities(values []corev1.Capability) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(string(value))), "CAP_"))
+	}
+	return uniqueSorted(result)
+}
+
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func countContainers(containers []hostNetworkContainer, match func(hostNetworkContainer) bool) int {

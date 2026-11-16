@@ -88,14 +88,16 @@ func projectNetworkPolicies(clusterID, sourceID string, index objectIndex, input
 			PluginID: PluginID, SourceID: sourceID, RuleID: "kubernetes.networkpolicy.targeting",
 			EvidenceIDs: evidenceIDs(policy),
 		})
-		hostProperties, err := hostNetworkPolicyProperties(properties, *semantics)
-		if err != nil {
-			return fmt.Errorf("network policy %s host-network semantics: %w", projectkit.DisplayName(policy), err)
-		}
+		var hostProperties map[string]string
 		for _, pod := range index.podsForLabels(policy.GetNamespace(), selector.MatchLabels) {
 			if labelSelector.Matches(labels.Set(pod.GetLabels())) {
 				ruleID, podProperties := "kubernetes.networkpolicy.target", properties
 				if isHostNetworkPod(pod) {
+					if hostProperties == nil {
+						if hostProperties, err = hostNetworkPolicyProperties(properties, *semantics); err != nil {
+							return fmt.Errorf("network policy %s host-network semantics: %w", projectkit.DisplayName(policy), err)
+						}
+					}
 					ruleID, podProperties = "kubernetes.networkpolicy.host-network-target", hostProperties
 				}
 				relationshipProperties := make(map[string]string, len(podProperties)+4)

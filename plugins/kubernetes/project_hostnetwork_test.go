@@ -383,3 +383,65 @@ func TestHostNetworkProjectionDeterministicUnderShuffledInput(t *testing.T) {
 		}
 	}
 }
+
+func TestHostNetworkPostureCapabilityDropsPortsAndProfiles(t *testing.T) {
+	posture := func(containers []any, podSecurity map[string]any) graph.FacetAssertion {
+		t.Helper()
+		spec := map[string]any{"hostNetwork": true, "containers": containers}
+		if podSecurity != nil {
+			spec["securityContext"] = podSecurity
+		}
+		pod := testObject("v1", "Pod", "kube-system", "agent", "agent", map[string]any{"spec": spec})
+		input, err := Project("cluster", "source", []*unstructured.Unstructured{pod})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return requireHostNetworkPostureFacet(t, input, pod)
+	}
+	capabilities := func(add, drop []any) map[string]any {
+		return map[string]any{"name": "c", "image": "i", "securityContext": map[string]any{"capabilities": map[string]any{"add": add, "drop": drop}}}
+	}
+
+	for _, test := range []struct {
+		name             string
+		add, drop        []any
+		netAdmin, netRaw string
+	}{
+		{name: "add then drop same", add: []any{"NET_ADMIN"}, drop: []any{"NET_ADMIN"}, netAdmin: "0", netRaw: "0"},
+		{name: "drop all keeps explicit add", add: []any{"NET_ADMIN"}, drop: []any{"ALL"}, netAdmin: "1", netRaw: "0"},
+		{name: "add all minus one", add: []any{"ALL"}, drop: []any{"cap_net_raw"}, netAdmin: "1", netRaw: "0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			facet := posture([]any{capabilities(test.add, test.drop)}, nil)
+			if facet.Attributes["kubernetes/net-admin-container-count"] != test.netAdmin || facet.Attributes["kubernetes/net-raw-container-count"] != test.netRaw {
+				t.Fatalf("capability counts = %#v", facet.Attributes)
+			}
+		})
+	}
+
+	privilegedDrop := map[string]any{"name": "c", "image": "i", "securityContext": map[string]any{"privileged": true, "capabilities": map[string]any{"drop": []any{"NET_RAW"}}}}
+	if got := posture([]any{privilegedDrop}, nil).Attributes["kubernetes/net-raw-container-count"]; got != "1" {
+		t.Fatalf("privileged container with a drop net-raw count = %s, want 1", got)
+	}
+
+	noPorts := posture([]any{map[string]any{"name": "c", "image": "i"}}, nil)
+	if got := noPorts.Attributes["kubernetes/host-network-ports"]; got != "[]" {
+		t.Fatalf("no declared ports = %q, want []", got)
+	}
+	badPort := posture([]any{map[string]any{"name": "c", "image": "i", "ports": []any{map[string]any{"containerPort": int64(70000)}, map[string]any{"containerPort": int64(8080)}}}}, nil)
+	if got := badPort.Attributes["kubernetes/host-network-ports"]; got != `[{"protocol":"TCP","port":8080}]` {
+		t.Fatalf("out-of-range port kept: %q", got)
+	}
+
+	profile := func(name string) string {
+		facet := posture([]any{map[string]any{"name": "c", "image": "i"}}, map[string]any{"seccompProfile": map[string]any{"type": "Localhost", "localhostProfile": name}})
+		semantics, err := graph.DecodeSecuritySemantics(facet.Attributes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return semantics.ConfigurationDigest
+	}
+	if profile("profiles/a.json") == profile("profiles/b.json") {
+		t.Fatal("Localhost seccomp profile change did not change the digest")
+	}
+}
