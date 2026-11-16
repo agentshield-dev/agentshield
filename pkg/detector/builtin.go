@@ -233,31 +233,77 @@ func detectTopologyChanges(previous, current graph.Snapshot, observedAt time.Tim
 		}
 	}
 
-	currentGovernance := make(map[string]struct{})
-	for _, relationship := range current.Relationships {
-		if relationship.Predicate == graph.PredicateGovernedBy && relationship.ResolutionStatus != graph.ResolutionUnresolved {
-			currentGovernance[relationshipKey(relationship)] = struct{}{}
+	currentGovernance := governancePostures(current)
+	for subjectID, postures := range governancePostures(previous) {
+		// Only a retained subject missing at least one prior governance posture has lost governance.
+		if _, retained := currentResources[subjectID]; !retained || governancePosturesRetained(postures, currentGovernance[subjectID]) {
+			continue
 		}
+		signals = appendScoredSignal(signals, 4, []string{"lost_governance"}, []string{subjectID}, observedAt, config)
 	}
-	for _, relationship := range previous.Relationships {
+	return signals
+}
+
+type governancePosture struct {
+	domain    graph.SecurityDomain
+	effect    string
+	direction string
+}
+
+var genericGovernancePosture governancePosture
+
+func governancePostures(snapshot graph.Snapshot) map[string]map[governancePosture]struct{} {
+	result := make(map[string]map[governancePosture]struct{})
+	for _, relationship := range snapshot.Relationships {
 		if relationship.Predicate != graph.PredicateGovernedBy || relationship.ResolutionStatus == graph.ResolutionUnresolved {
 			continue
 		}
-		if _, retained := currentGovernance[relationshipKey(relationship)]; retained {
-			continue
+		postures := result[relationship.SubjectID]
+		if postures == nil {
+			postures = make(map[governancePosture]struct{})
+			result[relationship.SubjectID] = postures
 		}
-		var anchors []string
-		if _, ok := currentResources[relationship.SubjectID]; ok {
-			anchors = append(anchors, relationship.SubjectID)
+		typed := false
+		for _, assertion := range relationship.Assertions {
+			semantics, err := graph.DecodeSecuritySemantics(assertion.Properties)
+			if err != nil || semantics == nil || semantics.Class != graph.SecurityClassGovernance {
+				continue
+			}
+			typed = true
+			for _, direction := range governanceDirections(semantics.Direction) {
+				postures[governancePosture{domain: semantics.Domain, effect: semantics.Effect, direction: direction}] = struct{}{}
+			}
 		}
-		if _, ok := currentResources[relationship.ObjectID]; ok {
-			anchors = append(anchors, relationship.ObjectID)
-		}
-		if len(anchors) > 0 {
-			signals = appendScoredSignal(signals, 4, []string{"lost_governance"}, anchors, observedAt, config)
+		if !typed {
+			postures[genericGovernancePosture] = struct{}{}
 		}
 	}
-	return signals
+	return result
+}
+
+func governanceDirections(direction string) []string {
+	if direction == "bidirectional" {
+		return []string{"egress", "ingress"}
+	}
+	return []string{direction}
+}
+
+func governancePosturesRetained(previous, current map[governancePosture]struct{}) bool {
+	if _, retained := current[genericGovernancePosture]; retained {
+		return true
+	}
+	for posture := range previous {
+		if posture == genericGovernancePosture {
+			if len(current) == 0 {
+				return false
+			}
+			continue
+		}
+		if _, retained := current[posture]; !retained {
+			return false
+		}
+	}
+	return true
 }
 
 // detectSensitiveResources signals newly created resources whose kind grants

@@ -101,6 +101,31 @@ func TestDetectNovelChangesEmitsNeutralTopologySignals(t *testing.T) {
 	}
 }
 
+func TestDetectNovelChangesDoesNotLoseEquivalentGovernance(t *testing.T) {
+	properties := semanticAttributes(t, graph.SecuritySemantics{
+		Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassGovernance,
+		Domain: graph.SecurityDomainNetworkAccess, State: graph.SecurityStateDeclared,
+		Effect: "restrict", Scope: "workload", Direction: "ingress", Coverage: "complete",
+	})
+	resources := []graph.Resource{{ID: "workload"}, {ID: "network-policy"}, {ID: "cilium-policy"}}
+	governedBy := func(id, policy, plugin string) graph.Relationship {
+		return graph.Relationship{
+			ID: id, SubjectID: "workload", Predicate: graph.PredicateGovernedBy, ObjectID: policy,
+			Assertions: []graph.RelationshipAssertion{{
+				Predicate: graph.PredicateGovernedBy, Properties: properties,
+				PluginID: plugin, SourceID: "cluster", RuleID: plugin + ".policy",
+			}},
+		}
+	}
+	previous := graph.Snapshot{Resources: resources, Relationships: []graph.Relationship{governedBy("kubernetes", "network-policy", "kubernetes")}}
+	current := graph.Snapshot{Resources: resources, Relationships: []graph.Relationship{governedBy("cilium", "cilium-policy", "cilium")}}
+	for _, signal := range DetectNovelChanges(previous, current, time.Time{}, DefaultConfig()) {
+		if slices.Contains(signal.Reasons, "lost_governance") {
+			t.Fatalf("equivalent provider-neutral governance was reported lost: %#v", signal)
+		}
+	}
+}
+
 func semanticExposureRelationship(t *testing.T) graph.Relationship {
 	t.Helper()
 	return graph.Relationship{

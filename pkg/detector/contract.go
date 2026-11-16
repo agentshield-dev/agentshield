@@ -51,6 +51,7 @@ func CELSelectors() []CELSelector {
 		if predicate.Predicate == graph.PredicateExecutes {
 			selector.Fields = map[string]string{"process_class": "class of the process the subject workload started"}
 		}
+		selector.Fields = withGovernanceFields(selector.Fields)
 		selectors = append(selectors, selector)
 	}
 	for _, kind := range telemetry.EventKinds() {
@@ -66,8 +67,9 @@ func CELSelectors() []CELSelector {
 			fields["process_class"] = "class of the process the subject workload started"
 		}
 		selectors = append(selectors, CELSelector{
-			Type: "telemetry", Kind: kind.Kind, Description: kind.Description, Fields: fields,
+			Type: "telemetry", Kind: kind.Kind, Description: kind.Description,
 			Trigger: "once per newly observed combination of endpoints, operation, and outcome",
+			Fields:  withGovernanceFields(fields),
 		})
 	}
 	return selectors
@@ -80,8 +82,18 @@ func resourceCELSelector(kind string) (CELSelector, bool) {
 	return CELSelector{
 		Type: "resource", Kind: kind, Description: "A bounded normalized resource context changed.",
 		Trigger: "when the resource first appears or its authoring context changes",
-		Fields:  map[string]string{"attributes": "bounded normalized attributes selected by the source plugin"},
+		Fields:  withGovernanceFields(map[string]string{"attributes": "bounded normalized attributes selected by the source plugin"}),
 	}, true
+}
+
+func withGovernanceFields(fields map[string]string) map[string]string {
+	result := make(map[string]string, len(fields)+2)
+	for name, description := range fields {
+		result[name] = description
+	}
+	result["governance"] = "bounded provider-neutral governance semantics attached to the input subject or its workload"
+	result["governance_truncated"] = "whether governance entries were omitted by the input bound"
+	return result
 }
 
 // CELSelectorNames returns the "type:kind" name of every selector.
@@ -140,8 +152,13 @@ func CELContractVariables() []CELVariable {
 			continue
 		}
 		celType := cel.StringType
-		if field.Type.Kind() == reflect.Map {
+		switch field.Type.Kind() {
+		case reflect.Map:
 			celType = cel.MapType(cel.StringType, cel.StringType)
+		case reflect.Slice:
+			celType = cel.ListType(cel.MapType(cel.StringType, cel.StringType))
+		case reflect.Bool:
+			celType = cel.BoolType
 		}
 		variables = append(variables, CELVariable{Name: name, Description: field.Tag.Get("cel_description"), celType: celType})
 	}

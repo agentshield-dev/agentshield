@@ -61,12 +61,13 @@ func (projector *projection) projectAuthorizationPolicies() error {
 		if policyAPI.Spec.Provider != nil {
 			provider = policyAPI.Spec.Provider.Name
 		}
+		dryRun := strings.EqualFold(policy.GetAnnotations()["istio.io/dry-run"], "true")
 		attributes := map[string]string{
 			"kubernetes/api-version": policy.GetAPIVersion(),
 			"kubernetes/name":        policy.GetName(),
 			"kubernetes/namespace":   policy.GetNamespace(),
 			"istio/action":           strings.ToUpper(action),
-			"istio/dry-run":          strconv.FormatBool(strings.EqualFold(policy.GetAnnotations()["istio.io/dry-run"], "true")),
+			"istio/dry-run":          strconv.FormatBool(dryRun),
 			"istio/rule-count":       strconv.Itoa(len(rules)),
 			"istio/rule-form":        ruleForm,
 			"istio/rule-breadth":     ruleBreadth,
@@ -88,6 +89,7 @@ func (projector *projection) projectAuthorizationPolicies() error {
 				"action": action, "rules": rules, "selector": selector, "targetRefs": targetRefs, "provider": provider,
 			}),
 		}
+		networkAccess := !dryRun && authorizationRulesAreL4(rules) && (effect == "allow" || effect == "deny" && len(rules) > 0)
 		projector.input.Resources = append(projector.input.Resources, projectedResourceAssertion(projector.context.SourceID, observed, "istio/authorizationpolicy", "istio.authorization-policy", attributes))
 		if validation != "valid" {
 			continue
@@ -109,12 +111,12 @@ func (projector *projection) projectAuthorizationPolicies() error {
 		})
 		switch {
 		case len(targetRefs) > 0:
-			if err := projector.projectAuthorizationTargetRefs(observed, targetRefs, semantics); err != nil {
+			if err := projector.projectAuthorizationTargetRefs(observed, targetRefs, semantics, networkAccess); err != nil {
 				return err
 			}
 		case len(selector) > 0:
 			for _, pod := range projector.index.podsSelectedBy(policy.GetNamespace(), projector.context.RootNamespace, selector) {
-				if err := projector.addPolicyGovernance(pod, observed, "istio-authz-selector", semantics); err != nil {
+				if err := projector.addPolicyGovernance(pod, observed, "istio-authz-selector", semantics, networkAccess); err != nil {
 					return err
 				}
 			}
@@ -125,13 +127,13 @@ func (projector *projection) projectAuthorizationPolicies() error {
 			}
 			slices.Sort(names)
 			for _, name := range names {
-				if err := projector.addPolicyGovernance(projector.index.namespaces[name], observed, "istio-authz-mesh", semantics); err != nil {
+				if err := projector.addPolicyGovernance(projector.index.namespaces[name], observed, "istio-authz-mesh", semantics, networkAccess); err != nil {
 					return err
 				}
 			}
 		default:
 			if namespace, ok := projector.index.namespaces[policy.GetNamespace()]; ok {
-				if err := projector.addPolicyGovernance(namespace, observed, "istio-authz-namespace", semantics); err != nil {
+				if err := projector.addPolicyGovernance(namespace, observed, "istio-authz-namespace", semantics, networkAccess); err != nil {
 					return err
 				}
 			}
@@ -140,7 +142,7 @@ func (projector *projection) projectAuthorizationPolicies() error {
 	return nil
 }
 
-func (projector *projection) projectAuthorizationTargetRefs(policy indexedObject, references []istioapi.PolicyTargetReference, semantics graph.SecuritySemantics) error {
+func (projector *projection) projectAuthorizationTargetRefs(policy indexedObject, references []istioapi.PolicyTargetReference, semantics graph.SecuritySemantics, networkAccess bool) error {
 	for _, reference := range references {
 		name := reference.Name
 		kind := reference.Kind
@@ -158,7 +160,7 @@ func (projector *projection) projectAuthorizationTargetRefs(policy indexedObject
 			}
 			targetSemantics := semantics
 			targetSemantics.Scope = authorizationTargetScope(target.Object.GetKind())
-			if err := projector.addPolicyGovernance(target, policy, "istio-authz-targetref", targetSemantics); err != nil {
+			if err := projector.addPolicyGovernance(target, policy, "istio-authz-targetref", targetSemantics, networkAccess); err != nil {
 				return err
 			}
 		}
@@ -194,7 +196,7 @@ func supportedAuthorizationTarget(policy, target *unstructured.Unstructured, gro
 	}
 }
 
-func (projector *projection) addPolicyGovernance(target, policy indexedObject, qualifier string, semantics graph.SecuritySemantics) error {
+func (projector *projection) addPolicyGovernance(target, policy indexedObject, qualifier string, semantics graph.SecuritySemantics, networkAccess bool) error {
 	properties, err := graph.WithSecuritySemantics(map[string]string{
 		"semantic":                "istio-authorization-governance",
 		"istio/target-resolution": "resolved-provider-reference",
@@ -206,7 +208,61 @@ func (projector *projection) addPolicyGovernance(target, policy indexedObject, q
 		projector.context.SourceID, "istio.authorization-policy-target", target.Claim, graph.PredicateGovernedBy, policy.Claim,
 		qualifier, properties, target.EventID, policy.EventID,
 	))
+	if networkAccess {
+		semantics.Domain = graph.SecurityDomainNetworkAccess
+		semantics.Effect = "restrict"
+		semantics.Protocols = []string{"TCP"}
+		properties, err := graph.WithSecuritySemantics(map[string]string{
+			"semantic":                "istio-l4-network-governance",
+			"istio/target-resolution": "resolved-provider-reference",
+		}, semantics)
+		if err != nil {
+			return fmt.Errorf("authorization policy %s network semantics: %w", projectkit.DisplayName(policy.Object), err)
+		}
+		projector.input.Relationships = append(projector.input.Relationships, relationship(
+			projector.context.SourceID, "istio.authorization-policy-network-access", target.Claim, graph.PredicateGovernedBy, policy.Claim,
+			qualifier, properties, target.EventID, policy.EventID,
+		))
+	}
 	return nil
+}
+
+type l4AuthorizationRule struct {
+	From []struct {
+		Source struct {
+			Principals, NotPrincipals, Namespaces, NotNamespaces, IPBlocks, NotIPBlocks []string
+		} `json:"source"`
+	} `json:"from"`
+	To []struct {
+		Operation struct {
+			Ports, NotPorts []string
+		} `json:"operation"`
+	} `json:"to"`
+	When []struct {
+		Key               string   `json:"key"`
+		Values, NotValues []string `json:",omitempty"`
+	} `json:"when"`
+}
+
+func authorizationRulesAreL4(rules []json.RawMessage) bool {
+	allowedConditions := map[string]bool{
+		"source.ip": true, "source.namespace": true, "source.principal": true,
+		"destination.ip": true, "destination.port": true,
+	}
+	for _, raw := range rules {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		var rule l4AuthorizationRule
+		if err := decoder.Decode(&rule); err != nil {
+			return false
+		}
+		for _, condition := range rule.When {
+			if !allowedConditions[condition.Key] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func authorizationRuleBreadth(rules []json.RawMessage) string {
