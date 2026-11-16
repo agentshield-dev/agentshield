@@ -9,3 +9,4 @@ An accepted ADR remains in place when implementation changes. A later decision t
 | ADR | Status | Decision |
 | --- | --- | --- |
 | [0001](0001-snapshot-authority-and-delta-publication.md) | Accepted | Use explicit deltas for ordinary publication and selective complete replacements for authoritative checkpoints and recovery. |
+| [0003](0003-lease-based-work-partitioning.md) | Proposed | Partition dependent plugin work across interchangeable replicas with PostgreSQL leases and fencing. |
