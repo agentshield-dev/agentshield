@@ -703,21 +703,38 @@ func initialSnapshot(view state.GraphView, err error) (graph.Snapshot, error) {
 	return graph.Snapshot{}, err
 }
 
+// cloudSources lists the cloud discovery sources in build order. They are
+// built before Kubernetes so their identity resolvers can bind Nodes.
+func cloudSources(config options) []discoverySource {
+	return []discoverySource{
+		{name: "AWS (--aws-region)", enabled: config.aws.Region != "", build: func(ctx context.Context) (discovery.Plugin, error) {
+			return awsDiscoveryPlugin(ctx, config.aws)
+		}},
+		{name: "GCP (--gcp-project)", enabled: strings.TrimSpace(config.gcp.Project) != "", build: func(ctx context.Context) (discovery.Plugin, error) {
+			return gcpDiscoveryPlugin(ctx, config.gcp)
+		}},
+	}
+}
+
+type discoverySource struct {
+	name    string
+	enabled bool
+	build   func(context.Context) (discovery.Plugin, error)
+}
+
 func discoveryPlugins(ctx context.Context, config options) ([]discovery.Plugin, error) {
 	var plugins []discovery.Plugin
-	if config.aws.Region != "" {
-		awsDiscovery, err := awsDiscoveryPlugin(ctx, config.aws)
+	names := []string{"Kubernetes"}
+	for _, source := range cloudSources(config) {
+		names = append(names, source.name)
+		if !source.enabled {
+			continue
+		}
+		plugin, err := source.build(ctx)
 		if err != nil {
 			return nil, err
 		}
-		plugins = append(plugins, awsDiscovery)
-	}
-	if strings.TrimSpace(config.gcp.Project) != "" {
-		gcpDiscovery, err := gcpDiscoveryPlugin(ctx, config.gcp)
-		if err != nil {
-			return nil, err
-		}
-		plugins = append(plugins, gcpDiscovery)
+		plugins = append(plugins, plugin)
 	}
 	if !config.kubernetes.Disabled {
 		kubernetesPlugins, err := kubernetesDiscoveryPlugins(config, discovery.IdentityReferenceResolvers(plugins...))
@@ -727,7 +744,7 @@ func discoveryPlugins(ctx context.Context, config options) ([]discovery.Plugin, 
 		plugins = append(plugins, kubernetesPlugins...)
 	}
 	if len(plugins) == 0 {
-		return nil, errors.New("discovery enabled without a Kubernetes, AWS, or GCP source")
+		return nil, fmt.Errorf("discovery enabled without a source; enable one of: %s", strings.Join(names, ", "))
 	}
 	return plugins, nil
 }

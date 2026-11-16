@@ -128,7 +128,15 @@ Set `discovery.gcp.project` to a project ID or number to enable GCP Compute
 Engine discovery. The plugin uses Application Default Credentials only; do
 not mount a service account key. On GKE, bind the chart's Kubernetes service
 account to a Google service account with Workload Identity and grant that
-account `roles/compute.networkViewer` on the project:
+account `roles/compute.networkViewer` on the project. It covers every call the
+plugin makes:
+
+| Permission | Used for |
+| --- | --- |
+| `resourcemanager.projects.get` | Resolve the project number for the source ID and resource authority |
+| `compute.instances.list` | Instances, network interfaces, tags, and service accounts (aggregated list) |
+| `compute.firewalls.list` | VPC firewall rules and their targets |
+| `compute.subnetworks.list` | Subnetwork CIDRs attached to network interfaces (aggregated list) |
 
 ```bash
 helm upgrade --install agentshield deploy/kubernetes \
