@@ -383,7 +383,9 @@ func tlsVerification(tls *backendTLS) (string, string) {
 	switch {
 	case tls.InsecureSkipVerify != nil && *tls.InsecureSkipVerify:
 		return "insecure-skip-verify", "permit"
-	case tls.WellKnownCACertificates != nil || tls.SecretRef != nil || tls.Files != nil:
+	// A secretRef or files block may hold only a client cert and key, so only
+	// a well-known CA set or an explicit root CA counts as verification.
+	case tls.WellKnownCACertificates != nil || (tls.Files != nil && tls.Files.RootCA != nil && *tls.Files.RootCA != ""):
 		return "ca-verified", "require"
 	default:
 		return "unspecified-ca", "unknown"

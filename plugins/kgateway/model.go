@@ -160,7 +160,7 @@ type backendConfigPolicy struct {
 
 type backendTLS struct {
 	SecretRef               *struct{} `json:"secretRef,omitempty"`
-	Files                   *struct{} `json:"files,omitempty"`
+	Files                   *tlsFiles `json:"files,omitempty"`
 	WellKnownCACertificates *string   `json:"wellKnownCACertificates,omitempty"`
 	InsecureSkipVerify      *bool     `json:"insecureSkipVerify,omitempty"`
 	Sni                     *string   `json:"sni,omitempty"`
@@ -274,4 +274,8 @@ type httpRoute struct {
 			} `json:"filters,omitempty"`
 		} `json:"rules,omitempty"`
 	} `json:"spec"`
+}
+
+type tlsFiles struct {
+	RootCA *string `json:"rootCA,omitempty"`
 }

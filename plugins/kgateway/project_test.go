@@ -275,12 +275,15 @@ func TestProjectBackendConfigPolicyTLSPosture(t *testing.T) {
 		"tls":             map[string]any{"wellKnownCACertificates": "System", "sni": "api.internal"},
 	})
 	timeouts := kgw(kindBackendConfig, "apps", "timeouts", map[string]any{"targetRefs": []any{targetRef("Service", "api")}})
-	result := mustProject(t, service, backendObject, insecure, verified, timeouts)
+	clientCert := kgw(kindBackendConfig, "apps", "client-cert", map[string]any{"targetRefs": []any{targetRef("Service", "api")}, "tls": map[string]any{"secretRef": map[string]any{"name": "client"}}})
+	clientFiles := kgw(kindBackendConfig, "apps", "client-files", map[string]any{"targetRefs": []any{targetRef("Service", "api")}, "tls": map[string]any{"files": map[string]any{"tlsCertificate": "/c.pem", "tlsKey": "/k.pem"}}})
+	rootCA := kgw(kindBackendConfig, "apps", "root-ca", map[string]any{"targetRefs": []any{targetRef("Service", "api")}, "tls": map[string]any{"files": map[string]any{"rootCA": "/ca.pem"}}})
+	result := mustProject(t, service, backendObject, insecure, verified, timeouts, clientCert, clientFiles, rootCA)
 
 	for _, test := range []struct {
 		policy, target *unstructured.Unstructured
 		effect         string
-	}{{insecure, backendObject, "permit"}, {verified, service, "require"}} {
+	}{{insecure, backendObject, "permit"}, {verified, service, "require"}, {clientCert, service, "unknown"}, {clientFiles, service, "unknown"}, {rootCA, service, "require"}} {
 		edges := relationshipsBetween(result.Input, test.target, graph.PredicateGovernedBy, claimOf(test.policy))
 		if len(edges) != 1 {
 			t.Fatalf("%s edges = %#v", test.policy.GetName(), edges)
@@ -311,7 +314,13 @@ func TestProjectDirectResponseAndGatewayService(t *testing.T) {
 	byClass := gatewayObject("kgateway-system", "public", "kgateway")
 	byGateway := gatewayObject("kgateway-system", "private", "kgateway")
 	byGateway.Object["spec"].(map[string]any)["infrastructure"] = map[string]any{"parametersRef": map[string]any{"group": kgatewayGroup, "kind": kindGatewayParams, "name": "internal"}}
-	result := mustProject(t, deny, route, class, classDefault, internal, byClass, byGateway)
+	replicasOnly := kgw(kindGatewayParams, "kgateway-system", "replicas-only", map[string]any{"kube": map[string]any{"deployment": map[string]any{"replicas": int64(2)}}})
+	inherits := gatewayObject("kgateway-system", "inherits", "kgateway")
+	inherits.Object["spec"].(map[string]any)["infrastructure"] = map[string]any{"parametersRef": map[string]any{"group": kgatewayGroup, "kind": kindGatewayParams, "name": "replicas-only"}}
+	nodePort := kgw(kindGatewayParams, "kgateway-system", "node-port", map[string]any{"kube": map[string]any{"service": map[string]any{"type": "NodePort"}}})
+	byNodePort := gatewayObject("kgateway-system", "node-port", "kgateway")
+	byNodePort.Object["spec"].(map[string]any)["infrastructure"] = map[string]any{"parametersRef": map[string]any{"group": kgatewayGroup, "kind": kindGatewayParams, "name": "node-port"}}
+	result := mustProject(t, deny, route, class, classDefault, internal, byClass, byGateway, replicasOnly, inherits, nodePort, byNodePort)
 
 	facet, found := facetOf(result.Input, route, "kgateway-direct-response")
 	if !found || facet.Attributes["kgateway/direct-response-rules"] != "1" || facet.Attributes["kgateway/direct-response-statuses"] != `["403"]` || len(facet.EvidenceIDs) != 2 {
@@ -323,9 +332,15 @@ func TestProjectDirectResponseAndGatewayService(t *testing.T) {
 	for _, test := range []struct {
 		gateway        *unstructured.Unstructured
 		effect, source string
-	}{{byClass, "external-addressable", "gatewayclass"}, {byGateway, "internal", "gateway"}} {
+		evidence       int
+	}{
+		{byClass, "external-addressable", "gatewayclass", 3},
+		{byGateway, "internal", "gateway", 4},
+		{inherits, "external-addressable", "gatewayclass", 4},
+		{byNodePort, "external-addressable", "gateway", 4},
+	} {
 		facet, found := facetOf(result.Input, test.gateway, "kgateway-gateway-service")
-		if !found || facet.Attributes["kgateway/parameters-source"] != test.source {
+		if !found || facet.Attributes["kgateway/parameters-source"] != test.source || len(facet.EvidenceIDs) != test.evidence {
 			t.Fatalf("%s service facet = %#v", test.gateway.GetName(), facet)
 		}
 		if semantics := mustSemantics(t, facet.Attributes); semantics.Effect != test.effect || semantics.Class != graph.SecurityClassExposure {

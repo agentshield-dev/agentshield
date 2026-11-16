@@ -233,9 +233,10 @@ func (p *projection) projectGatewayExtensions() error {
 }
 
 // projectGatewayParameters emits each GatewayParameters and, for a Gateway
-// that resolves one, the declared proxy Service type as an exposure facet.
-// The Gateway reference wins over the GatewayClass reference; field-level
-// merging of the two is not modeled.
+// that resolves any, the effective proxy Service type as an exposure facet.
+// kgateway merges Gateway-level parameters over GatewayClass defaults field by
+// field, so an explicit Gateway Service type wins and an unset one falls back
+// to the class value.
 func (p *projection) projectGatewayParameters() error {
 	serviceTypes := make(map[string]string)
 	for _, observation := range p.byKind[kindGatewayParams] {
@@ -258,65 +259,95 @@ func (p *projection) projectGatewayParameters() error {
 		if err != nil {
 			return fmt.Errorf("decode Gateway %q: %w", observation.Key, err)
 		}
-		parameters, source, found, evidence := p.gatewayParametersFor(observation, decoded.Value)
-		if !found {
+		layers := p.gatewayParameterLayers(observation, decoded.Value)
+		if layers.gateway == nil && layers.class == nil {
 			continue
 		}
-		serviceType := serviceTypes[parameters.Key]
-		effect := "unknown"
-		switch serviceType {
-		case "LoadBalancer":
-			effect = "external-addressable"
-		case "ClusterIP":
-			effect = "internal"
+		serviceType, source := "unset", "none"
+		var names []string
+		var objects []ObservedObject
+		if layers.class != nil {
+			if value := serviceTypes[layers.class.Key]; value != "unset" {
+				serviceType, source = value, "gatewayclass"
+			}
+			names = append(names, projectkit.DisplayName(layers.class.Object))
+			objects = append(objects, *layers.class, *layers.classObject)
+		}
+		if layers.gateway != nil {
+			if value := serviceTypes[layers.gateway.Key]; value != "unset" {
+				serviceType, source = value, "gateway"
+			}
+			names = append(names, projectkit.DisplayName(layers.gateway.Object))
+			objects = append(objects, *layers.gateway)
 		}
 		facet, err := graph.WithSecuritySemantics(map[string]string{
 			"kgateway/service-type":        serviceType,
 			"kgateway/parameters-source":   source,
-			"kgateway/gateway-parameters":  projectkit.DisplayName(parameters.Object),
+			"kgateway/gateway-parameters":  projectkit.MustCanonicalJSON(names),
 			"kgateway/exposure-limitation": "proxy-service-only",
 		}, graph.SecuritySemantics{
 			Version: graph.SecuritySemanticsV1, Class: graph.SecurityClassExposure, Domain: graph.SecurityDomainNetworkAccess,
-			State: graph.SecurityStateDeclared, Effect: effect, Scope: "gateway", Direction: "ingress", Coverage: "partial",
+			State: graph.SecurityStateDeclared, Effect: serviceTypeEffect(serviceType), Scope: "gateway", Direction: "ingress", Coverage: "partial",
 			ConfigurationDigest: projectkit.SecurityDigest(map[string]string{"serviceType": serviceType, "source": source}),
 		})
 		if err != nil {
 			return fmt.Errorf("Gateway %s service semantics: %w", projectkit.DisplayName(observation.Object), err)
 		}
-		p.addFacet(observation, "kgateway-gateway-service", "service-type", facet, "kgateway.gateway.service", append(evidence, parameters)...)
+		p.addFacet(observation, "kgateway-gateway-service", "service-type", facet, "kgateway.gateway.service", objects...)
 	}
 	return nil
 }
 
-func (p *projection) gatewayParametersFor(observation ObservedObject, value gateway) (ObservedObject, string, bool, []ObservedObject) {
+// serviceTypeEffect matches the Kubernetes projector: LoadBalancer and
+// NodePort are reachable through external addresses.
+func serviceTypeEffect(serviceType string) string {
+	switch serviceType {
+	case "LoadBalancer", "NodePort":
+		return "external-addressable"
+	case "ClusterIP":
+		return "internal"
+	default:
+		return "unknown"
+	}
+}
+
+type parameterLayers struct {
+	gateway     *ObservedObject
+	class       *ObservedObject
+	classObject *ObservedObject
+}
+
+func (p *projection) gatewayParameterLayers(observation ObservedObject, value gateway) parameterLayers {
+	var layers parameterLayers
 	if infrastructure := value.Spec.Infrastructure; infrastructure != nil && infrastructure.ParametersRef != nil {
 		reference := infrastructure.ParametersRef
 		if reference.Group == kgatewayGroup && reference.Kind == kindGatewayParams {
-			parameters, found := p.lookup(kindGatewayParams, observation.Object.GetNamespace(), reference.Name)
-			if found {
-				return parameters, "gateway", true, nil
+			if parameters, found := p.lookup(kindGatewayParams, observation.Object.GetNamespace(), reference.Name); found {
+				layers.gateway = &parameters
+			} else {
+				p.diagnose(observation, "gateway-parameters-unresolved", "GatewayParameters "+observation.Object.GetNamespace()+"/"+reference.Name+" was not observed")
 			}
-			p.diagnose(observation, "gateway-parameters-unresolved", "GatewayParameters "+observation.Object.GetNamespace()+"/"+reference.Name+" was not observed")
 		}
 	}
 	class, found := p.lookup("GatewayClass", "", value.Spec.GatewayClassName)
 	if !found {
-		return ObservedObject{}, "", false, nil
+		return layers
 	}
 	decoded, err := kubernetesapi.Decode[gatewayClass](class.Object)
 	if err != nil || decoded.Value.Spec.ParametersRef == nil {
-		return ObservedObject{}, "", false, nil
+		return layers
 	}
 	reference := decoded.Value.Spec.ParametersRef
 	if reference.Group != kgatewayGroup || reference.Kind != kindGatewayParams {
-		return ObservedObject{}, "", false, nil
+		return layers
 	}
 	parameters, found := p.lookup(kindGatewayParams, reference.Namespace, reference.Name)
 	if !found {
 		p.diagnose(observation, "gateway-parameters-unresolved", "GatewayParameters "+reference.Namespace+"/"+reference.Name+" was not observed")
-		return ObservedObject{}, "", false, nil
+		return layers
 	}
-	return parameters, "gatewayclass", true, []ObservedObject{class}
+	layers.class, layers.classObject = &parameters, &class
+	return layers
 }
 
 // canonicalHost lowercases a static Backend host and rejects anything that
