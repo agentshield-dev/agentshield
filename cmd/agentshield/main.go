@@ -451,8 +451,9 @@ func newAPIServer(config options, store *state.Store, manager *discovery.Manager
 		log.Printf("rule review API enabled on non-loopback listener %q without authentication", config.listen)
 	}
 	rules := api.WithRules(store, loopback || config.ruleReviewAPI)
+	plugins := api.WithPlugins(compiledInDescriptors()...)
 	if manager == nil || !loopback {
-		apiServer, err := api.NewServer(store, otlpReceiver, api.WithLoopbackHostCheck(loopback), rules)
+		apiServer, err := api.NewServer(store, otlpReceiver, api.WithLoopbackHostCheck(loopback), rules, plugins)
 		if manager != nil {
 			log.Printf("live remediation API disabled on non-loopback listener %q", config.listen)
 		}
@@ -465,7 +466,7 @@ func newAPIServer(config options, store *state.Store, manager *discovery.Manager
 	if err != nil {
 		return nil, err
 	}
-	return api.NewServerWithRemediations(store, otlpReceiver, executor, rules)
+	return api.NewServerWithRemediations(store, otlpReceiver, executor, rules, plugins)
 }
 
 // detectionServices are the detection components. All are nil unless

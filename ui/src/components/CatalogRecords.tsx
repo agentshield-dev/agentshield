@@ -6,7 +6,7 @@ import type {
 } from '@/api/types';
 import { DetailRows } from '@/components/DetailRows';
 import { useGraph } from '@/lib/graph-context';
-import { allEvidence, label, list, securitySemantics } from '@/lib/model';
+import { allEvidence, displayLabel, label, list, securitySemantics } from '@/lib/model';
 
 function Provenance({ assertions }: { assertions: List<AssertionBase> }) {
 	const items = list(assertions);
@@ -81,7 +81,7 @@ export function ResourceRecord({
 							key={finding.id}
 						>
 							<span>
-								<strong>{finding.summary || finding.category}</strong>
+								<strong>{finding.summary || displayLabel(finding.category)}</strong>
 								<small>
 									{finding.severity} · {finding.status}
 								</small>

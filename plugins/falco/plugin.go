@@ -58,7 +58,7 @@ func New(config Config) (*Plugin, error) {
 // introduces no identity scheme; its claims use the Kubernetes and core
 // ProcessClass schemes.
 func Descriptor() discovery.Descriptor {
-	return discovery.Descriptor{ID: PluginID, Version: "0.1.0", Description: "Falco runtime-security alert telemetry"}
+	return discovery.Descriptor{ID: PluginID, Version: "0.1.0", Description: "Falco runtime-security alert telemetry", Icon: "falco"}
 }
 
 // Descriptor implements [discovery.Plugin].

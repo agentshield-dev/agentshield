@@ -5,12 +5,13 @@ import {
 	Network,
 	RefreshCw,
 	ShieldCheck,
-	TriangleAlert
+	TriangleAlert,
+	X
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { type ApiState, useApi } from '@/api/client';
-import type { GraphRecord } from '@/api/types';
+import type { GraphRecord, PluginsResponse } from '@/api/types';
 import agentShieldLogo from '@/assets/agentshield-logo-light.svg';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { GraphProvider } from '@/lib/graph-context';
@@ -29,9 +30,11 @@ const titles: Record<View, string> = {
 	graph: 'Environment graph'
 };
 
-// Reports whether the live stream is reconnecting, and refreshes when it announces a new graph.
-function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): boolean {
-	const [reconnecting, setReconnecting] = useState(false);
+type LiveState = 'connecting' | 'live' | 'reconnecting';
+
+// Reports the live stream state, and refreshes when it announces a new graph.
+function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): LiveState {
+	const [state, setState] = useState<LiveState>('connecting');
 	const latest = useRef(loaded);
 	useEffect(() => {
 		latest.current = loaded;
@@ -39,8 +42,8 @@ function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): bo
 
 	useEffect(() => {
 		const events = new EventSource('/api/v1/events');
-		events.addEventListener('open', () => setReconnecting(false));
-		events.addEventListener('error', () => setReconnecting(true));
+		events.addEventListener('open', () => setState('live'));
+		events.addEventListener('error', () => setState('reconnecting'));
 		events.addEventListener('graph', event => {
 			const current = latest.current;
 			// An initial load in flight already fetches the newest graph.
@@ -51,7 +54,7 @@ function useLiveUpdates(loaded: ApiState<GraphRecord>, onChange: () => void): bo
 		return () => events.close();
 	}, [onChange]);
 
-	return reconnecting;
+	return state;
 }
 
 function NavLink({
@@ -108,7 +111,7 @@ function followRoute(event: MouseEvent) {
 	flushSync(() => navigate(destination.hash));
 }
 
-export function App() {
+export function App({ demo = false }: { demo?: boolean }) {
 	useEffect(() => {
 		document.addEventListener('click', followRoute);
 		return () => document.removeEventListener('click', followRoute);
@@ -117,6 +120,13 @@ export function App() {
 	const route = useRoute();
 	const { view, parts } = route;
 	const [navOpen, setNavOpen] = useState(false);
+	const menuButton = useRef<HTMLButtonElement>(null);
+	const closeButton = useRef<HTMLButtonElement>(null);
+	const restoreMenuFocus = useRef(false);
+	const closeNavigation = useCallback(() => {
+		restoreMenuFocus.current = true;
+		setNavOpen(false);
+	}, []);
 	const [shownRoute, setShownRoute] = useState(route);
 	// Bumping a key refetches: viewKey for the per-view APIs, graphKey for the shared graph.
 	const [viewKey, setViewKey] = useState(0);
@@ -124,19 +134,53 @@ export function App() {
 	const [pendingEntity, setPendingEntity] = useState<string | null>(null);
 	const [findingTotal, setFindingTotal] = useState(0);
 	const loaded = useApi<GraphRecord>('/api/v1/graph', graphKey);
+	const plugins = useApi<PluginsResponse>('/api/v1/plugins');
 	const [draftsToReview, setDraftsToReview] = useState(0);
 
 	const refreshAll = useCallback(() => {
 		setViewKey(key => key + 1);
 		setGraphKey(key => key + 1);
 	}, []);
-	const reconnecting = useLiveUpdates(loaded, refreshAll);
+	const liveState = useLiveUpdates(loaded, refreshAll);
+	const reconnecting = liveState === 'reconnecting';
+	useEffect(() => {
+		const viewport = window.matchMedia('(max-width: 1040px)');
+		const closeDesktopDrawer = (event: MediaQueryListEvent) => {
+			if (!event.matches) setNavOpen(false);
+		};
+		viewport.addEventListener('change', closeDesktopDrawer);
+		return () => viewport.removeEventListener('change', closeDesktopDrawer);
+	}, []);
+	useEffect(() => {
+		if (navOpen || !restoreMenuFocus.current) return;
+		restoreMenuFocus.current = false;
+		menuButton.current?.focus();
+	}, [navOpen]);
+	useEffect(() => {
+		if (!navOpen) return;
+		const demoToolbar = document.querySelector<HTMLElement>('.demo-toolbar');
+		document.documentElement.classList.add('nav-modal-open');
+		demoToolbar?.setAttribute('inert', '');
+		const focusFrame = requestAnimationFrame(() => closeButton.current?.focus());
+		const close = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			closeNavigation();
+		};
+		window.addEventListener('keydown', close);
+		return () => {
+			cancelAnimationFrame(focusFrame);
+			document.documentElement.classList.remove('nav-modal-open');
+			demoToolbar?.removeAttribute('inert');
+			window.removeEventListener('keydown', close);
+		};
+	}, [navOpen, closeNavigation]);
 
-	// Navigating closes the mobile menu.
-	if (route !== shownRoute) {
+	useEffect(() => {
+		if (route === shownRoute) return;
 		setShownRoute(route);
-		setNavOpen(false);
-	}
+		if (!navOpen) return;
+		closeNavigation();
+	}, [route, shownRoute, navOpen, closeNavigation]);
 
 	// Manual reload refetches the full graph only on the graph view, where it is the main content.
 	function reload() {
@@ -149,25 +193,84 @@ export function App() {
 		navigate('graph');
 	}
 
-	const syncStatus = loaded.error
-		? 'Graph unavailable'
-		: loaded.data
-			? 'Graph synchronized'
-			: 'Connecting';
-	const liveLabel = reconnecting ? 'Reconnecting' : loaded.error ? 'API error' : 'Live';
+	const syncStatus = demo
+		? loaded.error
+			? 'Sample graph unavailable'
+			: reconnecting
+				? loaded.data
+					? 'Sample graph ready; updates reconnecting'
+					: 'Loading sample graph; updates reconnecting'
+				: liveState === 'connecting'
+					? loaded.data
+						? 'Sample graph loaded; updates connecting'
+						: 'Loading sample graph'
+					: loaded.data
+						? 'Sample graph ready'
+						: 'Loading sample graph'
+		: loaded.error
+			? 'Graph unavailable'
+			: reconnecting
+				? loaded.data
+					? 'Graph loaded; updates reconnecting'
+					: 'Connecting to graph updates'
+				: liveState === 'connecting'
+					? loaded.data
+						? 'Graph loaded; updates connecting'
+						: 'Connecting to graph updates'
+					: loaded.data
+						? 'Graph synchronized'
+						: 'Connecting';
+	const graphStatus = loaded.error
+		? 'error'
+		: liveState !== 'live'
+			? 'loading'
+			: loaded.data
+				? 'healthy'
+				: 'loading';
+	const liveStatus = loaded.error
+		? 'error'
+		: reconnecting
+			? 'reconnecting'
+			: liveState === 'live'
+				? 'healthy'
+				: 'loading';
+	const liveLabel = demo
+		? loaded.error
+			? 'Demo error'
+			: reconnecting
+				? 'Demo reconnecting'
+				: liveState === 'live'
+					? 'Demo ready'
+					: 'Connecting demo'
+		: loaded.error
+			? 'Connection issue'
+			: reconnecting
+				? 'Reconnecting'
+				: liveState === 'live'
+					? 'Live'
+					: 'Connecting';
 
 	return (
 		<div className={navOpen ? 'app-shell nav-open' : 'app-shell'}>
-			<aside className="sidebar" aria-label="Primary navigation">
+			<aside id="primary-navigation" className="sidebar" aria-label="Primary navigation">
 				<div className="sidebar-content">
+					<button
+						ref={closeButton}
+						className="bare-button sidebar-close"
+						type="button"
+						aria-label="Close navigation"
+						onClick={closeNavigation}
+					>
+						<X size={18} aria-hidden="true" />
+					</button>
 					<a className="brand" href="#overview" aria-label="AgentShield overview">
 						<img src={agentShieldLogo} alt="" />
 					</a>
 					<div className="workspace-switcher">
 						<span className="workspace-icon">AS</span>
 						<span>
-							<strong>Current environment</strong>
-							<small>Live graph</small>
+							<strong>{demo ? 'Sample environment' : 'Current environment'}</strong>
+							<small>{demo ? 'Simulated graph' : 'Live graph'}</small>
 						</span>
 					</div>
 					<nav>
@@ -192,38 +295,43 @@ export function App() {
 						</NavLink>
 					</nav>
 					<div className="system-status">
-						<span className="status-dot" />
+						<span className={`status-dot ${graphStatus}`} aria-hidden="true" />
 						<div>
-							<strong>Graph service</strong>
+							<strong>{demo ? 'Demo data' : 'Graph service'}</strong>
 							<small>{syncStatus}</small>
 						</div>
 					</div>
-					<div className="environment">
-						<span /> agentshield <b>v0</b>
-					</div>
 				</div>
 			</aside>
+			<button
+				className="nav-backdrop"
+				type="button"
+				tabIndex={-1}
+				aria-label="Dismiss navigation"
+				onClick={closeNavigation}
+			/>
 
-			<main className="main-shell">
+			<main className="main-shell" inert={navOpen}>
 				<header className="topbar">
 					<div className="topbar-left">
 						<button
+							ref={menuButton}
 							className="bare-button mobile-menu"
 							type="button"
 							aria-label="Toggle navigation"
+							aria-controls="primary-navigation"
+							aria-expanded={navOpen}
 							onClick={() => setNavOpen(open => !open)}
 						>
 							<Menu size={18} aria-hidden="true" />
 						</button>
 						<div className="breadcrumb">
-							<span>agentshield</span>
-							<i>/</i>
 							<strong>{titles[view]}</strong>
 						</div>
 					</div>
 					<div className="top-actions">
-						<span className="live-status">
-							<i />
+						<span className={`live-status ${liveStatus}`} role="status" aria-live="polite">
+							<i aria-hidden="true" />
 							<span>{liveLabel}</span>
 						</span>
 						<ThemeToggle />
@@ -236,15 +344,15 @@ export function App() {
 						>
 							<RefreshCw size={16} aria-hidden="true" />
 						</button>
-						<span className="avatar" aria-hidden="true">
-							AS
-						</span>
 					</div>
 				</header>
 
 				<div className="content">
-					<GraphProvider record={loaded.data}>
-						<Overview active={view === 'overview'} refresh={viewKey} />
+					<GraphProvider
+						record={loaded.data}
+						plugins={plugins.data?.plugins ?? plugins.latest?.plugins}
+					>
+						<Overview active={view === 'overview'} refresh={viewKey} demo={demo} />
 						<Findings
 							active={view === 'findings'}
 							refresh={viewKey}

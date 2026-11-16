@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { FindingDetail } from '@/components/FindingDetail';
 import { MetricCards } from '@/components/MetricCards';
 import { Pagination } from '@/components/Pagination';
-import { formatTime, list } from '@/lib/model';
+import { displayLabel, formatTime, list } from '@/lib/model';
 import { useCursorPager } from '@/lib/pager';
 import { navigate } from '@/lib/route';
 
@@ -152,12 +152,8 @@ export function Findings({ active, refresh, selectedID, onTotal, onViewGraph }: 
 		<section className="page-view findings-page" aria-label="Security findings" hidden={!active}>
 			<header className="page-header">
 				<div>
-					<span className="eyebrow">Prioritized risk</span>
 					<h1>Findings</h1>
-					<p>
-						Evidence-backed risks from the current environment graph, ordered by recency and ready
-						for investigation.
-					</p>
+					<p>Review risks, supporting evidence, and available remediations.</p>
 				</div>
 			</header>
 			<MetricCards label="Finding summary" metrics={metrics} />
@@ -219,7 +215,7 @@ export function Findings({ active, refresh, selectedID, onTotal, onViewGraph }: 
 				<section className="finding-list-shell" aria-label="Finding list">
 					<div className="panel-head">
 						<div>
-							<h2>Ranked findings</h2>
+							<h2>Findings</h2>
 							<p>
 								{error
 									? 'Query failed'
@@ -235,9 +231,7 @@ export function Findings({ active, refresh, selectedID, onTotal, onViewGraph }: 
 								{error.message}
 							</EmptyState>
 						) : !data ? (
-							<EmptyState title="Loading findings…">
-								Querying the current findings index.
-							</EmptyState>
+							<EmptyState title="Loading findings…">Loading current findings.</EmptyState>
 						) : items.length ? (
 							items.map(item => (
 								<button
@@ -249,10 +243,10 @@ export function Findings({ active, refresh, selectedID, onTotal, onViewGraph }: 
 									<i className={`severity-marker ${item.severity}`} />
 									<span>
 										<span className="finding-row-top">
-											<strong>{item.summary || item.category}</strong>
+											<strong>{item.summary || displayLabel(item.category)}</strong>
 											<span className={`badge ${item.status}`}>{item.status}</span>
 										</span>
-										<p>{item.category}</p>
+										<p>{displayLabel(item.category)}</p>
 										<small>
 											{item.severity} · {formatTime(item.createdAt)}
 										</small>

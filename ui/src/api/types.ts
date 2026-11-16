@@ -97,6 +97,18 @@ export interface GraphRecord {
 	snapshot: Snapshot;
 }
 
+export interface PluginMetadata {
+	id: string;
+	version: string;
+	description: string;
+	icon: string;
+	ownedApiGroups?: List<string>;
+}
+
+export interface PluginsResponse {
+	plugins: List<PluginMetadata>;
+}
+
 export interface SecurityPort {
 	protocol: string;
 	port: number;

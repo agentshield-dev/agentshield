@@ -31,6 +31,8 @@ const deepLink = (route: string, id: string) => `#${route}/${encodeURIComponent(
 const resources = list(dataset.snapshot.resources);
 const count = (kind: string) => resources.filter(resource => resource.kind === kind).length;
 const rows = (root: HTMLElement, selector: string) => root.querySelectorAll(selector);
+const iconTitles = (row: Element) =>
+	[...row.querySelectorAll<HTMLImageElement>('.plugin-icons img')].map(icon => icon.title);
 
 export const Overview: Story = {
 	...at('#overview'),
@@ -177,12 +179,12 @@ export const FindingWithRemediations: Story = {
 		await canvas.findByRole('heading', { name: withProposals.summary, level: 2 }, wait);
 		await waitFor(() => expect(rows(canvasElement, '.remediation-item')).toHaveLength(2), wait);
 		const [select] = await canvas.findAllByLabelText(
-			'Action for network.declare-ingress-isolation',
+			'Action for Isolate inbound traffic',
 			{},
 			wait
 		);
-		await expect(select).toHaveTextContent('kubernetes · network-policy/v1 · demo-cluster');
-		await expect(select).toHaveTextContent('cilium · cilium-network-policy/v1 · demo-cluster');
+		await expect(select).toHaveTextContent('Kubernetes NetworkPolicy · demo-cluster');
+		await expect(select).toHaveTextContent('Cilium NetworkPolicy · demo-cluster');
 	}
 };
 
@@ -198,18 +200,18 @@ export const ApproveRemediation: Story = {
 		const dialog = within(document.body);
 		// Approval ends in a graph change, which the app ignores until its first graph load lands.
 		await canvas.findByText('Graph synchronized', {}, wait);
-		await userEvent.click(await canvas.findByRole('button', { name: 'Prepare' }, wait));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Preview change' }, wait));
 
 		const sheet = within(await dialog.findByRole('dialog', {}, wait));
-		await expect(sheet.getByText('Explicit approval')).toBeVisible();
-		await expect(sheet.getByText('network.declare-ingress-isolation')).toBeVisible();
+		await expect(sheet.getByText('Review change')).toBeVisible();
+		await expect(sheet.getByText('Isolate inbound traffic')).toBeVisible();
 		await userEvent.click(sheet.getByRole('button', { name: 'Approve and apply' }));
 		const item = within(canvasElement.querySelector('.remediation-item') as HTMLElement);
 		await waitFor(
 			() => expect(item.getByRole('status')).toHaveTextContent('Applied and verified.'),
 			wait
 		);
-		await expect(item.queryByRole('button', { name: 'Prepare' })).toBeNull();
+		await expect(item.queryByRole('button', { name: 'Preview change' })).toBeNull();
 		await expect(item.getByText('Applied', { exact: true })).toBeVisible();
 
 		// Discovery then observes the new policy and the finding is invalidated by the graph change.
@@ -253,7 +255,37 @@ export const Catalog: Story = {
 		const canvas = within(canvasElement);
 		await waitFor(() => expect(rows(canvasElement, '.catalog-row')).toHaveLength(25), wait);
 		await canvas.findByRole('heading', { name: /Related findings/ }, wait);
+		for (const [name, kind, owner] of [
+			[
+				'payments/fraud-ingress',
+				'cilium/ciliumnetworkpolicy',
+				'Cilium CNI state and Hubble flow semantics'
+			],
+			[
+				'payments/stripe-api',
+				'istio/serviceentry',
+				'Istio registry, routing, policy, mTLS, ambient, and waypoint semantics'
+			],
+			[
+				'payments/default',
+				'istio/peerauthentication',
+				'Istio registry, routing, policy, mTLS, ambient, and waypoint semantics'
+			],
+			['shop/frontend', 'kubernetes/service', 'Kubernetes inventory and topology']
+		] as const) {
+			await userEvent.clear(canvas.getByLabelText('Search catalog'));
+			await userEvent.type(canvas.getByLabelText('Search catalog'), name);
+			await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
+			await waitFor(() => {
+				const row = [...rows(canvasElement, '.catalog-row')].find(
+					item => item.textContent?.includes(name) && item.textContent?.includes(`${kind} ·`)
+				);
+				expect(row).toBeDefined();
+				expect(iconTitles(row as Element)).toEqual([owner]);
+			}, wait);
+		}
 
+		await userEvent.clear(canvas.getByLabelText('Search catalog'));
 		await userEvent.type(canvas.getByLabelText('Search catalog'), 'orders');
 		await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
 		await waitFor(() => {
@@ -387,7 +419,7 @@ export const FreshInstall: Story = {
 		).not.toHaveLength(0);
 		const navigation = within(canvas.getByRole('complementary', { name: 'Primary navigation' }));
 		await expect(await navigation.findByText('Graph unavailable', {}, wait)).toBeVisible();
-		await expect(await canvas.findByText('API error', {}, wait)).toBeVisible();
+		await expect(await canvas.findByText('Connection issue', {}, wait)).toBeVisible();
 	}
 };
 
@@ -411,7 +443,7 @@ export const ApiFailure: Story = {
 		await expect(
 			canvas.getByText('query findings: internal server error; see the server log')
 		).toBeVisible();
-		await expect(await canvas.findByText('API error', {}, wait)).toBeVisible();
+		await expect(await canvas.findByText('Connection issue', {}, wait)).toBeVisible();
 	}
 };
 
@@ -428,6 +460,8 @@ export const Reconnecting: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Reconnecting', {}, wait);
 		const navigation = within(canvas.getByRole('complementary', { name: 'Primary navigation' }));
-		await expect(await navigation.findByText('Graph synchronized', {}, wait)).toBeVisible();
+		await expect(
+			await navigation.findByText('Graph loaded; updates reconnecting', {}, wait)
+		).toBeVisible();
 	}
 };

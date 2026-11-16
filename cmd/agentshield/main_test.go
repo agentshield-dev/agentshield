@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -164,7 +165,18 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 		if _, found := descriptors[descriptor.ID]; found {
 			t.Fatalf("duplicate compiled-in plugin %q", descriptor.ID)
 		}
+		if descriptor.Icon == "" {
+			t.Fatalf("compiled-in plugin %q has no icon", descriptor.ID)
+		}
 		descriptors[descriptor.ID] = descriptor
+	}
+	for pluginID, want := range map[string][]string{
+		ciliumplugin.PluginID: {"cilium.io"},
+		istioplugin.PluginID:  {"networking.istio.io", "security.istio.io"},
+	} {
+		if got := descriptors[pluginID].OwnedAPIGroups; !slices.Equal(got, want) {
+			t.Fatalf("compiled-in plugin %q owns API groups %v, want %v", pluginID, got, want)
+		}
 	}
 	config := options{
 		kubernetes:   kubernetesplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},

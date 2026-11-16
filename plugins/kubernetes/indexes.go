@@ -95,7 +95,7 @@ func podLabelKey(namespace, key, value string) string {
 	return namespace + "\x00" + key + "\x00" + value
 }
 
-func isIstioOwned(item *unstructured.Unstructured) bool {
+func isSemanticPluginOwned(item *unstructured.Unstructured) bool {
 	group := strings.SplitN(item.GetAPIVersion(), "/", 2)[0]
-	return group == "security.istio.io" || group == "networking.istio.io"
+	return group == "cilium.io" || group == "security.istio.io" || group == "networking.istio.io"
 }

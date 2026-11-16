@@ -77,9 +77,8 @@ func Descriptor() discovery.Descriptor {
 	}
 	slices.Sort(consumes[1:])
 	return discovery.Descriptor{
-		ID: PluginID, Version: "0.1.0", Description: "Cilium CNI state and Hubble flow semantics",
-		Consumes:  consumes,
-		Publishes: []string{CollectionProjection},
+		ID: PluginID, Version: "0.1.1", Description: "Cilium CNI state and Hubble flow semantics", Icon: "cilium",
+		OwnedAPIGroups: []string{"cilium.io"}, Consumes: consumes, Publishes: []string{CollectionProjection},
 	}
 }
 

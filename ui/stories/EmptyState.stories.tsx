@@ -7,7 +7,7 @@ const meta = {
 	component: EmptyState,
 	args: {
 		title: 'No active findings',
-		children: 'The current findings index has no active records.'
+		children: 'No active findings were reported for the current graph.'
 	}
 } satisfies Meta<typeof EmptyState>;
 

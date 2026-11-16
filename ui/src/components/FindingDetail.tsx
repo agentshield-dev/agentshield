@@ -1,7 +1,7 @@
 import type { Finding } from '@/api/types';
 import { RemediationItem } from '@/components/Remediation';
 import { useGraph } from '@/lib/graph-context';
-import { formatTime, initials, label, list } from '@/lib/model';
+import { displayLabel, formatTime, initials, label, list } from '@/lib/model';
 
 interface FindingDetailProps {
 	finding: Finding;
@@ -22,15 +22,15 @@ export function FindingDetail({ finding, active, refresh, onViewGraph }: Finding
 		<>
 			<header className="finding-title">
 				<div>
-					<span className="eyebrow">{finding.category}</span>
+					<span className="eyebrow">{displayLabel(finding.category)}</span>
 					<h2>{finding.summary || 'Security finding'}</h2>
 				</div>
 				<span className={`badge ${finding.status}`}>{finding.status}</span>
 			</header>
 			<p className="finding-summary">
 				{ruleFinding
-					? 'An active detection rule matched the graph change below; no model was involved.'
-					: 'This finding is grounded in the graph snapshot and evidence references below.'}
+					? 'A deterministic detection rule matched this graph change.'
+					: 'A model produced this finding from the graph snapshot and evidence references below.'}
 			</p>
 			{invalidated ? (
 				<div className="stale-note">
@@ -46,7 +46,7 @@ export function FindingDetail({ finding, active, refresh, onViewGraph }: Finding
 				</div>
 				<div>
 					<dt>Source</dt>
-					<dd>{ruleFinding ? 'Detection rule' : 'Agentic investigation'}</dd>
+					<dd>{ruleFinding ? 'Detection rule' : 'Model-assisted investigation'}</dd>
 				</div>
 				{ruleFinding ? (
 					<div>

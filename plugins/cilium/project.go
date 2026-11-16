@@ -110,6 +110,7 @@ func projectPolicy(scope ProjectionContext, index objectIndex, item indexedObjec
 	if len(rules) == 0 {
 		return fmt.Errorf("project Cilium policy %s: spec or specs is required", projectkit.DisplayName(item.Object))
 	}
+	result.Input.Resources = append(result.Input.Resources, resource(scope.SourceID, "cilium.policy.resource", item, "cilium/"+strings.ToLower(item.Object.GetKind()), policyResourceAttributes(item.Object)))
 	policyScope := "namespace"
 	if item.Object.GetKind() == "CiliumClusterwideNetworkPolicy" {
 		policyScope = "cluster"
@@ -182,6 +183,23 @@ func projectPolicy(scope ProjectionContext, index objectIndex, item indexedObjec
 		"cilium/scope":          policyScope,
 	}, item.EventID))
 	return nil
+}
+
+func policyResourceAttributes(item *unstructured.Unstructured) map[string]string {
+	attributes := map[string]string{
+		"kubernetes/api-version": item.GetAPIVersion(),
+		"kubernetes/name":        item.GetName(),
+	}
+	if namespace := item.GetNamespace(); namespace != "" {
+		attributes["kubernetes/namespace"] = namespace
+	}
+	for key, value := range item.GetLabels() {
+		attributes["kubernetes/label/"+key] = value
+	}
+	if spec, found := item.Object["spec"]; found {
+		attributes["kubernetes/spec-sha256"] = projectkit.Digest(spec)
+	}
+	return attributes
 }
 
 func projectEndpoint(scope ProjectionContext, index objectIndex, item indexedObject, result *ProjectionResult) error {
@@ -366,6 +384,10 @@ func projectNode(scope ProjectionContext, index objectIndex, item indexedObject,
 
 func facet(sourceID, ruleID string, resource graph.IdentityClaim, kind, key string, attributes map[string]string, evidence ...string) graph.FacetAssertion {
 	return graph.FacetAssertion{Resource: resource, Kind: kind, Key: key, Attributes: attributes, PluginID: PluginID, SourceID: sourceID, RuleID: ruleID, EvidenceIDs: sortedUnique(evidence)}
+}
+
+func resource(sourceID, ruleID string, item indexedObject, kind string, attributes map[string]string) graph.ResourceAssertion {
+	return graph.ResourceAssertion{Claim: item.claim, Kind: kind, DisplayName: projectkit.DisplayName(item.Object), Attributes: attributes, PluginID: PluginID, SourceID: sourceID, RuleID: ruleID, EvidenceIDs: sortedUnique([]string{item.EventID})}
 }
 
 func relationship(sourceID, ruleID string, subject graph.IdentityClaim, predicate graph.Predicate, object graph.IdentityClaim, qualifier string, properties map[string]string, evidence ...string) graph.RelationshipAssertion {

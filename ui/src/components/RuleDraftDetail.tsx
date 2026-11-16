@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { errorMessage, postJSON, useApi } from '@/api/client';
-import type { RuleDraft, RuleDraftResponse, RuleDraftToolCall, RuleProposal } from '@/api/types';
+import type { RuleDraft, RuleDraftResponse, RuleProposal } from '@/api/types';
 import { EmptyState } from '@/components/EmptyState';
 import { useGraph } from '@/lib/graph-context';
-import { formatTime, isRecord, list } from '@/lib/model';
+import { formatTime, list } from '@/lib/model';
 import {
 	authoringPollMs,
 	draftBadge,
@@ -62,22 +62,22 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 		<dialog ref={dialog} className="approval-dialog" onClose={onClose} aria-label="Approve rules">
 			<form method="dialog" className="approval-sheet">
 				<header>
-					<span className="eyebrow">Explicit approval</span>
-					<h2>Activate {selected.size === 1 ? 'one rule' : `${selected.size} rules`}</h2>
+					<span className="eyebrow">Review rules</span>
+					<h2>Approve {selected.size === 1 ? 'one rule' : `${selected.size} rules`}</h2>
 				</header>
 				<dl className="detail-grid">
 					<dt>Resource</dt>
-					<dd>{graph.name(draft.resourceId)}</dd>
+					<dd>{graph.reference(draft.resourceId)}</dd>
 					<dt>Draft</dt>
 					<dd>#{draft.id}</dd>
 					<dt>Effect</dt>
 					<dd>
-						The rules leave shadow mode, and their matches become findings. They replace this
-						resource's previously approved rules.
+						Approval records the selected rules for the detector's next refresh; only later matches
+						can create findings. Selected rules replace this resource's currently approved rules.
 					</dd>
 				</dl>
-				<section className="approval-preview" aria-label="Select rules to activate">
-					<h3>Select rules to activate</h3>
+				<section className="approval-preview" aria-label="Select rules to approve">
+					<h3>Select rules to approve</h3>
 					<div className="rule-selection">
 						{rules.map(item => (
 							<label key={item.rule.id}>
@@ -119,20 +119,6 @@ function ApprovalDialog({ draft, proposal, onApproved, onClose }: ApprovalDialog
 		</dialog>,
 		document.body
 	);
-}
-
-function traceLine(call: RuleDraftToolCall): string {
-	const args = isRecord(call.arguments) ? call.arguments : {};
-	const detail =
-		call.name === 'add_rule'
-			? `${String(args.selector ?? '')} · ${String(args.expression ?? '')}`
-			: String(args.rationale ?? '');
-	const result = isRecord(call.result) ? call.result : {};
-	if (call.error) return `${call.name} · error: ${call.error}`;
-	if (call.name === 'add_rule' && result.added === false) {
-		return `${call.name} · rejected: ${String(result.error ?? '')} · ${detail}`;
-	}
-	return `${call.name} · ${detail}`;
 }
 
 interface RuleDraftDetailProps {
@@ -187,7 +173,6 @@ export function RuleDraftDetail({
 	const { draft, proposal } = response;
 	const state = draftState(draft);
 	const rules = list(proposal?.rules);
-	const trace = list(proposal?.toolCalls);
 	const approvedRuleIDs = new Set(list(proposal?.approvedRuleIds));
 
 	async function act(action: () => Promise<unknown>, done: string) {
@@ -216,27 +201,29 @@ export function RuleDraftDetail({
 			</header>
 			<p className="finding-summary">
 				{proposal?.rationale ||
-					(authoring
-						? 'The AI author has not finished this draft yet.'
-						: 'The author returned no rationale.')}
+					(authoring ? 'Authoring is in progress.' : 'No rationale available.')}
 			</p>
 			{(state === 'retrying' || state === 'failed') && draft.lastError ? (
 				<div className="stale-note">
-					<strong>{state === 'failed' ? 'Authoring gave up.' : 'Authoring failed.'}</strong>{' '}
-					{draft.lastError}
+					<strong>
+						{state === 'failed'
+							? 'Authoring stopped after repeated failures.'
+							: 'Authoring failed. A retry is scheduled.'}
+					</strong>{' '}
+					Check the server logs for details.
 				</div>
 			) : null}
 			{!draft.currentRevision ? (
 				<div className="stale-note">
-					<strong>Previous revision.</strong> This draft cannot be newly approved. An earlier
-					approval may remain active until the current revision is approved or the resource leaves
-					the graph.
+					<strong>Previous revision.</strong> This draft is read-only. Rules approved from an
+					earlier revision remain active until the current revision is approved or the resource
+					leaves the graph.
 				</div>
 			) : null}
 			<dl className="finding-meta">
 				<div>
 					<dt>Trigger</dt>
-					<dd>{draft.requestedBy ? `Requested by ${draft.requestedBy}` : 'New context'}</dd>
+					<dd>{draft.requestedBy ? 'Manual request' : 'New context'}</dd>
 				</div>
 				<div>
 					<dt>Requested</dt>
@@ -246,7 +233,7 @@ export function RuleDraftDetail({
 					<dt>{draft.reviewedAt ? 'Reviewed' : 'Completed'}</dt>
 					<dd>
 						{draft.reviewedAt
-							? `${formatTime(draft.reviewedAt)} by ${draft.reviewedBy}`
+							? formatTime(draft.reviewedAt)
 							: draft.completedAt
 								? formatTime(draft.completedAt)
 								: '—'}
@@ -276,15 +263,15 @@ export function RuleDraftDetail({
 						{state === 'queued'
 							? draft.requestedAt
 								? 'Requested; waiting for the authoring worker.'
-								: 'Waiting for the stabilization window. Author now skips the wait.'
+								: 'Waiting for the stabilization window. Choose Start now to skip the wait.'
 							: state === 'authoring'
-								? 'The AI author is adding rules…'
-								: 'The worker will retry this draft automatically. Author now retries it without waiting.'}
+								? 'A model is drafting rules…'
+								: 'A retry is scheduled. Choose Retry now to skip the retry delay.'}
 					</p>
 				) : state === 'failed' ? (
 					<p className="muted">
-						The worker stopped after {draft.attemptCount} attempt
-						{draft.attemptCount === 1 ? '' : 's'}. Author now retries it.
+						Authoring stopped after {draft.attemptCount} attempt
+						{draft.attemptCount === 1 ? '' : 's'}. Choose Retry now to try again.
 					</p>
 				) : rules.length ? (
 					rules.map(item => (
@@ -295,7 +282,7 @@ export function RuleDraftDetail({
 									<span className="badge">{item.rule.risk}</span>
 									{state === 'approved' && proposal?.approvedRuleIds ? (
 										<span className={approvedRuleIDs.has(item.rule.id) ? 'badge good' : 'badge'}>
-											{approvedRuleIDs.has(item.rule.id) ? 'active' : 'not approved'}
+											{approvedRuleIDs.has(item.rule.id) ? 'approved' : 'not approved'}
 										</span>
 									) : null}
 								</div>
@@ -307,7 +294,7 @@ export function RuleDraftDetail({
 						</article>
 					))
 				) : (
-					<p className="muted">The author abstained: no rule fits this resource.</p>
+					<p className="muted">No suitable rules were proposed for this resource.</p>
 				)}
 			</section>
 			<div className="remediation-actions">
@@ -329,7 +316,7 @@ export function RuleDraftDetail({
 						onClick={() =>
 							act(
 								() => postJSON(`/api/v1/rule-drafts/${draft.id}/review`, { decision: 'rejected' }),
-								'Rejected; this draft’s rules are no longer loaded.'
+								'Draft rejected. Detector refresh pending.'
 							)
 						}
 					>
@@ -343,41 +330,36 @@ export function RuleDraftDetail({
 					onClick={() =>
 						act(
 							() => requestRegeneration(draft.resourceId),
-							authoring || state === 'failed' ? 'Authoring requested.' : 'Regeneration requested.'
+							authoring || state === 'failed'
+								? 'Draft queued for authoring.'
+								: 'Draft queued for regeneration.'
 						)
 					}
 				>
-					{authoring || state === 'failed' ? 'Author now' : 'Regenerate'}
+					{state === 'failed' || state === 'retrying'
+						? 'Retry now'
+						: authoring
+							? 'Start now'
+							: 'Regenerate'}
 				</button>
 				<button
 					className="button secondary"
 					type="button"
 					onClick={() => onViewGraph(draft.resourceId)}
 				>
-					View resource
+					View in graph
 				</button>
 			</div>
 			<p className="remediation-status" role="status">
 				{status}
 			</p>
-			{trace.length ? (
-				<section className="record-section">
-					<h3>Authoring trace</h3>
-					<ul className="signal-list">
-						{trace.map((call, index) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: the trace is append-only and ordered.
-							<li key={index}>{traceLine(call)}</li>
-						))}
-					</ul>
-				</section>
-			) : null}
 			{approving && proposal ? (
 				<ApprovalDialog
 					draft={draft}
 					proposal={proposal}
 					onApproved={count => {
 						setStatus(
-							`Approved ${count} ${count === 1 ? 'rule' : 'rules'}; the selection now runs in active mode.`
+							`Approved ${count} ${count === 1 ? 'rule' : 'rules'}. Detector refresh pending.`
 						);
 						onChanged();
 						setPoll(value => value + 1);

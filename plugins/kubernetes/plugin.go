@@ -139,7 +139,7 @@ func (p *Plugin) Descriptor() agentshield.Descriptor {
 // collections and of the cluster-qualified Kubernetes identity scheme.
 func Descriptor() agentshield.Descriptor {
 	return agentshield.Descriptor{
-		ID: PluginID, Version: "0.1.0", Description: "Kubernetes inventory and topology",
+		ID: PluginID, Version: "0.1.1", Description: "Kubernetes inventory and topology", Icon: "kubernetes",
 		Publishes:       append([]string{CollectionResourceCoverage}, resourceCollections(nil)...),
 		IdentitySchemes: []graph.SchemeDefinition{IdentitySchemeDefinition()},
 	}

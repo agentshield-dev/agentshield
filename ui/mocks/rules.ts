@@ -22,28 +22,28 @@ const templates: readonly Template[] = [
 		kind: 'executes',
 		expression: "process_class == 'shell'",
 		rationale:
-			'An interactive shell is not part of this workload’s normal operation. Expected false positives: operators debugging with kubectl exec.'
+			'Interactive shell activity falls outside this workload’s observed baseline. kubectl exec debugging can also produce it.'
 	},
 	{
 		type: 'relationship',
 		kind: 'communicates-with',
 		expression: "destination_ip_class == 'public' && destination_role == ''",
 		rationale:
-			'The baseline shows no egress to public addresses outside known cluster resources. Expected false positives: new SaaS integrations.'
+			'Public egress falls outside this workload’s observed baseline. New SaaS integrations can also produce it.'
 	},
 	{
 		type: 'telemetry',
 		kind: 'network-flow',
 		expression: "operation == 'egress' && destination_role == 'control-plane-api'",
 		rationale:
-			'This workload never called the Kubernetes API in its baseline. Expected false positives: client libraries that read their own configuration.'
+			'Kubernetes API access falls outside this workload’s observed baseline. Client libraries that read their own configuration can also produce it.'
 	},
 	{
 		type: 'telemetry',
 		kind: 'network-flow',
 		expression: "outcome == 'dropped'",
 		rationale:
-			'Dropped flows from this workload point to probing or a broken dependency. Expected false positives: policy rollouts.'
+			'Dropped flows from this workload may indicate probing or a broken dependency. Policy rollouts may also produce them.'
 	}
 ];
 

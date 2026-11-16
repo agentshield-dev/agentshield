@@ -31,13 +31,9 @@ const wait = { timeout: 5000 };
 export const Executable: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		const select = await canvas.findByLabelText(
-			'Action for network.declare-ingress-isolation',
-			{},
-			wait
-		);
-		await expect(select).toHaveTextContent('kubernetes · network-policy/v1 · demo-cluster');
-		await userEvent.click(canvas.getByRole('button', { name: 'Prepare' }));
+		const select = await canvas.findByLabelText('Action for Isolate inbound traffic', {}, wait);
+		await expect(select).toHaveTextContent('Kubernetes NetworkPolicy · demo-cluster');
+		await userEvent.click(canvas.getByRole('button', { name: 'Preview change' }));
 
 		const dialog = within(await within(document.body).findByRole('dialog', {}, wait));
 		await expect(dialog.queryByText('Action')).toBeNull();
@@ -46,7 +42,7 @@ export const Executable: Story = {
 		await expect(dialog.getByText(/"kind": "NetworkPolicy"/)).toBeVisible();
 		await userEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
 		await waitFor(() => expect(within(document.body).queryByRole('dialog')).toBeNull(), wait);
-		await expect(canvas.getByRole('status')).toHaveTextContent('Prepared; approval pending.');
+		await expect(canvas.getByRole('status')).toHaveTextContent('Change ready for review.');
 	}
 };
 
@@ -54,13 +50,9 @@ export const MutualTLS: Story = {
 	args: { finding: mutualTLS, proposal: list(mutualTLS.remediations)[0] },
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		const select = await canvas.findByLabelText(
-			'Action for transport.require-mutual-tls',
-			{},
-			wait
-		);
-		await expect(select).toHaveTextContent('istio · peer-authentication/v1 · demo-cluster');
-		await userEvent.click(canvas.getByRole('button', { name: 'Prepare' }));
+		const select = await canvas.findByLabelText('Action for Require mutual TLS', {}, wait);
+		await expect(select).toHaveTextContent('Istio PeerAuthentication · demo-cluster');
+		await userEvent.click(canvas.getByRole('button', { name: 'Preview change' }));
 		const dialog = within(await within(document.body).findByRole('dialog', {}, wait));
 		await expect(dialog.getByRole('region', { name: 'Change to apply' })).toBeVisible();
 		await expect(dialog.getByText(/"mode": "STRICT"/)).toBeVisible();
@@ -72,8 +64,8 @@ export const AdvisoryOnly: Story = {
 	args: { finding: routeDelivery, proposal: list(routeDelivery.remediations)[0] },
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await canvas.findByLabelText('Action for gateway.prevent-route-delivery', {}, wait);
-		await userEvent.click(canvas.getByRole('button', { name: 'Prepare' }));
+		await canvas.findByLabelText('Action for Prevent route delivery', {}, wait);
+		await userEvent.click(canvas.getByRole('button', { name: 'View guidance' }));
 		await waitFor(
 			() =>
 				expect(canvas.getByRole('status')).toHaveTextContent(
@@ -111,7 +103,7 @@ export const NoLiveAction: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		await expect(
-			await within(canvasElement).findByText('No live action available', {}, wait)
+			await within(canvasElement).findByText('No automated remediation available', {}, wait)
 		).toBeVisible();
 	}
 };
@@ -129,7 +121,7 @@ export const PrepareFails: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('button', { name: 'Prepare' }, wait));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Preview change' }, wait));
 		await waitFor(
 			() =>
 				expect(canvas.getByRole('status')).toHaveTextContent(

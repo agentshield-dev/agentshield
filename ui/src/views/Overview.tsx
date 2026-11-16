@@ -1,9 +1,17 @@
 import { useApi } from '@/api/client';
 import type { OverviewResponse } from '@/api/types';
 import { EmptyState } from '@/components/EmptyState';
-import { formatTime, list } from '@/lib/model';
+import { displayLabel, formatTime, list } from '@/lib/model';
 
-export function Overview({ active, refresh }: { active: boolean; refresh: number }) {
+export function Overview({
+	active,
+	refresh,
+	demo = false
+}: {
+	active: boolean;
+	refresh: number;
+	demo?: boolean;
+}) {
 	const overview = useApi<OverviewResponse>(active ? '/api/v1/overview' : null, refresh);
 	const { data, error } = overview;
 	const loading = !data && !error;
@@ -27,9 +35,13 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 		<section className="page-view overview-page" aria-label="Security overview" hidden={!active}>
 			<header className="page-header">
 				<div>
-					<span className="eyebrow">Current environment</span>
+					<span className="eyebrow">{demo ? 'Sample environment' : 'Current environment'}</span>
 					<h1>Security overview</h1>
-					<p>A live summary of graph inventory, priority findings, and source health.</p>
+					<p>
+						{demo
+							? 'A sample summary of graph inventory, recent findings, and source health.'
+							: 'A live summary of graph inventory, recent findings, and source health.'}
+					</p>
 				</div>
 				<a className="button primary" href="#findings">
 					Review findings
@@ -38,7 +50,7 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 			<section className="metric-grid" aria-label="Environment summary">
 				{loading ? (
 					<article className="metric-card">
-						<span>Loading current environment…</span>
+						<span>{demo ? 'Loading sample environment…' : 'Loading current environment…'}</span>
 					</article>
 				) : (
 					metrics.map(([name, value]) => (
@@ -53,8 +65,8 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 				<section className="panel">
 					<div className="panel-head">
 						<div>
-							<h2>Priority findings</h2>
-							<p>Newest active findings from the durable findings index</p>
+							<h2>Recent findings</h2>
+							<p>Newest active findings</p>
 						</div>
 						<a className="text-link" href="#findings">
 							View all →
@@ -75,9 +87,9 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 									>
 										<i className={`severity-marker ${finding.severity}`} />
 										<span>
-											<strong>{finding.summary || finding.category}</strong>
+											<strong>{finding.summary || displayLabel(finding.category)}</strong>
 											<small>
-												{finding.category} · {finding.severity}
+												{displayLabel(finding.category)} · {finding.severity}
 											</small>
 										</span>
 										<span aria-hidden="true">→</span>
@@ -91,7 +103,7 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 							</>
 						) : (
 							<EmptyState title="No active findings">
-								The current findings index has no active records.
+								No active findings were reported for the current graph.
 							</EmptyState>
 						)}
 					</div>
@@ -100,7 +112,7 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 					<div className="panel-head">
 						<div>
 							<h2>Discovery sources</h2>
-							<p>Readiness and health from the current graph manifest</p>
+							<p>Current source health and latest observations</p>
 						</div>
 					</div>
 					<div className="source-list">
@@ -132,8 +144,8 @@ export function Overview({ active, refresh }: { active: boolean; refresh: number
 								);
 							})
 						) : (
-							<EmptyState title="No source manifest">
-								No current contributions were reported.
+							<EmptyState title="No discovery data">
+								Sources have not published data for the current graph.
 							</EmptyState>
 						)}
 					</div>

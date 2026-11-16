@@ -76,7 +76,7 @@ func Descriptor() discovery.Descriptor {
 	}
 	slices.Sort(consumes[1:])
 	return discovery.Descriptor{
-		ID: PluginID, Version: "0.1.0", Description: "agentgateway Gateway API ingress semantics",
+		ID: PluginID, Version: "0.1.0", Description: "agentgateway Gateway API ingress semantics", Icon: "agentgateway",
 		Consumes: consumes,
 	}
 }
