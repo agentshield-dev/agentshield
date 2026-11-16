@@ -76,13 +76,14 @@ func SourceID(projectNumber, region string) (string, error) {
 // SourceID returns the configured source ID.
 func (p *Plugin) SourceID() string { return p.config.SourceID }
 
-// ResolveIdentityReference resolves a Kubernetes Node reference of the form
-// gce://<project-id>/<zone>/<instance-name>?instance_id=<numeric-id> to an
+// ResolveIdentityReference resolves a GKE Node, whose provider ID is
+// gce://<project-id>/<zone>/<instance-name> and whose
+// container.googleapis.com/instance_id annotation holds the numeric ID, to an
 // instance claim in this source's project. It reports false for other
-// references, including a name-only provider ID, so other resolvers may claim
-// them.
-func (p *Plugin) ResolveIdentityReference(reference string) (graph.IdentityClaim, bool, error) {
-	return instanceClaimFromProviderID(p.config.ProjectID, p.config.ProjectNumber, p.config.Region, reference)
+// references, including a provider ID without that annotation, so other
+// resolvers may claim them.
+func (p *Plugin) ResolveIdentityReference(reference discovery.IdentityReference) (graph.IdentityClaim, bool, error) {
+	return instanceClaimFromProviderID(p.config.ProjectID, p.config.ProjectNumber, p.config.Region, reference.ProviderID, reference.Annotations[gkeInstanceIDAnnotation])
 }
 
 // Descriptor registers the cloud.google.com/v1 Resource identity scheme and

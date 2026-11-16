@@ -415,24 +415,23 @@ func resourceClaim(projectNumber, key string) graph.IdentityClaim {
 	return graph.IdentityClaim{Scheme: resourceScheme, AuthorityID: projectNumber, ImmutableKey: key}
 }
 
-// instanceIDReferenceParameter is how a Kubernetes Node reference carries
-// GKE's container.googleapis.com/instance_id annotation.
-const instanceIDReferenceParameter = "?instance_id="
+// gkeInstanceIDAnnotation is set by GKE on every Node to the backing
+// instance's immutable numeric ID.
+const gkeInstanceIDAnnotation = "container.googleapis.com/instance_id"
 
-// instanceClaimFromProviderID resolves
-// gce://<project-id>/<zone>/<name>?instance_id=<numeric-id>. A name-only
-// provider ID is no match, because names are mutable and reusable. A reference
-// to another project or to a zone outside the region filter is no match rather
-// than an error, because it belongs to another source and one Node must not
-// fail the whole Kubernetes projection.
-func instanceClaimFromProviderID(projectID, projectNumber, region, reference string) (graph.IdentityClaim, bool, error) {
-	reference = strings.TrimSpace(reference)
-	if !strings.HasPrefix(strings.ToLower(reference), "gce://") {
+// instanceClaimFromProviderID resolves gce://<project-id>/<zone>/<name> with
+// the instance's numeric ID. Without that ID there is no match, because names
+// are mutable and reusable. A reference to another project or to a zone
+// outside the region filter is no match rather than an error, because it
+// belongs to another source and one Node must not fail the whole Kubernetes
+// projection.
+func instanceClaimFromProviderID(projectID, projectNumber, region, providerID, instanceID string) (graph.IdentityClaim, bool, error) {
+	providerID, instanceID = strings.TrimSpace(providerID), strings.TrimSpace(instanceID)
+	if !strings.HasPrefix(strings.ToLower(providerID), "gce://") {
 		return graph.IdentityClaim{}, false, nil
 	}
-	providerID, instanceID, found := strings.Cut(reference[len("gce://"):], instanceIDReferenceParameter)
-	parts := strings.Split(providerID, "/")
-	if !found || !validNumericID(instanceID) || len(parts) != 3 || parts[0] != projectID || !validGCPName(parts[1]) || !validGCPName(parts[2]) {
+	parts := strings.Split(providerID[len("gce://"):], "/")
+	if !validNumericID(instanceID) || len(parts) != 3 || parts[0] != projectID || !validGCPName(parts[1]) || !validGCPName(parts[2]) {
 		return graph.IdentityClaim{}, false, nil
 	}
 	if region != "" && zoneRegion(parts[1]) != region {

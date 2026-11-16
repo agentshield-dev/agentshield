@@ -71,15 +71,15 @@ func (p *Plugin) SourceID() string { return p.config.SourceID }
 // form aws:///<zone>/<instance-id> to an instance claim in this source's
 // account and region. It reports false for non-AWS references so other
 // resolvers may claim them.
-func (p *Plugin) ResolveIdentityReference(reference string) (graph.IdentityClaim, bool, error) {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(reference)), "aws://") {
+func (p *Plugin) ResolveIdentityReference(reference discovery.IdentityReference) (graph.IdentityClaim, bool, error) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(reference.ProviderID)), "aws://") {
 		return graph.IdentityClaim{}, false, nil
 	}
 	parts := strings.Split(p.config.SourceID, "/")
 	if len(parts) != 4 || parts[0] != "aws" || parts[1] != p.config.Partition || parts[3] != p.config.Region || !validAccountID(parts[2]) {
 		return graph.IdentityClaim{}, false, fmt.Errorf("AWS source ID %q cannot resolve provider references", p.config.SourceID)
 	}
-	return instanceClaimFromProviderID(p.config.Partition, parts[2], p.config.Region, reference)
+	return instanceClaimFromProviderID(p.config.Partition, parts[2], p.config.Region, reference.ProviderID)
 }
 
 // Descriptor registers the aws.amazon.com/v1 Resource identity scheme. The

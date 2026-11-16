@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
@@ -281,24 +282,31 @@ func TestGCPIdentitySchemeRejectsInvalidAuthority(t *testing.T) {
 
 func TestInstanceClaimFromKubernetesProviderID(t *testing.T) {
 	plugin := &Plugin{config: Config{ProjectID: "example-project", ProjectNumber: testProjectNumber, Region: "us-east1", SourceID: "gcp/111111111111/us-east1"}}
-	claim, matched, err := plugin.ResolveIdentityReference("gce://example-project/us-east1-b/gke-pool-1-abcd?instance_id=4387310753745515807")
+	node := func(providerID, instanceID string) discovery.IdentityReference {
+		reference := discovery.IdentityReference{ProviderID: providerID}
+		if instanceID != "" {
+			reference.Annotations = map[string]string{gkeInstanceIDAnnotation: instanceID}
+		}
+		return reference
+	}
+	claim, matched, err := plugin.ResolveIdentityReference(node("gce://example-project/us-east1-b/gke-pool-1-abcd", "4387310753745515807"))
 	if err != nil || !matched || claim.AuthorityID != testProjectNumber || claim.ImmutableKey != "compute/instance/4387310753745515807" {
 		t.Fatalf("claim = %#v, matched = %t, err = %v", claim, matched, err)
 	}
-	for _, reference := range []string{
-		"aws:///us-east-1a/i-123",
-		"gce://example-project/us-east1-b/gke-pool-1-abcd",
-		"gce://example-project/us-east1-b/vm?instance_id=",
-		"gce://example-project/us-east1-b/vm?instance_id=abc",
-		"gce://example-project/us-east1-b/vm?instance_id=0123",
-		"gce://other-project/us-east1-b/vm?instance_id=1001",
-		"gce://example-project/europe-west1-b/vm?instance_id=1001",
-		"gce://example-project/us-east1-b?instance_id=1001",
-		"gce://example-project/us-east1-b/vm/extra?instance_id=1001",
-		"gce://example-project/us-east1-b/VM_1?instance_id=1001",
+	for _, reference := range []discovery.IdentityReference{
+		node("aws:///us-east-1a/i-123", "1001"),
+		node("gce://example-project/us-east1-b/gke-pool-1-abcd", ""),
+		node("gce://example-project/us-east1-b/vm", "abc"),
+		node("gce://example-project/us-east1-b/vm", "0123"),
+		node("gce://other-project/us-east1-b/vm", "1001"),
+		node("gce://example-project/europe-west1-b/vm", "1001"),
+		node("gce://example-project/us-east1-b", "1001"),
+		node("gce://example-project/us-east1-b/vm/extra", "1001"),
+		node("gce://example-project/us-east1-b/VM_1", "1001"),
+		{ProviderID: "gce://example-project/us-east1-b/vm", Annotations: map[string]string{"example.com/instance_id": "1001"}},
 	} {
 		if _, matched, err := plugin.ResolveIdentityReference(reference); err != nil || matched {
-			t.Fatalf("%s matched: %t, err = %v", reference, matched, err)
+			t.Fatalf("%#v matched: %t, err = %v", reference, matched, err)
 		}
 	}
 }

@@ -23,12 +23,12 @@
 // /network-interface/<nic>. Names and zones are attributes, so a rename keeps
 // one identity and a reused name gets a new one. The source ID
 // gcp/<project-number>[/<region>] identifies the observer.
-// [Plugin.ResolveIdentityReference] resolves the reference that Kubernetes
-// builds from a GKE Node's gce://<project-id>/<zone>/<name> provider ID and
-// its container.googleapis.com/instance_id annotation, as
-// gce://<project-id>/<zone>/<name>?instance_id=<id>, without reading the
+// [Plugin.ResolveIdentityReference] resolves a GKE Node from its
+// gce://<project-id>/<zone>/<name> provider ID and its
+// container.googleapis.com/instance_id annotation without reading the
 // snapshot, so Kubernetes can assert Node backed-by instance in any
-// publication order. A name-only provider ID resolves to nothing.
+// publication order. A provider ID without that annotation resolves to
+// nothing.
 //
 // # Graph output and failure behavior
 //

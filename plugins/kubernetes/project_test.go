@@ -13,9 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-type identityResolverFunc func(string) (graph.IdentityClaim, bool, error)
+type identityResolverFunc func(discovery.IdentityReference) (graph.IdentityClaim, bool, error)
 
-func (resolve identityResolverFunc) ResolveIdentityReference(reference string) (graph.IdentityClaim, bool, error) {
+func (resolve identityResolverFunc) ResolveIdentityReference(reference discovery.IdentityReference) (graph.IdentityClaim, bool, error) {
 	return resolve(reference)
 }
 
@@ -68,8 +68,8 @@ func TestProjectPodRunsOnObservedNode(t *testing.T) {
 	pod := testObject("v1", "Pod", "demo", "api", "pod", map[string]any{"spec": map[string]any{"nodeName": "worker-a"}})
 	backend := graph.IdentityClaim{Scheme: graph.IdentityScheme{Group: "aws.amazon.com", Version: "v1", Kind: "Resource"}, AuthorityID: "111111111111", ImmutableKey: "aws/ec2/us-east-1/instance/i-123"}
 
-	input, err := projectWithIdentityResolvers("cluster", "cluster", "source", []*unstructured.Unstructured{pod, node}, []discovery.IdentityReferenceResolver{identityResolverFunc(func(providerID string) (graph.IdentityClaim, bool, error) {
-		return backend, providerID == "aws:///us-east-1a/i-123", nil
+	input, err := projectWithIdentityResolvers("cluster", "cluster", "source", []*unstructured.Unstructured{pod, node}, []discovery.IdentityReferenceResolver{identityResolverFunc(func(reference discovery.IdentityReference) (graph.IdentityClaim, bool, error) {
+		return backend, reference.ProviderID == "aws:///us-east-1a/i-123", nil
 	})})
 	if err != nil {
 		t.Fatal(err)
@@ -84,20 +84,20 @@ func TestProjectPodRunsOnObservedNode(t *testing.T) {
 	}
 }
 
-func TestProjectGKENodeBackedByInstanceID(t *testing.T) {
+func TestProjectNodeOffersProviderIDAndAnnotationsToResolvers(t *testing.T) {
 	const providerID = "gce://example-project/us-east1-b/gke-pool-1-abcd"
 	backend := graph.IdentityClaim{Scheme: graph.IdentityScheme{Group: "cloud.google.com", Version: "v1", Kind: "Resource"}, AuthorityID: "111111111111", ImmutableKey: "compute/instance/4387310753745515807"}
-	var offered []string
-	resolver := identityResolverFunc(func(reference string) (graph.IdentityClaim, bool, error) {
+	var offered []discovery.IdentityReference
+	resolver := identityResolverFunc(func(reference discovery.IdentityReference) (graph.IdentityClaim, bool, error) {
 		offered = append(offered, reference)
-		return backend, reference == providerID+"?instance_id=4387310753745515807", nil
+		return backend, reference.Annotations["example.com/instance-id"] != "", nil
 	})
 	for name, annotations := range map[string]map[string]string{
-		"with instance ID":    {"container.googleapis.com/instance_id": "4387310753745515807"},
-		"without instance ID": nil,
+		"with annotation":    {"example.com/instance-id": "4387310753745515807"},
+		"without annotation": nil,
 	} {
 		offered = nil
-		node := testObject("v1", "Node", "", "gke-pool-1-abcd", "node", map[string]any{"spec": map[string]any{"providerID": providerID}})
+		node := testObject("v1", "Node", "", "gke-pool-1-abcd", "node", map[string]any{"spec": map[string]any{"providerID": " " + providerID + " "}})
 		node.SetAnnotations(annotations)
 		input, err := projectWithIdentityResolvers("cluster", "cluster", "source", []*unstructured.Unstructured{node}, []discovery.IdentityReferenceResolver{resolver})
 		if err != nil {
@@ -109,8 +109,11 @@ func TestProjectGKENodeBackedByInstanceID(t *testing.T) {
 				backedBy++
 			}
 		}
-		if want := len(annotations); backedBy != want || offered[0] != providerID {
-			t.Fatalf("%s: backed-by edges = %d, want %d; offered %q", name, backedBy, want, offered)
+		if len(offered) != 1 || offered[0].ProviderID != providerID || !reflect.DeepEqual(offered[0].Annotations, node.GetAnnotations()) {
+			t.Fatalf("%s: offered %#v", name, offered)
+		}
+		if want := len(annotations); backedBy != want {
+			t.Fatalf("%s: backed-by edges = %d, want %d", name, backedBy, want)
 		}
 	}
 }

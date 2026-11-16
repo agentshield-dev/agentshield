@@ -120,12 +120,20 @@ type Plugin interface {
 	Run(context.Context, Runtime) error
 }
 
-// IdentityReferenceResolver is an optional capability that maps a provider
-// reference found in another plugin's data, such as a Kubernetes Node
-// spec.providerID, to an identity claim in a scheme the plugin owns. This lets
-// plugins join on authoritative IDs instead of names or tags.
+// IdentityReference is a provider reference found in another plugin's data,
+// such as a Kubernetes Node. Annotations carry provider-set immutable IDs for
+// providers whose ProviderID names a resource without one; resolvers must not
+// modify them.
+type IdentityReference struct {
+	ProviderID  string
+	Annotations map[string]string
+}
+
+// IdentityReferenceResolver is an optional capability that maps an
+// [IdentityReference] to an identity claim in a scheme the plugin owns. This
+// lets plugins join on authoritative IDs instead of names or tags.
 type IdentityReferenceResolver interface {
-	ResolveIdentityReference(string) (graph.IdentityClaim, bool, error)
+	ResolveIdentityReference(IdentityReference) (graph.IdentityClaim, bool, error)
 }
 
 // IdentityReferenceResolvers returns the plugins that implement
@@ -143,7 +151,7 @@ func IdentityReferenceResolvers(plugins ...Plugin) []IdentityReferenceResolver {
 // ResolveIdentityReference asks every resolver. Matches that agree are
 // accepted; two resolvers returning different claims is an error rather than
 // a first-wins choice.
-func ResolveIdentityReference(reference string, resolvers ...IdentityReferenceResolver) (graph.IdentityClaim, bool, error) {
+func ResolveIdentityReference(reference IdentityReference, resolvers ...IdentityReferenceResolver) (graph.IdentityClaim, bool, error) {
 	var resolved graph.IdentityClaim
 	found := false
 	for _, resolver := range resolvers {
@@ -155,7 +163,7 @@ func ResolveIdentityReference(reference string, resolvers ...IdentityReferenceRe
 			continue
 		}
 		if found && claim != resolved {
-			return graph.IdentityClaim{}, false, fmt.Errorf("identity reference %q resolves to multiple claims", reference)
+			return graph.IdentityClaim{}, false, fmt.Errorf("identity reference %q resolves to multiple claims", reference.ProviderID)
 		}
 		resolved = claim
 		found = true
