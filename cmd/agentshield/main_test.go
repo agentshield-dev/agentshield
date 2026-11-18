@@ -19,6 +19,7 @@ import (
 	ciliumplugin "github.com/agentshield-dev/agentshield/plugins/cilium"
 	falcoplugin "github.com/agentshield-dev/agentshield/plugins/falco"
 	istioplugin "github.com/agentshield-dev/agentshield/plugins/istio"
+	kgatewayplugin "github.com/agentshield-dev/agentshield/plugins/kgateway"
 	kubernetesplugin "github.com/agentshield-dev/agentshield/plugins/kubernetes"
 	"github.com/spf13/pflag"
 	"golang.org/x/sync/errgroup"
@@ -191,6 +192,7 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 		kubernetes:   kubernetesplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
 		istio:        istioplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
 		agentgateway: agentgatewayplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
+		kgateway:     kgatewayplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
 		cilium:       ciliumplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
 		falco:        falcoplugin.CLIConfig{ClusterID: "cluster", SourceID: "kubernetes/cluster"},
 	}
@@ -229,7 +231,7 @@ func TestCompiledInDescriptorsCoverEveryPlugin(t *testing.T) {
 func TestPluginCLIFlagsAreNamespacedAndCollisionFree(t *testing.T) {
 	flags := pflag.NewFlagSet("agentshield", pflag.ContinueOnError)
 	configs := []interface{ RegisterFlags(*pflag.FlagSet) error }{
-		&kubernetesplugin.CLIConfig{}, &istioplugin.CLIConfig{}, &agentgatewayplugin.CLIConfig{},
+		&kubernetesplugin.CLIConfig{}, &istioplugin.CLIConfig{}, &agentgatewayplugin.CLIConfig{}, &kgatewayplugin.CLIConfig{},
 		&ciliumplugin.CLIConfig{}, &falcoplugin.CLIConfig{}, &awsplugin.CLIConfig{},
 	}
 	for _, config := range configs {
@@ -238,7 +240,7 @@ func TestPluginCLIFlagsAreNamespacedAndCollisionFree(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		"kubernetes-cluster-id", "istio-cluster-id", "agentgateway-cluster-id", "cilium-cluster-id",
+		"kubernetes-cluster-id", "istio-cluster-id", "agentgateway-cluster-id", "kgateway-cluster-id", "kgateway-controller-names", "cilium-cluster-id",
 		"falco-cluster-id", "falco-source-id", "aws-region", "aws-firehose-stream-arn",
 	} {
 		if flags.Lookup(name) == nil {
