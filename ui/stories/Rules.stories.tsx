@@ -63,16 +63,16 @@ export const ApproveDraft: Story = {
 		const dialog = within(
 			await within(document.body).findByRole('dialog', { name: 'Approve rules' })
 		);
-		await expect(dialog.getByRole('heading', { name: 'Activate 3 rules' })).toBeVisible();
+		await expect(dialog.getByRole('heading', { name: 'Approve 3 rules' })).toBeVisible();
 		const selections = dialog.getAllByRole('checkbox');
 		await userEvent.click(selections[1]);
 		await userEvent.click(selections[2]);
-		await expect(dialog.getByRole('heading', { name: 'Activate one rule' })).toBeVisible();
+		await expect(dialog.getByRole('heading', { name: 'Approve one rule' })).toBeVisible();
 		await userEvent.click(dialog.getByRole('button', { name: 'Approve selected' }));
-		await canvas.findByText('Approved 1 rule; the selection now runs in active mode.', {}, wait);
+		await canvas.findByText('Approved 1 rule. Detector refresh pending.', {}, wait);
 		await canvas.findByText('approved', { selector: '.finding-title .badge' }, wait);
 		await expect(
-			canvas.getByText('active', { selector: '.remediation-item .badge' })
+			canvas.getByText('approved', { selector: '.remediation-item .badge' })
 		).toBeVisible();
 		await expect(
 			canvas.getAllByText('not approved', { selector: '.remediation-item .badge' })
@@ -90,7 +90,7 @@ export const RejectDraft: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[2]), level: 2 }, wait);
 		await userEvent.click(await canvas.findByRole('button', { name: 'Reject' }, wait));
-		await canvas.findByText('Rejected; this draft’s rules are no longer loaded.', {}, wait);
+		await canvas.findByText('Draft rejected. Detector refresh pending.', {}, wait);
 		await canvas.findByText('rejected', { selector: '.finding-title .badge' }, wait);
 		await expect(canvas.getByRole('button', { name: 'Approve' })).toBeEnabled();
 	}
@@ -102,10 +102,11 @@ export const RegenerateDraft: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[0]), level: 2 }, wait);
 		await userEvent.click(await canvas.findByRole('button', { name: 'Regenerate' }, wait));
-		await canvas.findByText('Regeneration requested.', {}, wait);
+		await canvas.findByText('Draft queued for regeneration.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
-		await expect(canvas.getByText(/^Requested by api\/web-ui$/)).toBeVisible();
-		await expect(canvas.getAllByText(/^add_rule · /)).toHaveLength(3);
+		await expect(canvas.getByText('Manual request', { exact: true })).toBeVisible();
+		const rules = within(canvas.getByRole('region', { name: 'Draft rules' }));
+		await expect(rules.getAllByRole('article')).toHaveLength(3);
 	}
 };
 
@@ -156,8 +157,8 @@ export const AuthorQueuedDraftNow: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[4]), level: 2 }, wait);
 		await canvas.findByText(/Waiting for the stabilization window/, {}, wait);
-		await userEvent.click(canvas.getByRole('button', { name: 'Author now' }));
-		await canvas.findByText('Authoring requested.', {}, wait);
+		await userEvent.click(canvas.getByRole('button', { name: 'Start now' }));
+		await canvas.findByText('Draft queued for authoring.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
 		await expect(canvas.getByRole('button', { name: 'Regenerate' })).toBeEnabled();
 	}
@@ -169,10 +170,10 @@ export const RetryFailedDraft: Story = {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: name(workloads[5]), level: 2 }, wait);
 		await canvas.findByText('failed', { selector: '.finding-title .badge' }, wait);
-		await canvas.findByText('Authoring gave up.', {}, wait);
-		await canvas.findByText(/The worker stopped after 8 attempts/, {}, wait);
-		await userEvent.click(canvas.getByRole('button', { name: 'Author now' }));
-		await canvas.findByText('Authoring requested.', {}, wait);
+		await canvas.findByText('Authoring stopped after repeated failures.', {}, wait);
+		await canvas.findByText(/Authoring stopped after 8 attempts/, {}, wait);
+		await userEvent.click(canvas.getByRole('button', { name: 'Retry now' }));
+		await canvas.findByText('Draft queued for authoring.', {}, wait);
 		await canvas.findByText('awaiting review', { selector: '.finding-title .badge' }, wait);
 	}
 };

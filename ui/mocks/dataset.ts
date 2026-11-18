@@ -5,6 +5,7 @@ import type {
 	IdentityClaim,
 	IdentityScheme,
 	ManifestContribution,
+	PluginMetadata,
 	Proposal,
 	Relationship,
 	RelationshipAssertion,
@@ -22,6 +23,51 @@ const CLUSTER = 'demo-cluster';
 const NETWORK = 'demo-network';
 const SEMANTICS_KEY = 'agentshield.io/security-semantics';
 const BASE_TIME = Date.parse('2026-10-14T19:00:00.000Z');
+
+const PLUGINS: readonly PluginMetadata[] = [
+	{
+		id: 'agentgateway',
+		version: '0.1.0',
+		description: 'agentgateway Gateway API ingress semantics',
+		icon: 'agentgateway',
+		ownedApiGroups: []
+	},
+	{
+		id: 'aws',
+		version: '0.1.0',
+		description: 'AWS EC2 network security inventory',
+		icon: 'aws',
+		ownedApiGroups: []
+	},
+	{
+		id: 'cilium',
+		version: '0.1.1',
+		description: 'Cilium CNI state and Hubble flow semantics',
+		icon: 'cilium',
+		ownedApiGroups: ['*.cilium.io']
+	},
+	{
+		id: 'falco',
+		version: '0.1.0',
+		description: 'Falco runtime-security alert telemetry',
+		icon: 'falco',
+		ownedApiGroups: []
+	},
+	{
+		id: 'istio',
+		version: '0.1.0',
+		description: 'Istio registry, routing, policy, mTLS, ambient, and waypoint semantics',
+		icon: 'istio',
+		ownedApiGroups: ['*.istio.io']
+	},
+	{
+		id: 'kubernetes',
+		version: '0.1.1',
+		description: 'Kubernetes inventory and topology',
+		icon: 'kubernetes',
+		ownedApiGroups: []
+	}
+];
 
 const KUBERNETES: IdentityScheme = { group: 'kubernetes.io', version: 'v1', kind: 'Object' };
 const DESTINATION: IdentityScheme = {
@@ -96,6 +142,9 @@ function object(
 	app = ''
 ): Entity {
 	const uid = uuid(CLUSTER, apiVersion, kind, namespace, name);
+	const group = apiVersion.split('/', 1)[0];
+	const owner =
+		group === 'cilium.io' ? 'cilium' : group.endsWith('.istio.io') ? 'istio' : 'kubernetes';
 	const claim: IdentityClaim = {
 		scheme: KUBERNETES,
 		authorityId: CLUSTER,
@@ -133,7 +182,7 @@ function object(
 	return {
 		id: uuid('resource', claim.immutableKey),
 		claim,
-		kind: `kubernetes/${kind.toLowerCase()}`,
+		kind: `${owner}/${kind.toLowerCase()}`,
 		display: namespace ? `${namespace}/${name}` : name,
 		attributes,
 		app,
@@ -380,9 +429,9 @@ function buildWorld() {
 type World = ReturnType<typeof buildWorld>;
 
 function kubernetesGraph(world: World) {
-	const resources = world.objects.map(entity =>
-		resourceOf(entity, kubernetes, 'kubernetes.object')
-	);
+	const resources = world.objects
+		.filter(entity => entity.kind.startsWith('kubernetes/'))
+		.map(entity => resourceOf(entity, kubernetes, 'kubernetes.object'));
 	const relationships: Relationship[] = [];
 	const facets: Facet[] = [];
 	const rel = (
@@ -565,7 +614,12 @@ function kubernetesGraph(world: World) {
 }
 
 function meshGraph(world: World) {
-	const resources: Resource[] = [];
+	const resources: Resource[] = [
+		...[...world.entries.values()].map(entry => resourceOf(entry, istio, 'istio.serviceentry')),
+		...[...world.authentications.values()].map(authentication =>
+			resourceOf(authentication, istio, 'istio.peer-authentication')
+		)
+	];
 	const relationships: Relationship[] = [];
 	const facets: Facet[] = [];
 
@@ -774,6 +828,7 @@ function telemetryGraph(world: World) {
 
 function ciliumGraph(world: World) {
 	const { ciliumPolicy } = world;
+	const resources = [resourceOf(ciliumPolicy, cilium, 'cilium.policy.resource')];
 	const relationships: Relationship[] = [];
 	const facets: Facet[] = [
 		facetOf(cilium, 'cilium.policy.cni', ciliumPolicy, 'cilium-cni-policy', ciliumPolicy.display, {
@@ -833,7 +888,7 @@ function ciliumGraph(world: World) {
 			index++;
 		}
 	}
-	return { relationships, facets };
+	return { resources, relationships, facets };
 }
 
 interface ProposalSpec {
@@ -1143,7 +1198,7 @@ function findingSpecs(world: World): FindingSpec[] {
 		category: 'detection_rule_match',
 		severity: 'medium',
 		rule: { id: `deployment/${orders.id}/rule-1`, revision: 1 },
-		summary: `Detection rule deployment/${orders.id}/rule-1 (revision 1) matched 1 new input(s): resource_rule_match`,
+		summary: 'A resource detection rule matched new activity for shop/orders.',
 		affected: [orders]
 	});
 	specs.push(
@@ -1311,7 +1366,7 @@ function buildDataset() {
 		ruleId: 'istio.service-registry',
 		evidenceIds: [`istio:${digest('service-registry/frontend').slice(0, 16)}`]
 	};
-	const resources = [...base.resources, ...mesh.resources].map(resource =>
+	const resources = [...base.resources, ...mesh.resources, ...policies.resources].map(resource =>
 		resource.id === frontend.id
 			? { ...resource, assertions: [...(resource.assertions ?? []), registry] }
 			: resource
@@ -1331,7 +1386,14 @@ function buildDataset() {
 	const specs = findingSpecs(world);
 	const findings = buildFindings(specs);
 	const findingByKey = new Map(specs.map((spec, index) => [spec.key, findings[index] as Finding]));
-	return { snapshot, findings, findingByKey, contributions: buildContributions(), world };
+	return {
+		snapshot,
+		findings,
+		findingByKey,
+		contributions: buildContributions(),
+		plugins: PLUGINS,
+		world
+	};
 }
 
 export type Dataset = ReturnType<typeof buildDataset>;

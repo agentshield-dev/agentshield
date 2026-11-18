@@ -3,6 +3,7 @@
 import { Fragment, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { Relationship, Resource } from '@/api/types';
+import { pluginIconSource } from '@/components/PluginIcons';
 import { useGraph } from '@/lib/graph-context';
 import {
 	type EdgeLabelInput,
@@ -236,6 +237,15 @@ export function GraphCanvas({
 					{resources.map(resource => {
 						const position = positions.get(resource.id);
 						if (!position) return null;
+						const owners = graph.owners(resource);
+						const pluginIDs = owners.map(plugin => plugin.id);
+						const ownerLabel = pluginIDs.length
+							? `. ${pluginIDs.length === 1 ? 'Owner' : 'Owners'}: ${pluginIDs.join(', ')}`
+							: '';
+						const pluginIcons = owners
+							.map(plugin => ({ id: plugin.id, source: pluginIconSource(plugin.icon) }))
+							.filter((item): item is { id: string; source: string } => Boolean(item.source))
+							.slice(0, 3);
 						const isSelected = selectedID === resource.id;
 						const isEndpoint = selectedEndpoints.has(resource.id);
 						const isDim =
@@ -257,7 +267,7 @@ export function GraphCanvas({
 								transform={`translate(${position.x} ${position.y})`}
 								tabIndex={0}
 								role="button"
-								aria-label={`${resource.kind || 'resource'}: ${label(resource)}`}
+								aria-label={`${resource.kind || 'resource'}: ${label(resource)}${ownerLabel}`}
 								onClick={event => {
 									event.stopPropagation();
 									// A mouse click must not leave a focus ring on the shape.
@@ -270,6 +280,27 @@ export function GraphCanvas({
 							>
 								<rect width={position.width} height={position.height} rx={4} />
 								<rect className="kind-band" width={6} height={position.height} rx={2} />
+								{pluginIcons.map((plugin, index) => (
+									<Fragment key={plugin.id}>
+										<rect
+											className="node-plugin-icon-backdrop"
+											x={position.width - 37 - index * 24}
+											y={9}
+											width={26}
+											height={26}
+											rx={5}
+										/>
+										<image
+											className="node-plugin-icon"
+											href={plugin.source}
+											x={position.width - 34 - index * 24}
+											y={12}
+											width={20}
+											height={20}
+											focusable="false"
+										/>
+									</Fragment>
+								))}
 								<title>{`${label(resource)}\n${namespace(resource)} · ${resource.kind || 'unknown'}`}</title>
 								<text>
 									{position.nameLines.map((line, index) => (

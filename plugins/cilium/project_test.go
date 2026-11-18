@@ -76,6 +76,59 @@ func TestProjectCNIOnlyDeterministically(t *testing.T) {
 	}
 }
 
+func TestCiliumOwnsPolicyResource(t *testing.T) {
+	for _, test := range []struct {
+		kind, namespace, want string
+	}{
+		{kind: "CiliumNetworkPolicy", namespace: "shop", want: "cilium/ciliumnetworkpolicy"},
+		{kind: "CiliumClusterwideNetworkPolicy", want: "cilium/ciliumclusterwidenetworkpolicy"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			namespace := object("v1", "Namespace", "", "shop", "namespace-1", nil)
+			policy := object("cilium.io/v2", test.kind, test.namespace, "frontend-policy", "policy-1", map[string]any{"spec": map[string]any{
+				"endpointSelector": map[string]any{},
+				"ingress":          []any{map[string]any{}},
+			}})
+			kubernetesInput, err := kubernetesplugin.Project("cluster-a", "kubernetes-a", []*unstructured.Unstructured{namespace, policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ciliumInput, err := Project("cluster-a", "cilium-a", []*unstructured.Unstructured{policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := graph.Input{
+				Resources:     append(kubernetesInput.Resources, ciliumInput.Resources...),
+				Facets:        append(kubernetesInput.Facets, ciliumInput.Facets...),
+				Relationships: append(kubernetesInput.Relationships, ciliumInput.Relationships...),
+			}
+			registry := graph.NewRegistry()
+			if err := discovery.RegisterIdentitySchemes(registry, kubernetesplugin.Descriptor()); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := graph.NewCompiler(registry).Compile(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Conflicts) != 0 || len(snapshot.Resources) != 2 {
+				t.Fatalf("resources=%d conflicts=%d, want namespace and policy resources with no conflicts", len(snapshot.Resources), len(snapshot.Conflicts))
+			}
+			var policyResource *graph.Resource
+			for index := range snapshot.Resources {
+				if strings.HasPrefix(snapshot.Resources[index].Kind, "cilium/") {
+					policyResource = &snapshot.Resources[index]
+				}
+			}
+			if policyResource == nil || policyResource.Kind != test.want || len(policyResource.Assertions) != 1 || policyResource.Assertions[0].PluginID != PluginID {
+				t.Fatalf("policy resource = %#v", policyResource)
+			}
+			if test.namespace != "" && (len(snapshot.Relationships) != 1 || snapshot.Relationships[0].Predicate != graph.PredicateContains || snapshot.Relationships[0].ResolutionStatus != graph.ResolutionResolved) {
+				t.Fatalf("namespace containment = %#v", snapshot.Relationships)
+			}
+		})
+	}
+}
+
 func TestProjectBoundsCiliumPolicySecurityDetails(t *testing.T) {
 	ports := make([]any, 0, 70)
 	for port := 1; port <= 70; port++ {

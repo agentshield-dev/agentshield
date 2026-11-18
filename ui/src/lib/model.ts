@@ -9,6 +9,26 @@ import type {
 
 const SECURITY_SEMANTICS_KEY = 'agentshield.io/security-semantics';
 const NAMESPACE_KEYS = ['namespace', 'kubernetes/namespace', 'istio/namespace'];
+const DISPLAY_LABELS: Record<string, string> = {
+	boundary_crossing: 'Boundary crossing',
+	cilium: 'Cilium',
+	'cilium-network-policy/v1': 'NetworkPolicy',
+	detection_rule_match: 'Detection rule match',
+	gateway: 'Gateway',
+	'gateway.prevent-route-delivery': 'Prevent route delivery',
+	identity_reuse: 'Identity reuse',
+	istio: 'Istio',
+	kubernetes: 'Kubernetes',
+	loss_of_governance: 'Loss of governance',
+	'network.declare-ingress-isolation': 'Isolate inbound traffic',
+	'network-policy/v1': 'NetworkPolicy',
+	new_exposure: 'New exposure',
+	'peer-authentication/v1': 'PeerAuthentication',
+	possible_lateral_path: 'Possible lateral path',
+	'route-detach/v1': 'Detach route',
+	'transport.require-mutual-tls': 'Require mutual TLS',
+	unknown_security_effect: 'Unknown security effect'
+};
 
 export function list<T>(value: List<T>): readonly T[] {
 	return value ?? [];
@@ -29,6 +49,10 @@ export function formatValue(raw: unknown): string {
 
 export function formatTime(value: string): string {
 	return new Date(value).toLocaleString();
+}
+
+export function displayLabel(value: string): string {
+	return DISPLAY_LABELS[value] ?? value;
 }
 
 export function initials(kind: string | undefined, fallback: string): string {
@@ -58,6 +82,25 @@ export function namespace(resource: Resource): string {
 		}
 	}
 	return 'cluster-scoped';
+}
+
+export function resourcePluginIDs(resource: Resource): string[] {
+	return unique(list(resource.assertions).map(assertion => assertion.pluginId));
+}
+
+export function resourceAPIGroup(resource: Resource): string | undefined {
+	for (const assertion of list(resource.assertions)) {
+		const apiVersion = assertion.attributes?.['kubernetes/api-version'];
+		if (apiVersion?.includes('/')) return apiVersion.split('/', 1)[0];
+	}
+	return undefined;
+}
+
+export function apiGroupMatches(pattern: string, group: string): boolean {
+	if (pattern === group) return true;
+	if (!pattern.startsWith('*.')) return false;
+	const root = pattern.slice(2);
+	return group === root || group.endsWith(`.${root}`);
 }
 
 export function securitySemantics(assertion: AssertionBase): SecuritySemantics | null {

@@ -3,12 +3,14 @@ import { useApi } from '@/api/client';
 import type {
 	RelationshipDetailResponse,
 	RelationshipsResponse,
+	Resource,
 	ResourceDetailResponse,
 	ResourcesResponse
 } from '@/api/types';
 import { RelationshipRecord, ResourceRecord } from '@/components/CatalogRecords';
 import { EmptyState } from '@/components/EmptyState';
 import { Pagination } from '@/components/Pagination';
+import { PluginIcons } from '@/components/PluginIcons';
 import { useGraph } from '@/lib/graph-context';
 import { initials, label, list, namespace, unique } from '@/lib/model';
 import { useCursorPager } from '@/lib/pager';
@@ -29,6 +31,7 @@ interface Row {
 	title: string;
 	meta: string;
 	glyph: string;
+	resource?: Resource;
 }
 
 const catalogTypes: readonly { id: CatalogType; title: string }[] = [
@@ -96,7 +99,8 @@ export function Catalog({ active, refresh, parts, onViewGraph }: CatalogProps) {
 					id: item.id,
 					title: label(item),
 					meta: `${item.kind} · ${namespace(item)}`,
-					glyph: initials(item.kind, '')
+					glyph: initials(item.kind, ''),
+					resource: item
 				}))
 			: list(data?.relationships).map(item => ({
 					id: item.id,
@@ -131,7 +135,7 @@ export function Catalog({ active, refresh, parts, onViewGraph }: CatalogProps) {
 
 	let detailPane: ReactNode;
 	if (data && !rows.length) {
-		detailPane = <EmptyState title="No catalog record selected" />;
+		detailPane = <EmptyState title="No records found" />;
 	} else if (detail.error) {
 		detailPane = (
 			<EmptyState title="Record unavailable" error>
@@ -240,7 +244,11 @@ export function Catalog({ active, refresh, parts, onViewGraph }: CatalogProps) {
 									href={`#catalog/${type}/${encodeURIComponent(row.id)}`}
 									key={row.id}
 								>
-									<span className="asset-glyph">{row.glyph}</span>
+									{row.resource ? (
+										<PluginIcons resource={row.resource} fallback={row.glyph} />
+									) : (
+										<span className="asset-glyph">{row.glyph}</span>
+									)}
 									<span>
 										<strong>{row.title}</strong>
 										<small>{row.meta}</small>

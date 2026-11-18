@@ -64,7 +64,7 @@ function LoadedRuleDetail({
 			</header>
 			<p className="finding-summary">
 				{item.mode === 'shadow'
-					? 'An unreviewed draft: matches are recorded as signals but do not become findings until the draft is approved.'
+					? "This rule runs in shadow mode and records matches as signals. Approval makes it eligible for active detection after the detector's next refresh."
 					: item.mode === 'active'
 						? 'An approved resource rule: matches become findings.'
 						: 'A rule from the active operator ruleset.'}
@@ -96,7 +96,7 @@ function LoadedRuleDetail({
 			{resource ? (
 				<div className="remediation-actions">
 					<button className="button secondary" type="button" onClick={() => onViewGraph(resource)}>
-						View resource
+						View in graph
 					</button>
 				</div>
 			) : null}
@@ -213,8 +213,8 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 		detailPane = (
 			<EmptyState title={tab === 'active' ? 'No rule selected' : 'No draft selected'}>
 				{tab === 'active'
-					? 'Resource drafts run in shadow mode until approved.'
-					: 'Drafts appear when the AI author processes a projected resource.'}
+					? 'Unapproved resource rules run in shadow mode.'
+					: 'Drafts appear after AgentShield analyzes an eligible resource.'}
 			</EmptyState>
 		);
 	}
@@ -252,7 +252,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 			))
 		) : (
 			<EmptyState title="No loaded rules">
-				Resource drafts appear here in shadow mode once authored.
+				Review authored drafts to activate their rules.
 			</EmptyState>
 		);
 	} else {
@@ -275,7 +275,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 							<p>
 								Draft #{draft.id} ·{' '}
 								{isAuthoring(draft)
-									? 'no rules yet'
+									? 'authoring in progress'
 									: `${draft.ruleCount} rule${draft.ruleCount === 1 ? '' : 's'}`}
 								{draft.currentRevision ? '' : ' · previous revision'}
 							</p>
@@ -300,15 +300,16 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					<span className="eyebrow">Detection</span>
 					<h1>Rules</h1>
 					<p>
-						Resource rules drafted by the AI author. Drafts run in shadow mode, recording matches
-						only, until an operator approves them.
+						AgentShield uses a model to draft resource-specific detection rules. Completed drafts
+						create shadow rules that record matches as signals. Approval makes selected rules
+						eligible for active detection after the detector's next refresh.
 					</p>
 				</div>
 			</header>
 			<MetricCards label="Rule summary" metrics={metrics} />
 			{loaded.data?.resourceRulesTruncated ? (
 				<p className="muted">
-					The detector rule capacity is full; additional authored rules are not loaded.
+					Rule capacity reached. Rules beyond the limit are not loaded or evaluated.
 				</p>
 			) : null}
 			{drafts.data?.truncated ? (
@@ -333,7 +334,7 @@ export function Rules({ active, refresh, parts, onAwaitingReview, onViewGraph }:
 					<span aria-hidden="true">⌕</span>
 					<input
 						type="search"
-						placeholder="Resource"
+						placeholder="Search resources"
 						autoComplete="off"
 						aria-label="Filter by resource"
 						value={search}

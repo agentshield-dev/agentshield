@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 	"github.com/agentshield-dev/agentshield/pkg/state"
@@ -189,12 +190,17 @@ func TestHealthAndReadinessStates(t *testing.T) {
 func TestGraphExplorerAndManifestParity(t *testing.T) {
 	record := testRecord()
 	store := &fakeStateStore{record: record, manifest: state.GraphManifest{ID: "manifest-1", Digest: "def456"}}
-	server, err := NewServer(store, nil)
+	server, err := NewServer(store, nil, WithPlugins(discovery.Descriptor{ID: "kubernetes", Version: "0.1.0", Description: "Kubernetes inventory", Icon: "kubernetes", OwnedAPIGroups: []string{"example.io"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	server.assets = fstest.MapFS{"index.html": {Data: []byte("<title>AgentShield</title>")}}
 	handler := server.Handler()
+	pluginsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(pluginsResponse, httptest.NewRequest(http.MethodGet, "/api/v1/plugins", nil))
+	if pluginsResponse.Code != http.StatusOK || !strings.Contains(pluginsResponse.Body.String(), `"icon":"kubernetes","ownedApiGroups":["example.io"]`) {
+		t.Fatalf("unexpected plugins response: code=%d body=%s", pluginsResponse.Code, pluginsResponse.Body.String())
+	}
 
 	graphResponse := httptest.NewRecorder()
 	handler.ServeHTTP(graphResponse, httptest.NewRequest(http.MethodGet, "/api/v1/graph", nil))

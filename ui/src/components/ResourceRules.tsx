@@ -27,9 +27,10 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 	const resourceDrafts = list(drafts.data?.drafts).filter(draft => draft.resourceId === resourceId);
 	const draft = resourceDrafts.find(item => item.currentRevision) ?? resourceDrafts[0];
 	const authoring = draft ? isAuthoring(draft) : false;
+	const state = draft ? draftState(draft) : null;
 	// A failed draft offers Author now too: the worker will not retry it on its own.
 	const offerAuthor = authoring || draft?.status === 'failed';
-	const running = draft ? draftState(draft) === 'authoring' : false;
+	const running = state === 'authoring';
 
 	useEffect(() => {
 		if (!authoring) return;
@@ -57,7 +58,7 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 			<h3>Detection rules · {rules.length}</h3>
 			{loaded.data?.resourceRulesTruncated ? (
 				<p className="muted">
-					The detector rule capacity is full; additional authored rules are not loaded.
+					Rule capacity reached. Rules beyond the limit are not loaded or evaluated.
 				</p>
 			) : null}
 			{drafts.data?.truncated ? (
@@ -90,7 +91,7 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 							#{draft.id} · {draftStateLabels[draftState(draft)]}
 						</a>
 					) : (
-						'none'
+						'No draft available'
 					)}
 				</dd>
 			</dl>
@@ -101,7 +102,13 @@ export function ResourceRules({ resourceId }: { resourceId: string }) {
 					disabled={busy || running || !draft?.currentRevision}
 					onClick={regenerate}
 				>
-					{running ? 'Authoring…' : offerAuthor ? 'Author now' : 'Regenerate rules'}
+					{running
+						? 'Authoring…'
+						: state === 'failed' || state === 'retrying'
+							? 'Retry now'
+							: offerAuthor
+								? 'Start now'
+								: 'Regenerate rules'}
 				</button>
 				{draft ? (
 					<button

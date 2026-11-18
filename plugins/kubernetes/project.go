@@ -97,7 +97,7 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 		}
 	}
 	for _, item := range index.items {
-		if !includeGraphResource(item) || isGatewayResource(item) && !gatewayCovered {
+		if !includeGraphTopology(item) || isGatewayResource(item) && !gatewayCovered {
 			continue
 		}
 		itemClaim := claimFor(clusterID, item)
@@ -179,10 +179,14 @@ func ClaimForUID(clusterID, apiVersion, kind, uid string) graph.IdentityClaim {
 }
 
 func includeGraphResource(item *unstructured.Unstructured) bool {
+	return includeGraphTopology(item) && !isSemanticPluginOwned(item)
+}
+
+func includeGraphTopology(item *unstructured.Unstructured) bool {
 	if item == nil || string(item.GetUID()) == "" || item.GetKind() == "ReplicaSet" || item.GetKind() == "EndpointSlice" || item.GetKind() == "Event" {
 		return false
 	}
-	return !isIstioOwned(item)
+	return true
 }
 
 func isGatewayResource(item *unstructured.Unstructured) bool {

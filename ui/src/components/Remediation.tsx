@@ -11,7 +11,8 @@ import type {
 	PrepareResponse,
 	Proposal
 } from '@/api/types';
-import { list } from '@/lib/model';
+import { useGraph } from '@/lib/graph-context';
+import { displayLabel, list } from '@/lib/model';
 
 // Live remediation for one proposal on a finding. Nothing is written to a provider until the user
 // approves in the dialog, and every step goes through the server:
@@ -49,6 +50,7 @@ function ApprovalDialog({
 	onApproved,
 	onClose
 }: ApprovalDialogProps) {
+	const graph = useGraph();
 	const dialog = useRef<HTMLDialogElement>(null);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ function ApprovalDialog({
 			// A failed or unsatisfied verification after a successful write is still a 200, because
 			// the cluster changed; it must not read as success. Approving again re-runs only Verify.
 			const incomplete = response.verificationError
-				? `Applied; verification incomplete: ${response.verificationError}`
+				? 'Applied, but AgentShield could not verify the change. Check server logs.'
 				: 'Applied; verification incomplete.';
 			onApproved(applied ? 'Applied and verified.' : incomplete, applied);
 			dialog.current?.close();
@@ -82,18 +84,23 @@ function ApprovalDialog({
 	}
 
 	return createPortal(
-		<dialog ref={dialog} className="approval-dialog" onClose={onClose}>
+		<dialog
+			ref={dialog}
+			className="approval-dialog"
+			aria-labelledby="remediation-review-title"
+			onClose={onClose}
+		>
 			<form method="dialog" className="approval-sheet">
 				<header>
-					<span className="eyebrow">Explicit approval</span>
-					<h2>{proposal.intent}</h2>
+					<span className="eyebrow">Review change</span>
+					<h2 id="remediation-review-title">{displayLabel(proposal.intent)}</h2>
 				</header>
 				<dl className="detail-grid">
 					<dt>Provider</dt>
-					<dd>{prepared.candidate.providerId}</dd>
+					<dd>{displayLabel(prepared.candidate.providerId)}</dd>
 					<dt>Target</dt>
 					<dd>
-						{proposal.target.kind} · {proposal.target.entityId}
+						{graph.reference(proposal.target.entityId)} · {proposal.target.kind}
 					</dd>
 				</dl>
 				{/* Dry-run output per controlled field: current state and what the provider admitted. */}
@@ -127,6 +134,7 @@ interface RemediationItemProps {
 }
 
 export function RemediationItem({ finding, proposal, active, refresh }: RemediationItemProps) {
+	const graph = useGraph();
 	// Candidates load only while the finding is open. useApi retries 5xx with backoff, so a 503
 	// (remediation disabled) stays visible as the error message below rather than failing silently.
 	const base = `/api/v1/findings/${encodeURIComponent(finding.id)}/remediations/${encodeURIComponent(proposal.id)}`;
@@ -144,7 +152,7 @@ export function RemediationItem({ finding, proposal, active, refresh }: Remediat
 	async function prepare() {
 		if (!candidate) return;
 		setPreparing(true);
-		setStatus('Preparing…');
+		setStatus(candidate.mode === 'advisory-only' ? 'Loading guidance…' : 'Generating preview…');
 		try {
 			const response = await postJSON<PrepareResponse>(`${base}/prepare`, {
 				providerId: candidate.providerId,
@@ -157,7 +165,7 @@ export function RemediationItem({ finding, proposal, active, refresh }: Remediat
 				return;
 			}
 			setPrepared({ candidate, plan: response.plan, preparation: response.preparation });
-			setStatus('Prepared; approval pending.');
+			setStatus('Change ready for review.');
 		} catch (failure) {
 			setStatus(errorMessage(failure));
 		} finally {
@@ -173,12 +181,12 @@ export function RemediationItem({ finding, proposal, active, refresh }: Remediat
 	} else if (!candidates.data) {
 		actions = <span className="muted">Loading actions…</span>;
 	} else if (!candidate) {
-		actions = <span className="muted">No live action available</span>;
+		actions = <span className="muted">No automated remediation available</span>;
 	} else {
 		actions = (
 			<>
 				<select
-					aria-label={`Action for ${proposal.intent}`}
+					aria-label={`Action for ${displayLabel(proposal.intent)}`}
 					value={selected}
 					onChange={event => setSelected(Number(event.target.value))}
 				>
@@ -187,12 +195,12 @@ export function RemediationItem({ finding, proposal, active, refresh }: Remediat
 							value={index}
 							key={`${option.providerId}/${option.sourceId}/${option.actionId}`}
 						>
-							{option.providerId} · {option.actionId} · {option.sourceId}
+							{displayLabel(option.providerId)} {displayLabel(option.actionId)} · {option.sourceId}
 						</option>
 					))}
 				</select>
 				<button type="button" disabled={preparing} onClick={prepare}>
-					Prepare
+					{candidate.mode === 'advisory-only' ? 'View guidance' : 'Preview change'}
 				</button>
 			</>
 		);
@@ -201,9 +209,9 @@ export function RemediationItem({ finding, proposal, active, refresh }: Remediat
 	return (
 		<article className="remediation-item">
 			<div>
-				<strong>{proposal.intent}</strong>
+				<strong>{displayLabel(proposal.intent)}</strong>
 				<span>
-					{proposal.target.kind} · {proposal.target.entityId}
+					{graph.name(proposal.target.entityId)} · {proposal.target.kind}
 				</span>
 			</div>
 			<div className="remediation-actions">{actions}</div>

@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/remediation"
 	"github.com/agentshield-dev/agentshield/pkg/state"
 	"github.com/agentshield-dev/agentshield/ui"
@@ -54,6 +56,7 @@ type Server struct {
 	store        StateStore
 	otlp         http.Handler
 	assets       fs.FS
+	plugins      []pluginMetadata
 	remediations RemediationExecutor
 	sessionsMu   sync.Mutex
 	sessions     map[string]preparedRemediation
@@ -79,6 +82,29 @@ const (
 
 // Option configures a [Server].
 type Option func(*Server)
+
+type pluginMetadata struct {
+	ID             string   `json:"id"`
+	Version        string   `json:"version"`
+	Description    string   `json:"description"`
+	Icon           string   `json:"icon"`
+	OwnedAPIGroups []string `json:"ownedApiGroups,omitempty"`
+}
+
+func WithPlugins(descriptors ...discovery.Descriptor) Option {
+	return func(server *Server) {
+		server.plugins = make([]pluginMetadata, 0, len(descriptors))
+		for _, descriptor := range descriptors {
+			ownedAPIGroups := slices.Clone(descriptor.OwnedAPIGroups)
+			slices.Sort(ownedAPIGroups)
+			server.plugins = append(server.plugins, pluginMetadata{
+				ID: descriptor.ID, Version: descriptor.Version, Description: descriptor.Description, Icon: descriptor.Icon,
+				OwnedAPIGroups: ownedAPIGroups,
+			})
+		}
+		slices.SortFunc(server.plugins, func(left, right pluginMetadata) int { return strings.Compare(left.ID, right.ID) })
+	}
+}
 
 // WithLoopbackHostCheck controls whether the server rejects requests whose
 // Host header is not "localhost" or a loopback IP literal, on any port, with
@@ -137,6 +163,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /readyz", server.handleReady)
 	mux.HandleFunc("GET /api/v1/graph", server.handleGraph)
+	mux.HandleFunc("GET /api/v1/plugins", server.handlePlugins)
 	mux.HandleFunc("GET /api/v1/manifest", server.handleManifest)
 	mux.HandleFunc("GET /api/v1/neighborhood", server.handleNeighborhood)
 	mux.HandleFunc("GET /api/v1/overview", server.handleOverview)
@@ -166,6 +193,12 @@ func (server *Server) Handler() http.Handler {
 		handler = loopbackHostOnly(handler)
 	}
 	return securityHeaders(handler)
+}
+
+func (server *Server) handlePlugins(writer http.ResponseWriter, _ *http.Request) {
+	writeJSON(writer, http.StatusOK, struct {
+		Plugins []pluginMetadata `json:"plugins"`
+	}{Plugins: server.plugins})
 }
 
 // loopbackHostOnly runs before routing so a rebinding page cannot reach any

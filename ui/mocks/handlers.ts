@@ -26,6 +26,7 @@ const text = (value: string | readonly string[] | undefined) => String(value ?? 
 
 export const handlers: HttpHandler[] = [
 	http.get('/api/v1/graph', () => respond(() => backend.graph())),
+	http.get('/api/v1/plugins', () => respond(() => backend.plugins())),
 	http.get('/api/v1/overview', () => respond(() => backend.overview())),
 	http.get('/api/v1/resources', ({ request }) => respond(() => backend.resources(query(request)))),
 	http.get('/api/v1/resources/:resourceID', ({ params }) =>

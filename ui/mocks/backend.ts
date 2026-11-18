@@ -8,6 +8,7 @@ import type {
 	GraphRecord,
 	OverviewResponse,
 	Plan,
+	PluginsResponse,
 	Preparation,
 	PrepareResponse,
 	Proposal,
@@ -356,6 +357,10 @@ export class FakeBackend {
 			revision: this.revision,
 			snapshot: this.requireGraph('load graph')
 		};
+	}
+
+	plugins(): PluginsResponse {
+		return { plugins: dataset.plugins };
 	}
 
 	overview(): OverviewResponse {

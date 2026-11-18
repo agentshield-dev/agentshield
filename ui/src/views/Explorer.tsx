@@ -3,6 +3,7 @@ import type { ApiState } from '@/api/client';
 import type { GraphRecord, Relationship, Resource } from '@/api/types';
 import { GraphCanvas } from '@/components/GraphCanvas';
 import { Inspector } from '@/components/Inspector';
+import { PluginIcons } from '@/components/PluginIcons';
 import { useGraph } from '@/lib/graph-context';
 import {
 	emptyLayout,
@@ -13,7 +14,7 @@ import {
 	type Transform,
 	zoomTransform
 } from '@/lib/layout';
-import { label, list, namespace, unique } from '@/lib/model';
+import { initials, label, list, namespace, unique } from '@/lib/model';
 
 const OVERVIEW_PAGE_SIZE = 24;
 
@@ -253,7 +254,7 @@ export function Explorer({
 	const metrics = record
 		? ([
 				['Resources', resources.length],
-				['Relations', relationships.length],
+				['Relationships', relationships.length],
 				['Facets', list(record.snapshot.facets).length],
 				['Telemetry', list(record.snapshot.telemetry).length]
 			] as const)
@@ -266,15 +267,6 @@ export function Explorer({
 					<span className="eyebrow">Knowledge layer</span>
 					<h1>Environment graph</h1>
 					<p>Inspect current resources, relationships, provenance, and evidence.</p>
-				</div>
-				<div className="leg-controls">
-					<label htmlFor="leg-select">Revision</label>
-					<select id="leg-select" aria-label="Graph revision" defaultValue="current">
-						<option value="current">Current graph</option>
-					</select>
-					<label className="check">
-						<input type="checkbox" disabled /> Previous
-					</label>
 				</div>
 			</header>
 			<section className="summary panel" aria-label="Snapshot summary">
@@ -298,9 +290,6 @@ export function Explorer({
 						</div>
 					))}
 				</dl>
-				<div className="delta" aria-live="polite">
-					{record ? <span>Comparison off</span> : null}
-				</div>
 			</section>
 			<section className="toolrow panel" aria-label="Graph controls">
 				<label className="search">
@@ -445,7 +434,10 @@ export function Explorer({
 										key={resource.id}
 										onClick={() => select({ type: 'resource', item: resource })}
 									>
-										<strong>{label(resource)}</strong>
+										<span className="resource-item-head">
+											<PluginIcons resource={resource} fallback={initials(resource.kind, '')} />
+											<strong>{label(resource)}</strong>
+										</span>
 										<span>{namespace(resource)}</span>
 										<small>{resource.kind || 'unknown'}</small>
 									</button>

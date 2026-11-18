@@ -39,8 +39,9 @@ type Change struct {
 	Payload    json.RawMessage `json:"payload,omitempty"`
 }
 
-// Descriptor declares a plugin's collection contracts and any identity schemes
-// whose authority it owns; it does not describe graph output ownership.
+// Descriptor declares a plugin's display metadata, resource API-group
+// ownership, collection contracts, and identity schemes. Assertion provenance
+// remains independent of resource ownership.
 type Descriptor struct {
 	ID string
 	// Version is the plugin's release version, required and otherwise
@@ -49,10 +50,12 @@ type Descriptor struct {
 	// nothing. In-tree plugins start at 0.1.0 while the project is pre-1.0;
 	// bump it when the plugin's collections, identity schemes, or emitted
 	// assertions change in a way its consumers should notice.
-	Version     string
-	Description string
-	Consumes    []string
-	Publishes   []string
+	Version        string
+	Description    string
+	Icon           string
+	OwnedAPIGroups []string
+	Consumes       []string
+	Publishes      []string
 	// IdentitySchemes lists authority-specific schemes this plugin introduces.
 	// Leave it empty when the plugin only emits claims under existing schemes.
 	// Follow-up: this could become an optional IdentitySchemeProvider

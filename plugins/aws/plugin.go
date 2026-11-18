@@ -86,7 +86,7 @@ func (p *Plugin) ResolveIdentityReference(reference string) (graph.IdentityClaim
 // per-region collections are added by [Plugin.Descriptor].
 func Descriptor() discovery.Descriptor {
 	return discovery.Descriptor{
-		ID: PluginID, Version: "0.1.0", Description: "AWS EC2 network security inventory",
+		ID: PluginID, Version: "0.1.0", Description: "AWS EC2 network security inventory", Icon: "aws",
 		IdentitySchemes: []graph.SchemeDefinition{IdentitySchemeDefinition()},
 	}
 }

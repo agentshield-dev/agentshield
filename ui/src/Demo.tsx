@@ -35,8 +35,8 @@ export function Demo() {
 		<div className="demo-shell">
 			<header className="demo-toolbar">
 				<div className="demo-copy">
-					<strong>Simulated playground</strong>
-					<span>No cluster, database, or model calls</span>
+					<strong>Interactive demo</strong>
+					<span>Runs locally with sample data</span>
 				</div>
 				<div className="demo-controls">
 					<label>
@@ -60,7 +60,7 @@ export function Demo() {
 			<p className="demo-description" aria-live="polite">
 				{scenario.description}
 			</p>
-			<App />
+			<App demo />
 		</div>
 	);
 }

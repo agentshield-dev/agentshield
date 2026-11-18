@@ -28,6 +28,7 @@
 //	GET  /healthz                         process liveness
 //	GET  /readyz                          database reachable and schema readable; never compiles the graph
 //	GET  /api/v1/graph                    current graph view, with ETag
+//	GET  /api/v1/plugins                  compiled-in plugin display metadata
 //	GET  /api/v1/manifest                 records (idempotently) and returns the current manifest
 //	GET  /api/v1/neighborhood             bounded neighborhood of one resource
 //	GET  /api/v1/overview                 counts, manifest (as above), and top active findings
