@@ -58,12 +58,12 @@ func TestIdentityReferenceResolversRejectConflictingClaims(t *testing.T) {
 		referenceResolverPlugin{descriptorPlugin: descriptorPlugin{sourceID: "first", descriptor: Descriptor{ID: "first", Version: "1"}}, claim: first},
 	}
 	resolvers := IdentityReferenceResolvers(plugins...)
-	resolved, found, err := ResolveIdentityReference("provider://resource", resolvers...)
+	resolved, found, err := ResolveIdentityReference(IdentityReference{ProviderID: "provider://resource"}, resolvers...)
 	if err != nil || !found || resolved != first {
 		t.Fatalf("resolved = %#v, found = %t, err = %v", resolved, found, err)
 	}
 	resolvers = append(resolvers, referenceResolverPlugin{claim: second})
-	if _, _, err := ResolveIdentityReference("provider://resource", resolvers...); err == nil {
+	if _, _, err := ResolveIdentityReference(IdentityReference{ProviderID: "provider://resource"}, resolvers...); err == nil {
 		t.Fatal("conflicting provider claims were accepted")
 	}
 }
@@ -146,7 +146,7 @@ type referenceResolverPlugin struct {
 	claim graph.IdentityClaim
 }
 
-func (plugin referenceResolverPlugin) ResolveIdentityReference(string) (graph.IdentityClaim, bool, error) {
+func (plugin referenceResolverPlugin) ResolveIdentityReference(IdentityReference) (graph.IdentityClaim, bool, error) {
 	return plugin.claim, true, nil
 }
 

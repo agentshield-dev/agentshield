@@ -115,7 +115,8 @@ func projectSnapshot(clusterID, networkID, sourceID string, index objectIndex, g
 			if err != nil {
 				return graph.Input{}, err
 			}
-			backend, matched, err := discovery.ResolveIdentityReference(decoded.Value.Spec.ProviderID, resolvers...)
+			reference := discovery.IdentityReference{ProviderID: strings.TrimSpace(decoded.Value.Spec.ProviderID), Annotations: item.GetAnnotations()}
+			backend, matched, err := discovery.ResolveIdentityReference(reference, resolvers...)
 			if err != nil {
 				return graph.Input{}, fmt.Errorf("resolve Node %s provider ID: %w", item.GetName(), err)
 			}

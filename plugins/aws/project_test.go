@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/agentshield-dev/agentshield/pkg/discovery"
 	"github.com/agentshield-dev/agentshield/pkg/graph"
 )
 
@@ -174,7 +175,7 @@ func TestAWSIdentitySchemeRejectsInvalidAuthority(t *testing.T) {
 
 func TestInstanceClaimFromKubernetesProviderID(t *testing.T) {
 	plugin := &Plugin{config: Config{Partition: "aws", Region: "us-east-1", SourceID: "aws/aws/111111111111/us-east-1"}}
-	claim, matched, err := plugin.ResolveIdentityReference("aws:///us-east-1a/i-123")
+	claim, matched, err := plugin.ResolveIdentityReference(discovery.IdentityReference{ProviderID: "aws:///us-east-1a/i-123"})
 	if err != nil || !matched || claim.ImmutableKey != "aws/ec2/us-east-1/instance/i-123" {
 		t.Fatalf("claim = %#v, matched = %t, err = %v", claim, matched, err)
 	}
@@ -185,7 +186,7 @@ func TestInstanceClaimFromKubernetesProviderID(t *testing.T) {
 		"aws:///us-east-1a",
 		"aws:///us-east-1a/eni-123",
 	} {
-		if _, matched, err := plugin.ResolveIdentityReference(reference); err != nil || matched {
+		if _, matched, err := plugin.ResolveIdentityReference(discovery.IdentityReference{ProviderID: reference}); err != nil || matched {
 			t.Fatalf("%s matched: %t, err = %v", reference, matched, err)
 		}
 	}

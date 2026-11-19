@@ -34,8 +34,8 @@
 // instantiates, uses-identity, exposes, member-of, governed-by, and backed-by
 // relationships and network-exposure, transport-posture, policy-targeting, and
 // route-backends facets. Node-to-cloud-instance backed-by edges are emitted
-// only when a configured IdentityReferenceResolver (for example the AWS
-// plugin) resolves the Node's spec.providerID.
+// only when a configured IdentityReferenceResolver (for example the AWS or
+// GCP plugin) resolves the Node's spec.providerID and annotations.
 //
 // # Failure behavior
 //
