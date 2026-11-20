@@ -37,6 +37,22 @@
 // only when a configured IdentityReferenceResolver (for example the AWS
 // plugin) resolves the Node's spec.providerID.
 //
+// A hostNetwork Pod shares its Node's network namespace, so it keeps its
+// kubernetes/pod-ip attribute and runs-on edge but never claims the Node
+// address through network/addresses or exposes. It gets a network-exposure
+// facet keyed host-network (rule kubernetes.pod.host-network-posture) with
+// effect unknown and coverage partial: declared ports do not prove a
+// listener. Host PID/IPC, privileged, NET_ADMIN, NET_RAW, SYS_ADMIN, and
+// explicit unconfined-seccomp counts across regular, init, and ephemeral
+// containers stay provider-native attributes, because the neutral vocabulary
+// has no kernel-privilege domain. Capability counts reflect declared grants
+// after drops; runtime default capabilities are not inferred. They describe
+// configuration, not observed sockets, packet capture, iptables changes, or
+// syscalls. NetworkPolicy
+// enforcement on such Pods is CNI-dependent, so their governed-by edges use
+// rule kubernetes.networkpolicy.host-network-target with effect and coverage
+// unknown and kubernetes/network-policy-applicability=implementation-defined.
+//
 // # Failure behavior
 //
 // An unavailable required API fails startup. An optional API that is not

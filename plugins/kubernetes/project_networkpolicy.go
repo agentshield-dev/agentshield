@@ -88,10 +88,20 @@ func projectNetworkPolicies(clusterID, sourceID string, index objectIndex, input
 			PluginID: PluginID, SourceID: sourceID, RuleID: "kubernetes.networkpolicy.targeting",
 			EvidenceIDs: evidenceIDs(policy),
 		})
+		var hostProperties map[string]string
 		for _, pod := range index.podsForLabels(policy.GetNamespace(), selector.MatchLabels) {
 			if labelSelector.Matches(labels.Set(pod.GetLabels())) {
-				relationshipProperties := make(map[string]string, len(properties)+4)
-				for key, value := range properties {
+				ruleID, podProperties := "kubernetes.networkpolicy.target", properties
+				if isHostNetworkPod(pod) {
+					if hostProperties == nil {
+						if hostProperties, err = hostNetworkPolicyProperties(properties, *semantics); err != nil {
+							return fmt.Errorf("network policy %s host-network semantics: %w", projectkit.DisplayName(policy), err)
+						}
+					}
+					ruleID, podProperties = "kubernetes.networkpolicy.host-network-target", hostProperties
+				}
+				relationshipProperties := make(map[string]string, len(podProperties)+4)
+				for key, value := range podProperties {
 					relationshipProperties[key] = value
 				}
 				relationshipProperties["kubernetes/selector-basis"] = "pod-labels"
@@ -99,7 +109,7 @@ func projectNetworkPolicies(clusterID, sourceID string, index objectIndex, input
 				relationshipProperties["kubernetes/identity-assurance"] = "none"
 				relationshipProperties["kubernetes/selector-empty"] = strconv.FormatBool(labelSelector.Empty())
 				input.Relationships = append(input.Relationships, relationshipAssertion(
-					sourceID, "kubernetes.networkpolicy.target",
+					sourceID, ruleID,
 					claimFor(clusterID, pod), graph.PredicateGovernedBy, claimFor(clusterID, policy), "",
 					relationshipProperties, pod, policy,
 				))
